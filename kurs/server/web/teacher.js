@@ -191,12 +191,16 @@ function renderTop() {
     parts.push(h("button", { class: st.paused ? "on" : "ghost", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
     parts.push(h("button", { class: "ghost", title: "Сохранить работу, обновить панель и перезапустить VS Code на всех компьютерах учеников",
       onclick: () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"));
+    parts.push(h("button", { class: "ghost", title: "Сохранить работу и закрыть VS Code на всех компьютерах учеников",
+      onclick: () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); } }, "⏻ Закрыть VS Code у всех"));
     parts.push(h("button", { class: "ghost", title: "Экран для проектора: таймер и прогресс без имён", onclick: () => window.open("/teacher/projector.html", "kurs-projector") }, "🖥 Проектор"));
   }
   parts.push(h("button", { class: "ghost small", title: "Звук при новых запросах", onclick: () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); } }, sound ? "🔔" : "🔕"));
   if (st.running) {
     parts.push(h("button", { class: "danger", onclick: () => {
-      if (confirm("Завершить занятие? Работы учеников сохранятся здесь, а с компьютеров учеников сотрутся.")) act("end");
+      if (!confirm("Завершить занятие? Работы учеников сохранятся здесь, а с компьютеров учеников сотрутся.")) return;
+      const close = confirm("Закрыть VS Code на компьютерах учеников?\n\n«ОК» — закрыть, «Отмена» — оставить открытым.");
+      act("end").then(() => { if (close) act("close_clients"); });
     } }, "Завершить занятие"));
   }
   parts.push(h("button", { class: "ghost small", onclick: async () => { await api("POST", "/tapi/logout", {}); boot(); } }, "Выйти"));
@@ -263,6 +267,7 @@ function connectCard() {
   const win = `py -c "import urllib.request as u; exec(u.urlopen('${url}/k', timeout=10).read())" --shortcut`;
   return h("section", { class: "card" }, details("connect", "Как подключить компьютер ученика (один раз на каждый компьютер)",
     h("p", {}, h("button", { class: "ghost small", onclick: () => { if (confirm("Перезапустить VS Code на всех подключённых компьютерах учеников?")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"),
+      " ", h("button", { class: "ghost small", onclick: () => { if (confirm("Закрыть VS Code на всех компьютерах учеников? Их файлы сохранятся.")) act("close_clients"); } }, "⏻ Закрыть VS Code у всех"),
       h("span", { class: "muted small" }, " — после обновления курса: панели обновятся сами")),
     h("p", {}, "Откройте на компьютере ученика терминал и выполните команду. Linux:"),
     h("pre", { class: "code" }, linux),

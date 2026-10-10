@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 """
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
-                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0,
+                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
                  "last_class": None}
 
 
@@ -338,7 +338,8 @@ class Kurs:
     # ---------- вход ученика ----------
     def hello(self, pc: str) -> dict:
         st = self.s.state()
-        out = {"server": VERSION, "running": bool(st["running"]), "pc": pc, "restart": st["restart_seq"]}
+        out = {"server": VERSION, "running": bool(st["running"]), "pc": pc, "restart": st["restart_seq"],
+               "close": st["close_seq"]}
         if not st["running"]:
             return out
         lesson = self.lib.lessons.get(st["lesson"], {})
@@ -426,7 +427,7 @@ class Kurs:
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
-                "restart": st["restart_seq"],
+                "restart": st["restart_seq"], "close": st["close_seq"],
                 "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
 
     def lesson_for(self) -> dict:
@@ -1018,6 +1019,10 @@ class Handler(BaseHTTPRequestHandler):
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
                 k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
                 k.s.log(None, "restart_clients")
+            elif name == "close_clients":
+                # все панели сохранят работу и закроют VS Code курса на компьютерах учеников
+                k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
+                k.s.log(None, "close_clients")
             elif name == "restart_student":
                 # то же самое, но только на компьютере одного ученика
                 sid = int(b.get("student_id") or 0)

@@ -153,7 +153,7 @@ class Kurs {
       this.schedule(this.boot, IDLE_POLL_MS);
       return;
     }
-    if (this.checkRestart(hello.restart)) return;
+    if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
     if (!hello.running) {
       this.setScreen("idle", "Занятие ещё не началось. Подожди учителя.");
       this.schedule(this.boot, IDLE_POLL_MS);
@@ -183,7 +183,7 @@ class Kurs {
     if (!["pick", "confirmHere", "denied"].includes(this.v.screen)) return;
     try {
       const hello = await call(this.server(), "GET", "/api/hello?pc=" + encodeURIComponent(this.pc()));
-      if (this.checkRestart(hello.restart)) return;
+      if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
       if (!hello.running) return this.boot();
       this.v.students = hello.students || [];
       this.v.here = hello.here || null;
@@ -302,7 +302,7 @@ class Kurs {
     if (!this.token) return;
     try {
       const st = await this.api("GET", "/api/state");
-      if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me")) return;
+      if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me") || this.checkClose(st.close)) return;
       st.local_offset = Date.now() / 1000 - st.now;
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
@@ -383,6 +383,26 @@ class Kurs {
     this.restartSeen[kind] = seq;
     this.restartNow().catch((e) => console.error("kurs: restart", e));
     return true;
+  }
+
+  /** Учитель нажал «Закрыть VS Code у всех»: сохраняем работу и закрываем окно курса. */
+  checkClose(seq) {
+    if (typeof seq !== "number") return false;
+    const seen = this.restartSeen.close;
+    this.restartSeen.close = seq;
+    if (seen === undefined || seq <= seen) return false;
+    this.closeNow().catch((e) => console.error("kurs: close", e));
+    return true;
+  }
+
+  async closeNow() {
+    this.toast("Учитель завершает работу — сохраняю твои файлы и закрываю VS Code…");
+    clearTimeout(this.timer);
+    for (const doc of vscode.workspace.textDocuments) {
+      if (doc.isDirty && doc.uri.scheme === "file") await doc.save();
+    }
+    await this.upload();
+    await vscode.commands.executeCommand("workbench.action.quit");
   }
 
   async restartNow() {
