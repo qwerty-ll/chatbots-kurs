@@ -187,14 +187,8 @@
         view.lesson.uses_ai && st.ai ? h("span", { class: "pill", title: aiTitle(st.ai) }, aiPill(st.ai)) : null,
         st.timer_end ? h("span", { class: "pill", id: "timer", title: st.timer_label || "Таймер" }, timerText()) : null),
       h("div", { class: "dots", title: "Твой прогресс на уроке" }, tasks.map((t) => h("i", { class: statusOf(t.id) || "" })))));
-    // на контрольной учебник и шпаргалка скрыты
-    const tabs = [["tasks", "📋", "Задания"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]]
-      .filter(([id]) => !st.exam || id === "tasks" || id === "help");
-    if (st.exam && (ui.tab === "theory" || ui.tab === "cheat")) ui.tab = "tasks";
-    out.push(h("div", { class: "tabs" }, tabs.map(([id, ic, title]) =>
+    out.push(h("div", { class: "tabs" }, [["tasks", "📋", "Задания"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]].map(([id, ic, title]) =>
       h("button", { class: ui.tab === id ? "on" : "", onclick: () => go({ tab: id, task: id === "tasks" ? null : ui.task }) }, h("span", { class: "ic" }, ic), title))));
-    if (st.exam) out.push(h("div", { class: "banner exam" }, "📝 Контрольная: подсказок, учебника и " + (st.exam_ai ? "образцов" : "нейросети") +
-      " нет — решай сам. Не уходи из VS Code: учитель это видит."));
     if (view.offline) out.push(h("div", { class: "banner" }, "Нет связи с сервером. Проверять код можно — результат отправится, когда связь вернётся."));
     const page = h("div", { class: "page" });
     if (!ui.toured[view.me.name]) page.append(tour());
@@ -288,9 +282,9 @@
     }
     if (t.bonus && passed) out.push(h("div", { class: "card" }, h("b", {}, "⭐ Бонус: "), t.bonus));
 
-    if (passed && !view.state.exam) out.push(...solutionBlock(t, st));
+    if (passed) out.push(...solutionBlock(t, st));
     if (!passed && !check && !(st.attempts > 0)) out.push(stepsCard(t, st));
-    if (!view.state.exam) out.push(hintsCard(t, st));
+    out.push(hintsCard(t, st));
     out.push(h("div", { class: "row", style: "margin-top:6px" },
       view.files[id] ? h("button", { class: "secondary small", onclick: () => send("reset", { task: id }) }, "↺ Начать заново") : null,
       h("button", { class: "secondary small", onclick: () => go({ tab: "help" }) }, "🙋 Позвать учителя")));

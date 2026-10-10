@@ -28,7 +28,6 @@ function activate(context) {
     vscode.window.onDidChangeActiveTextEditor((ed) => kurs.onEditor(ed)),
     vscode.workspace.onDidChangeTextDocument((e) => { kurs.diag.delete(e.document.uri); kurs.onChange(e); }),
     vscode.workspace.onDidOpenTextDocument((doc) => kurs.onOpen(doc)),
-    vscode.window.onDidChangeWindowState((s) => kurs.onWindowState(s)),
     { dispose: () => kurs.stop() }
   );
   kurs.start();
@@ -70,10 +69,7 @@ class Kurs {
     this.tasks = {};       // id → задание с заготовкой (с сервера)
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
-    this.restartSeen = null;
-    this.exam = false;         // идёт контрольная
-    this.examFull = false;     // это мы включили полноэкранный режим
-    this.leftAt = null;        // когда ученик ушёл из окна VS Code   // номер команды «перезапустить VS Code» с пульта, который мы уже видели
+    this.restartSeen = null;   // номер команды «перезапустить VS Code» с пульта, который мы уже видели
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -308,7 +304,6 @@ class Kurs {
       const st = await this.api("GET", "/api/state");
       if (this.checkRestart(st.restart)) return;
       st.local_offset = Date.now() / 1000 - st.now;
-      this.setExam(!!st.exam);
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
       this.v.me = { name: st.name, pc: st.pc };
@@ -337,7 +332,6 @@ class Kurs {
 
   /** Сеанс закрыт: занятие кончилось, другой ученик вошёл, учитель завершил сеанс или ученик вышел. */
   async ended(reason) {
-    await this.setExam(false);
     this.token = null;
     await this.ctx.globalState.update(this.tokenKey(), undefined);
     await this.closeWorkEditors();
@@ -404,43 +398,6 @@ class Kurs {
     await vscode.commands.executeCommand("workbench.action.reloadWindow");
   }
 
-  // ---------------------------------------------------------------- контрольная
-  async setExam(on) {
-    if (on === this.exam) return;
-    this.exam = on;
-    this.guard.strict = on;
-    if (on) {
-      vscode.window.showWarningMessage("📝 Контрольная: подсказки, учебник и нейросеть выключены. Выход из VS Code учитель видит.");
-      if (!this.examFull) {
-        this.examFull = true;
-        await vscode.commands.executeCommand("workbench.action.toggleFullScreen");
-      }
-      if (!vscode.window.state.focused) this.leftAt = Date.now();
-    } else {
-      this.leftAt = null;
-      if (this.examFull) {
-        this.examFull = false;
-        await vscode.commands.executeCommand("workbench.action.toggleFullScreen");
-      }
-      vscode.window.showInformationMessage("Контрольная закончилась.");
-    }
-  }
-
-  /** На контрольной считаем уходы из окна VS Code (Alt+Tab, браузер, другая программа). */
-  onWindowState(s) {
-    if (!this.exam || !this.token) return;
-    if (!s.focused) {
-      if (this.leftAt === null) this.leftAt = Date.now();
-      return;
-    }
-    if (this.leftAt === null) return;
-    const seconds = Math.round((Date.now() - this.leftAt) / 1000);
-    this.leftAt = null;
-    if (seconds < 2) return;   // мгновенное переключение (системное окно, уведомление) не считаем
-    this.api("POST", "/api/event", { kind: "focus_lost", seconds }).catch(() => {});
-    vscode.window.showWarningMessage(`Ты выходил из VS Code на ${seconds} с. На контрольной учитель это видит.`);
-  }
-
   // ---------------------------------------------------------------- «пиши сам»
   /** Файл, который ученик пишет сам: .py в Мои_работы, кроме общих модулей класса. */
   isGuarded(file) {
@@ -472,12 +429,12 @@ class Kurs {
   allowLessonTexts() {
     const lesson = this.v.lesson || {};
     for (const c of lesson.theory || []) {
-      this.guard.allowMaterial(c.text || "");
-      this.guard.allowMaterial(c.code || "");
-      this.guard.allowMaterial(c.try || "");
+      this.guard.allow(c.text || "");
+      this.guard.allow(c.code || "");
+      this.guard.allow(c.try || "");
     }
     for (const s of (lesson.cheatsheet && lesson.cheatsheet.sections) || []) {
-      for (const row of s.rows || []) for (const cell of row) this.guard.allowMaterial(cell);
+      for (const row of s.rows || []) for (const cell of row) this.guard.allow(cell);
     }
     for (const t of lesson.tasks || []) {
       this.guard.allow(t.statement || "");

@@ -172,4 +172,3 @@ details summary { cursor: pointer; color: var(--blue); font-weight: 600; font-si
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0; }
 .cols3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
 @media (max-width: 900px) { .cols3 { grid-template-columns: 1fr; } }
-.exam-banner { background: var(--bad); }

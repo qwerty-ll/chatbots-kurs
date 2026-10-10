@@ -189,8 +189,6 @@ function renderTop() {
       : h("span", { class: "row" }, h("span", { class: "small", style: "color:#A9B5FF" }, "Таймер, мин:"),
           [5, 10, 15, 30].map((m) => h("button", { class: "ghost small", onclick: () => act("timer", { minutes: m, label: "Практика" }) }, m))));
     parts.push(h("button", { class: st.paused ? "on" : "ghost", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
-    parts.push(h("button", { class: st.exam ? "on" : "ghost", title: "Контрольная: без подсказок, образцов, учебника и нейросети; выход из VS Code виден вам",
-      onclick: () => startExam(!st.exam) }, st.exam ? "📝 Завершить контрольную" : "📝 Контрольная"));
     parts.push(h("button", { class: "ghost", title: "Сохранить работу, обновить панель и перезапустить VS Code на всех компьютерах учеников",
       onclick: () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"));
     parts.push(h("button", { class: "ghost", title: "Экран для проектора: таймер и прогресс без имён", onclick: () => window.open("/teacher/projector.html", "kurs-projector") }, "🖥 Проектор"));
@@ -309,26 +307,10 @@ function groupForm(g) {
 }
 
 // ---------- во время занятия ----------
-function startExam(on) {
-  if (!on) {
-    if (confirm("Завершить контрольную? У учеников снова появятся подсказки, учебник и нейросеть.")) act("exam", { on: false });
-    return;
-  }
-  if (!confirm("Начать контрольную?\n\n• подсказки, образцы, «Учебник» и «Шпаргалка» скроются;\n• VS Code у учеников откроется на весь экран;\n" +
-    "• каждый выход из VS Code (Alt+Tab, браузер) будет виден вам значком 👁;\n• вставлять можно только свой код.\n\n" +
-    "Таймер поставьте кнопками сверху.")) return;
-  const ai = currentLesson().uses_ai && confirm("Разрешить программам учеников обращаться к нейросети?\n(«Отмена» — нейросеть на контрольной выключена.)");
-  act("exam", { on: true, ai });
-}
-
 function renderLesson() {
   const st = data.state;
   const lesson = currentLesson();
   const out = [];
-  if (st.exam) out.push(h("div", { class: "pause-banner exam-banner" }, "📝",
-    h("span", {}, "Идёт контрольная: у учеников нет подсказок, образцов, учебника, шпаргалки" + (st.exam_ai ? "" : " и нейросети") +
-      ". VS Code у них на весь экран, каждый выход из него (Alt+Tab, браузер) — значок 👁 у имени."),
-    h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => startExam(false) }, "Завершить контрольную")));
   if (st.paused) out.push(h("div", { class: "pause-banner" }, "⏸", h("span", {}, "У учеников пауза: панель закрыта экраном «Смотрим на учителя»."),
     h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => act("pause", { paused: false }) }, "Снять паузу")));
   out.push(tiles());
@@ -431,8 +413,6 @@ function tableCard(lesson) {
       h("span", { class: "dot" + (s.online ? " on" : ""), title: s.online ? "на связи" : "не на связи" }),
       h("span", { class: "name-link", onclick: () => showStudent(s.id) }, s.name),
       s.pastes ? [" ", h("span", { class: "paste-flag", title: `Пытался вставить готовый код: ${s.pastes} раз за занятие. Нажмите на имя — покажу что.`, onclick: () => showStudent(s.id) }, `⚠ ${s.pastes}`)] : null,
-      s.away && s.away.count ? [" ", h("span", { class: "paste-flag", title: `Выходил из VS Code на контрольной: ${s.away.count} раз, всего ${mmss(s.away.seconds)}` },
-        `👁 ${s.away.count} · ${mmss(s.away.seconds)}`)] : null,
       " ", h("span", { class: "pc" }, s.pc || "не вошёл"),
       s.pc ? h("button", { class: "link small", title: "Завершить сеанс ученика", onclick: () => { if (confirm(`Завершить сеанс: ${s.name}?`)) act("kick", { student_id: s.id }); } }, "✕") : null));
     for (const t of lesson.tasks) {
