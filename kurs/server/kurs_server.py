@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0,
-                 "last_class": None}
+                 "last_class": None, "exam": 0, "exam_ai": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +265,8 @@ class Kurs:
             self.s.db.commit()
 
     def ai_ask(self, sess, body: dict) -> dict:
+        if self.s.get("exam") and not self.s.get("exam_ai"):
+            raise ApiError(429, "На контрольной нейросеть выключена.")
         today = self.s.one("SELECT COUNT(*) AS n FROM ai_log WHERE student_id=? AND ts>=?", (sess["student_id"], _day_start()))["n"]
         try:
             t = self.ai.ask(sess["student_id"], self.name(sess["student_id"]), sess["pc"], body.get("messages"),
@@ -426,7 +428,7 @@ class Kurs:
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
-                "restart": st["restart_seq"]}
+                "restart": st["restart_seq"], "exam": bool(st["exam"]), "exam_ai": bool(st["exam_ai"])}
 
     def lesson_for(self) -> dict:
         lesson = self.lesson()
@@ -438,6 +440,8 @@ class Kurs:
                 "cheatsheet": self.lib.cheatsheet}
 
     def hint(self, sess, task_id: str, level: int) -> dict:
+        if self.s.get("exam"):
+            raise ApiError(403, "На контрольной подсказки выключены. Справишься сам!")
         t = self.task(task_id)
         hints = t.get("hints", [])
         if not 1 <= level <= len(hints):
@@ -473,8 +477,8 @@ class Kurs:
                   (status, (summary or "")[:300], (code or "")[:MAX_FILE], time.time(), sid, task_id))
         self.s.log(sid, "check", {"task": task_id, "ok": bool(ok)})
         out = {"status": status}
-        if status == "passed":
-            # решение пользователя: образец показываем сразу после того, как проверка прошла
+        if status == "passed" and not self.s.get("exam"):
+            # решение пользователя: образец показываем сразу после того, как проверка прошла (на контрольной — нет)
             out["solution"] = t["_solution"]
             out["bonus"] = t.get("bonus")
         return out
@@ -484,6 +488,8 @@ class Kurs:
         r = self.s.one("SELECT status FROM results WHERE student_id=? AND task_id=?", (sess["student_id"], task_id))
         if not r or r["status"] != "passed":
             raise ApiError(403, "Образец откроется, когда задание пройдёт проверку")
+        if self.s.get("exam"):
+            raise ApiError(403, "Образцы откроются после контрольной")
         return {"solution": t["_solution"], "bonus": t.get("bonus")}
 
     def rating(self, sess, task_id: str, rating: str) -> None:
@@ -545,6 +551,7 @@ class Kurs:
             for n, l in sorted(self.lib.lessons.items())]
         students = []
         pastes = self.guard_counts()
+        away = self.away_counts()
         if st["group_id"] is not None:
             lesson = self.lib.lessons.get(st["lesson"], {"task_ids": []})
             for r in self.s.q("SELECT * FROM students WHERE group_id=? AND archived=0 ORDER BY name", (st["group_id"],)):
@@ -556,7 +563,8 @@ class Kurs:
                                              "rating": x["rating"], "summary": x["summary"]}
                 students.append({"id": r["id"], "name": r["name"], "pc": sess["pc"] if sess else None,
                                  "online": bool(sess and now - sess["seen"] < ONLINE_SEC),
-                                 "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0)})
+                                 "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0),
+                                 "away": away.get(r["id"], {"count": 0, "seconds": 0})})
         reqs = []
         for r in self.s.q("SELECT * FROM requests WHERE status='pending' ORDER BY created"):
             reqs.append({"id": r["id"], "kind": r["kind"], "name": self.name(r["student_id"]), "pc": r["pc"],
@@ -604,6 +612,7 @@ class Kurs:
         self.s.set("paused", 0)
         self.s.set("timer_end", None)
         self.s.set("stage", 0)
+        self.s.set("exam", 0)
         self.s.set("class_id", (self.s.get("class_id") or 0) + 1)
         self.s.log(None, "lesson_start", {"group": gid, "lesson": lesson})
 
@@ -628,6 +637,7 @@ class Kurs:
         self.s.set("running", 0)
         self.s.set("paused", 0)
         self.s.set("timer_end", None)
+        self.s.set("exam", 0)
         self.s.log(None, "lesson_end")
 
     def open_tasks(self, ids: list[str], is_open: bool) -> None:
@@ -644,12 +654,17 @@ class Kurs:
         self.s.set("open_tasks", cur)
 
     GUARD_EVENTS = ("paste_blocked", "outside_edit")
+    STUDENT_EVENTS = GUARD_EVENTS + ("focus_lost",)
 
     def student_event(self, sess, body: dict) -> dict:
         """Панель сообщает: ученик пытался вставить готовый код или менял файл в обход редактора."""
         kind = str(body.get("kind", ""))
-        if kind not in self.GUARD_EVENTS:
+        if kind not in self.STUDENT_EVENTS:
             raise ApiError(400, "Неизвестное событие")
+        if kind == "focus_lost":
+            # ученик уходил из VS Code во время контрольной (Alt+Tab, браузер, другая программа)
+            self.s.log(sess["student_id"], kind, {"pc": sess["pc"], "seconds": max(0, min(int(body.get("seconds") or 0), 3600))})
+            return {"ok": True}
         self.s.log(sess["student_id"], kind, {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
                                              "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]})
         return {"ok": True}
@@ -657,6 +672,23 @@ class Kurs:
     def lesson_started_at(self) -> float:
         r = self.s.one("SELECT MAX(ts) AS ts FROM events WHERE kind='lesson_start'")
         return (r["ts"] if r else None) or 0
+
+    def away_counts(self) -> dict:
+        """Сколько раз и сколько секунд каждый ученик был вне VS Code на контрольной этого занятия."""
+        since = self.lesson_started_at()
+        out = {}
+        for r in self.s.q("SELECT student_id, data FROM events WHERE kind='focus_lost' AND ts>=?", (since,)):
+            a = out.setdefault(r["student_id"], {"count": 0, "seconds": 0})
+            a["count"] += 1
+            a["seconds"] += int(json.loads(r["data"] or "{}").get("seconds") or 0)
+        return out
+
+    def set_exam(self, on: bool, ai: bool) -> None:
+        if not self.s.get("running"):
+            raise ApiError(400, "Сначала начните занятие")
+        self.s.set("exam", 1 if on else 0)
+        self.s.set("exam_ai", 1 if (on and ai) else 0)
+        self.s.log(None, "exam_start" if on else "exam_end", {"ai": bool(ai)})
 
     def guard_counts(self) -> dict:
         since = self.lesson_started_at()
@@ -973,6 +1005,8 @@ class Handler(BaseHTTPRequestHandler):
                 k.start(int(b.get("group_id") or 0), int(b.get("lesson") or 0))
             elif name == "continue":
                 k.continue_class()
+            elif name == "exam":
+                k.set_exam(bool(b.get("on")), bool(b.get("ai")))
             elif name == "end":
                 k.end()
             elif name == "open":

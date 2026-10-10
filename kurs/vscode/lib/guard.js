@@ -29,6 +29,8 @@ class Guard {
     this.seen = new Set();        // все строки, которые когда-либо были в своих файлах (squash)
     this.removed = [];            // недавно удалённые куски (squash)
     this.allowed = [];            // разрешённые тексты: условие задания, пример диалога, заготовка (squash)
+    this.materials = [];          // учебник и шпаргалка (squash) — можно, кроме контрольной
+    this.strict = false;          // контрольная: материалы копировать нельзя
   }
 
   remember(text) {
@@ -54,10 +56,16 @@ class Guard {
     if (s) this.allowed.push(s);
   }
 
+  /** Разрешить копировать текст учебника и шпаргалки (кроме контрольной). */
+  allowMaterial(text) {
+    const s = squash(text);
+    if (s) this.materials.push(s);
+  }
+
   /** Сколько во вставке чужого: непробельные символы строк, которых нет ни в своём, ни в разрешённом. */
   foreign(text, sources) {
     const whole = squash(text);
-    const pools = this.removed.concat(this.allowed, sources.map(squash));
+    const pools = this.removed.concat(this.allowed, this.strict ? [] : this.materials, sources.map(squash));
     if (pools.some((p) => p.includes(whole))) return { chars: 0, lines: 0 };
     let chars = 0;
     let lines = 0;
