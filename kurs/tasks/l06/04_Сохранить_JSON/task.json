@@ -1,0 +1,99 @@
+{
+  "id": "l06-04",
+  "lesson": 6,
+  "num": 4,
+  "title": "Сохранить профиль в JSON",
+  "level": 1,
+  "step": 3,
+  "minutes": 7,
+  "topics": [
+    "json.dump",
+    "with open"
+  ],
+  "file": "04_Сохранить_JSON.py",
+  "statement": "Спроси «Как тебя зовут? » и «Твоё хобби: ». Сохрани словарь {\"имя\": ..., \"хобби\": ...}\nв файл profile.json (русские буквы — как есть: ensure_ascii=False) и напечатай «Сохранено!».",
+  "dialog": [
+    [
+      "bot",
+      "Как тебя зовут?"
+    ],
+    [
+      "you",
+      "Аня"
+    ],
+    [
+      "bot",
+      "Твоё хобби:"
+    ],
+    [
+      "you",
+      "футбол"
+    ],
+    [
+      "bot",
+      "Сохранено!"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "Аня",
+        "футбол"
+      ],
+      "expect": [
+        "Сохранено"
+      ],
+      "file_has": {
+        "profile.json": [
+          "Аня",
+          "футбол",
+          "имя"
+        ]
+      },
+      "fail_file": "В profile.json нет «Аня» буквами. Проверь json.dump(..., ensure_ascii=False) и encoding=\"utf-8\"."
+    },
+    {
+      "input": [
+        "Тимур",
+        "шахматы"
+      ],
+      "file_has": {
+        "profile.json": [
+          "Тимур",
+          "шахматы"
+        ]
+      },
+      "fail_file": "В profile.json нет «Тимур» буквами. Проверь json.dump(..., ensure_ascii=False) и encoding=\"utf-8\"."
+    },
+    {
+      "input": [
+        "Ли",
+        "рисование"
+      ],
+      "expect": [
+        "Сохранено"
+      ],
+      "file_has": {
+        "profile.json": [
+          "рисование"
+        ]
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:dump",
+      "msg": "Запиши словарь в файл: json.dump(profile, f, ensure_ascii=False)."
+    },
+    {
+      "need": "with",
+      "msg": "Открой файл через with open(\"profile.json\", \"w\", encoding=\"utf-8\") as f:"
+    }
+  ],
+  "hints": [
+    "Наверху: import json. Файл для записи открывают так: with open(\"profile.json\", \"w\", encoding=\"utf-8\") as f:",
+    "Внутри with: json.dump(profile, f, ensure_ascii=False). Без ensure_ascii=False русские буквы превратятся в коды \\u0410.",
+    "import json\n\nprofile = {\"имя\": input(\"Как тебя зовут? \"), \"хобби\": input(\"Твоё хобби: \")}\nwith open(\"profile.json\", \"w\", encoding=\"utf-8\") as f:\n    json.dump(profile, f, ensure_ascii=False)\nprint(\"Сохранено!\")"
+  ],
+  "starter": "empty"
+}

@@ -1,0 +1,102 @@
+{
+  "id": "l07-07",
+  "lesson": 7,
+  "num": 7,
+  "title": "Агент-пират: переводчик",
+  "level": 2,
+  "step": 5,
+  "minutes": 10,
+  "topics": [
+    "инструмент с текстом",
+    "replace"
+  ],
+  "file": "07_Агент-пират.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент to_pirate(text) переводит фразу на пиратский: заменяет «привет» → «йо-хо-хо»,\n«друг» → «юнга», «деньги» → «дублоны» и возвращает результат.\nОпиши его для нейросети (параметр text) и запусти агента: «Ты: » → ответ агента.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Переведи на пиратский: привет, друг"
+    ],
+    [
+      "bot",
+      "  🔧 to_pirate({'text': 'привет, друг'}) -> йо-хо-хо, юнга\nАгент: Йо-хо-хо, юнга!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "пират",
+      "tool": "to_pirate",
+      "arguments": {
+        "text": "привет, друг"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Переведи на пиратский: привет, друг"
+      ],
+      "expect": [
+        "йо-хо-хо, юнга"
+      ],
+      "ai": {
+        "tools_has": [
+          "to_pirate"
+        ],
+        "tool_result_has": [
+          "йо-хо-хо, юнга"
+        ]
+      }
+    },
+    {
+      "input": [
+        "По-пиратски: дай деньги"
+      ],
+      "expect": [
+        "дублоны"
+      ],
+      "ai_answers": [
+        {
+          "if": "пират",
+          "tool": "to_pirate",
+          "arguments": {
+            "text": "дай деньги"
+          }
+        }
+      ]
+    },
+    {
+      "input": [
+        "Как дела?"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:replace",
+      "title": "есть replace()",
+      "msg": "Замену слов делает text.replace(\"привет\", \"йо-хо-хо\")."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "text.replace(\"привет\", \"йо-хо-хо\") возвращает новую строку. Замены можно делать по очереди: text = text.replace(...).",
+    "make_tool(\"to_pirate\", \"Перевести фразу на пиратский язык.\", {\"text\": {\"type\": \"string\", \"description\": \"Фраза\"}}, [\"text\"])",
+    "FUNCTIONS = {\"to_pirate\": lambda args: to_pirate(args[\"text\"])}"
+  ],
+  "starter": "empty"
+}

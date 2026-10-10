@@ -1,0 +1,104 @@
+{
+  "id": "l07-03",
+  "lesson": 7,
+  "num": 3,
+  "title": "Первый агент: монетка",
+  "level": 2,
+  "step": 3,
+  "minutes": 10,
+  "topics": [
+    "make_tool",
+    "agent_answer"
+  ],
+  "file": "03_Первый_агент.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Дай нейросети инструмент coin_flip. Нужно три шага:\n1) функция coin_flip() — «Орёл» или «Решка»;\n2) описание для нейросети: TOOLS = [make_tool(\"coin_flip\", \"понятное описание\")];\n3) словарь FUNCTIONS = {\"coin_flip\": lambda args: coin_flip()}.\nПрограмма спрашивает «Ты: » и печатает agent_answer(messages, TOOLS, FUNCTIONS).",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Подбрось монетку"
+    ],
+    [
+      "bot",
+      "  🔧 coin_flip({}) -> Решка\nАгент: Выпала решка!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "монет",
+      "tool": "coin_flip"
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Подбрось монетку"
+      ],
+      "choice": [
+        1
+      ],
+      "expect": [
+        "Решка"
+      ],
+      "ai": {
+        "called": true,
+        "tools_has": [
+          "coin_flip"
+        ],
+        "tool_result_has": [
+          "Решка"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Подбрось монетку!"
+      ],
+      "choice": [
+        0
+      ],
+      "expect": [
+        "Орёл"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Орёл"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети: make_tool(\"coin_flip\", \"...\")."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "Нейросеть не видит код функции — только имя и описание из make_tool. Имя в make_tool и в FUNCTIONS должно совпадать с тем, что ты написал.",
+    "messages = [{\"role\": \"system\", \"content\": \"Ты помощник...\"}, {\"role\": \"user\", \"content\": input(\"Ты: \")}]",
+    "TOOLS = [make_tool(\"coin_flip\", \"Подбросить монетку: орёл или решка.\")]\nFUNCTIONS = {\"coin_flip\": lambda args: coin_flip()}\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

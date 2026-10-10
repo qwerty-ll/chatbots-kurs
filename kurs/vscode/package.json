@@ -1,0 +1,98 @@
+{
+  "name": "kurs-panel",
+  "displayName": "Курс «Чат-боты на Python»",
+  "description": "Панель ученика: задания, теория, проверка кода и помощь учителя.",
+  "version": "0.1.0",
+  "publisher": "kurs",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Education"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "kurs.openPanel",
+        "title": "Открыть панель курса",
+        "category": "Курс",
+        "icon": "$(book)"
+      },
+      {
+        "command": "kurs.run",
+        "title": "▶ Запустить",
+        "category": "Курс",
+        "icon": "$(play)"
+      },
+      {
+        "command": "kurs.check",
+        "title": "✓ Проверить",
+        "category": "Курс",
+        "icon": "$(check)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "kurs.run",
+          "when": "resourceLangId == python",
+          "group": "navigation@1"
+        },
+        {
+          "command": "kurs.check",
+          "when": "resourceLangId == python && kurs.isTaskFile",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "kurs.run",
+        "key": "f5",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "kurs.check",
+        "key": "f6",
+        "when": "editorLangId == python"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "python",
+        "path": "./snippets/python.json"
+      }
+    ],
+    "configuration": {
+      "title": "Курс",
+      "properties": {
+        "kurs.server": {
+          "type": "string",
+          "default": "",
+          "description": "Адрес сервера курса, например http://192.168.1.10:8000"
+        },
+        "kurs.python": {
+          "type": "string",
+          "default": "",
+          "description": "Команда Python (по умолчанию python3, на Windows python)"
+        },
+        "kurs.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Открывать панель при запуске"
+        },
+        "kurs.simpleView": {
+          "type": "boolean",
+          "default": true,
+          "description": "Простой вид: только редактор и панель курса"
+        }
+      }
+    }
+  }
+}

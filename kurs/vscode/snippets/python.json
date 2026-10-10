@@ -1,0 +1,16 @@
+{
+  "print": {
+    "prefix": "pr",
+    "body": [
+      "print(\"$1\")$0"
+    ],
+    "description": "Вывести текст"
+  },
+  "input": {
+    "prefix": "inp",
+    "body": [
+      "${1:answer} = input(\"$2\")$0"
+    ],
+    "description": "Спросить и сохранить ответ"
+  }
+}

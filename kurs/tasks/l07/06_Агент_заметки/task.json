@@ -1,0 +1,119 @@
+{
+  "id": "l07-06",
+  "lesson": 7,
+  "num": 6,
+  "title": "Агент с блокнотом",
+  "level": 2,
+  "step": 5,
+  "minutes": 12,
+  "topics": [
+    "инструменты",
+    "json"
+  ],
+  "file": "06_Агент_заметки.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент ведёт блокнот в файле notes.json (список строк). Два инструмента:\n• save_note(text) — добавить заметку и вернуть «Заметка сохранена»;\n• read_notes() — вернуть все заметки (или «Заметок пока нет»).\nАгент работает в цикле: «Ты: », «/exit» — конец. История разговора хранится в messages.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Запиши: купить хлеб"
+    ],
+    [
+      "bot",
+      "  🔧 save_note({'text': 'купить хлеб'}) -> Заметка сохранена\nАгент: Записал!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "запиши",
+      "tool": "save_note",
+      "arguments": {
+        "text": "купить хлеб"
+      }
+    },
+    {
+      "if": "заметки",
+      "tool": "read_notes"
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Запиши: купить хлеб",
+        "Покажи заметки",
+        "/exit"
+      ],
+      "ai": {
+        "tools_has": [
+          "save_note",
+          "read_notes"
+        ],
+        "tool_result_has": [
+          "хлеб"
+        ]
+      },
+      "file_has": {
+        "notes.json": [
+          "хлеб"
+        ]
+      }
+    },
+    {
+      "runs": [
+        [
+          "Запиши: купить хлеб",
+          "/exit"
+        ],
+        [
+          "Покажи заметки",
+          "/exit"
+        ]
+      ],
+      "ai": {
+        "tool_result_has": [
+          "хлеб"
+        ]
+      },
+      "fail": "Заметки должны пережить перезапуск: храни их в notes.json."
+    },
+    {
+      "input": [
+        "Покажи заметки",
+        "/exit"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "нет"
+        ]
+      },
+      "fail": "Если файла ещё нет — read_notes возвращает «Заметок пока нет»."
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструменты через make_tool(...)."
+    },
+    {
+      "need": "method:dump",
+      "msg": "Сохраняй заметки в файл: json.dump(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True."
+    }
+  ],
+  "hints": [
+    "read_notes(): если файла нет (os.path.exists) — верни \"Заметок пока нет\", иначе прочитай список через json.load.",
+    "save_note(text): прочитай список, notes.append(text), сохрани json.dump(notes, f, ensure_ascii=False).",
+    "FUNCTIONS = {\"save_note\": lambda args: save_note(args[\"text\"]), \"read_notes\": lambda args: read_notes()}"
+  ],
+  "starter": "empty"
+}

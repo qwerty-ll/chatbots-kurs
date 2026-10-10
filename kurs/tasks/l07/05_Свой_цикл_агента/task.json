@@ -1,0 +1,107 @@
+{
+  "id": "l07-05",
+  "lesson": 7,
+  "num": 5,
+  "title": "Свой цикл агента",
+  "level": 3,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "tool_calls",
+    "роль tool"
+  ],
+  "file": "05_Свой_цикл_агента.py",
+  "uses_ai": true,
+  "statement": "Напиши цикл агента САМ, без agent_answer. Инструмент — lucky_number(): случайное число от 1 до 100.\n1) message = chat(messages, tools=TOOLS)\n2) если message.tool_calls пустой — напечатать «Агент: » + message.content;\n3) иначе: добавить в messages просьбу модели (роль assistant с tool_calls), запустить функцию,\n   добавить результат ({\"role\": \"tool\", \"tool_call_id\": ..., \"content\": результат}) и спросить модель ещё раз.\nВопрос задаётся один: «Ты: ».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Какое у меня счастливое число?"
+    ],
+    [
+      "bot",
+      "  🔧 lucky_number -> 42\nАгент: Твоё счастливое число — 42!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "счастлив",
+      "tool": "lucky_number"
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Какое у меня счастливое число?"
+      ],
+      "randint": [
+        42
+      ],
+      "expect": [
+        "42"
+      ],
+      "ai": {
+        "min_calls": 2,
+        "tools_has": [
+          "lucky_number"
+        ],
+        "tool_result_has": [
+          "42"
+        ],
+        "msg_min_calls": "Модель попросила инструмент, но программа не спросила её второй раз с результатом. После инструмента снова вызови chat(messages, tools=TOOLS)."
+      }
+    },
+    {
+      "input": [
+        "Назови счастливое число"
+      ],
+      "randint": [
+        7
+      ],
+      "expect": [
+        "7"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "7"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "min_calls": 1
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:chat",
+      "msg": "Спрашивай модель напрямую: chat(messages, tools=TOOLS)."
+    },
+    {
+      "need": "kw:tools",
+      "msg": "Передай описания инструментов: chat(messages, tools=TOOLS)."
+    },
+    {
+      "forbid": "call:agent_answer",
+      "title": "без agent_answer",
+      "msg": "В этом задании цикл агента пишем сами, без agent_answer."
+    }
+  ],
+  "hints": [
+    "message.tool_calls — список просьб модели. У каждой: call.id, call.function.name, call.function.arguments (строка JSON).",
+    "Просьбу модели добавь так: messages.append({\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [{\"id\": call.id, \"type\": \"function\", \"function\": {\"name\": call.function.name, \"arguments\": call.function.arguments}}]}).",
+    "result = FUNCTIONS[call.function.name]()\nmessages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": str(result)})\nmessage = chat(messages, tools=TOOLS)\nprint(\"Агент:\", message.content)"
+  ],
+  "starter": "empty"
+}

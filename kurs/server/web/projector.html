@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Экран для проектора</title>
+<style>
+  :root { --indigo: #12163A; --blue: #2F43E8; --sky: #A9B5FF; --ok: #3CCB8B; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--indigo); color: #fff; font: 22px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; padding: 4vh 5vw; }
+  header { display: flex; align-items: baseline; gap: 24px; }
+  h1 { font-size: 4.2vh; margin: 0; flex: 1; }
+  .sub { color: var(--sky); font-size: 2.6vh; }
+  .timer { font-size: 9vh; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .timer small { display: block; font-size: 2.2vh; color: var(--sky); font-weight: 600; text-align: right; }
+  .pause { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .pause .ic { font-size: 16vh; }
+  .pause h2 { font-size: 7vh; margin: 2vh 0 0; }
+  .tasks { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 2.4vh; margin-top: 4vh; }
+  .task { display: grid; grid-template-columns: 34vw 1fr 12vw; align-items: center; gap: 2vw; font-size: 3.2vh; }
+  .track { height: 3.6vh; border-radius: 2vh; background: rgba(255, 255, 255, .12); overflow: hidden; }
+  .track i { display: block; height: 100%; background: var(--ok); border-radius: 2vh; transition: width .6s; }
+  .count { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--sky); text-align: center; font-size: 3.4vh; }
+  footer { color: var(--sky); font-size: 2vh; display: flex; justify-content: space-between; }
+  button { font: inherit; font-size: 2vh; background: transparent; color: var(--sky); border: 1px solid rgba(169, 181, 255, .4); border-radius: 10px; padding: 6px 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+<header><h1 id="title">Экран для проектора</h1><div class="timer" id="timer"></div></header>
+<div class="sub" id="sub"></div>
+<div id="main" class="tasks"></div>
+<footer><span>Имена учеников здесь не показываются.</span><button id="fs" type="button">Во весь экран</button></footer>
+<script src="/teacher/projector.js"></script>
+</body>
+</html>

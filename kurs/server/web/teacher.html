@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульт учителя</title>
+<link rel="stylesheet" href="/teacher/teacher.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Пульт учителя</div>
+  <div id="lesson" class="lesson"></div>
+  <div id="actions" class="actions"></div>
+</header>
+<main id="app"><p class="muted">Загрузка…</p></main>
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <button class="modal-close ghost small" type="button" aria-label="Закрыть">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+<script src="/teacher/teacher.js"></script>
+</body>
+</html>
