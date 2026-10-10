@@ -234,7 +234,18 @@ function renderIdle() {
       h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
       addresses())));
   // нейросеть можно настроить заранее, до занятия 3
-  return ai ? [wizard, aiCard(), connectCard(), renderGroups()] : [wizard, connectCard(), renderGroups()];
+  const cards = [wizard, aiCard && ai ? aiCard() : null, connectCard(), renderGroups()].filter((x) => x);
+  const last = data.state.last_class;
+  const lastGroup = last && data.groups.find((g) => g.id === last.group_id);
+  const lastLesson = last && data.lessons.find((l) => l.lesson === last.lesson);
+  if (lastGroup && lastLesson) {
+    const n = (last.open_tasks || []).length;
+    cards.unshift(h("section", { class: "card" }, h("h2", {}, "Продолжить прошлое занятие"),
+      h("p", {}, `${lastGroup.name} · Занятие ${lastLesson.lesson}. ${lastLesson.title}`),
+      h("p", { class: "muted" }, `Вернутся открытые задания (${n}) и этап тетради. Решённые задания и файлы учеников сохранены — заново ничего делать не нужно.`),
+      h("button", { class: "big", onclick: () => act("continue") }, "⏯ Продолжить занятие")));
+  }
+  return cards;
 }
 
 function addresses() {

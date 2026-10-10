@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 """
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
-                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0}
+                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0,
+                 "last_class": None}
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +607,20 @@ class Kurs:
         self.s.set("class_id", (self.s.get("class_id") or 0) + 1)
         self.s.log(None, "lesson_start", {"group": gid, "lesson": lesson})
 
+    def continue_class(self) -> None:
+        """Продолжить прошлое занятие: та же группа и занятие, открытые задания и этап тетради как были."""
+        last = self.s.get("last_class")
+        if not last:
+            raise ApiError(400, "Нечего продолжать: занятие ещё не проводили")
+        self.start(int(last["group_id"]), int(last["lesson"]))
+        valid = set(self.lib.lessons[int(last["lesson"])]["task_ids"])
+        self.s.set("open_tasks", [t for t in last.get("open_tasks") or [] if t in valid])
+        self.s.set("stage", int(last.get("stage") or 0))
+
     def end(self) -> None:
+        # запоминаем, где остановились: «Продолжить занятие» вернёт открытые задания и этап
+        if self.s.get("running"):
+            self.s.set("last_class", {k: self.s.get(k) for k in ("group_id", "lesson", "open_tasks", "stage")})
         for r in self.s.q("SELECT token FROM sessions WHERE closed IS NULL"):
             self.close_session(r["token"], "Занятие завершено")
         self.s.ex("UPDATE requests SET status='cancelled' WHERE status='pending'")
@@ -957,6 +971,8 @@ class Handler(BaseHTTPRequestHandler):
                 k.s.ex("DELETE FROM groups WHERE id=?", (gid,))
             elif name == "start":
                 k.start(int(b.get("group_id") or 0), int(b.get("lesson") or 0))
+            elif name == "continue":
+                k.continue_class()
             elif name == "end":
                 k.end()
             elif name == "open":
