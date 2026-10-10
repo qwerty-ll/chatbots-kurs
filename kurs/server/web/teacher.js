@@ -231,7 +231,8 @@ function renderIdle() {
       h("p", { class: "muted" }, "После начала ученики увидят список группы. Каждый вход вы подтверждаете сами."),
       h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
       addresses())));
-  return [wizard, connectCard(), renderGroups()];
+  // нейросеть можно настроить заранее, до занятия 3
+  return ai ? [wizard, aiCard(), connectCard(), renderGroups()] : [wizard, connectCard(), renderGroups()];
 }
 
 function addresses() {
