@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 """
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
-                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0}
+                 "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,7 @@ class Kurs:
     # ---------- вход ученика ----------
     def hello(self, pc: str) -> dict:
         st = self.s.state()
-        out = {"server": VERSION, "running": bool(st["running"]), "pc": pc}
+        out = {"server": VERSION, "running": bool(st["running"]), "pc": pc, "restart": st["restart_seq"]}
         if not st["running"]:
             return out
         lesson = self.lib.lessons.get(st["lesson"], {})
@@ -424,7 +424,8 @@ class Kurs:
                 "title": lesson.get("title", ""), "class_id": st["class_id"], "paused": bool(st["paused"]),
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
-                "results": res, "help_open": bool(help_open), "ai": self.ai.student_status()}
+                "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
+                "restart": st["restart_seq"]}
 
     def lesson_for(self) -> dict:
         lesson = self.lesson()
@@ -996,6 +997,10 @@ class Handler(BaseHTTPRequestHandler):
                     k.close_session(sess["token"], "Учитель завершил твой сеанс")
             elif name == "reload":
                 k.lib.load()
+            elif name == "restart_clients":
+                # все панели сохранят работу, обновятся и перезапустят окно VS Code
+                k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
+                k.s.log(None, "restart_clients")
             elif name == "ai/config":
                 k.ai.save_config(b)
             elif name == "ai/mode":

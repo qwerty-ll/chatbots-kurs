@@ -189,6 +189,8 @@ function renderTop() {
       : h("span", { class: "row" }, h("span", { class: "small", style: "color:#A9B5FF" }, "Таймер, мин:"),
           [5, 10, 15, 30].map((m) => h("button", { class: "ghost small", onclick: () => act("timer", { minutes: m, label: "Практика" }) }, m))));
     parts.push(h("button", { class: st.paused ? "on" : "ghost", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
+    parts.push(h("button", { class: "ghost", title: "Сохранить работу, обновить панель и перезапустить VS Code на всех компьютерах учеников",
+      onclick: () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"));
     parts.push(h("button", { class: "ghost", title: "Экран для проектора: таймер и прогресс без имён", onclick: () => window.open("/teacher/projector.html", "kurs-projector") }, "🖥 Проектор"));
   }
   parts.push(h("button", { class: "ghost small", title: "Звук при новых запросах", onclick: () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); } }, sound ? "🔔" : "🔕"));
@@ -249,6 +251,8 @@ function connectCard() {
   const mac = `curl -sm 10 ${url}/k | python3 - --shortcut`;
   const win = `py -c "import urllib.request as u; exec(u.urlopen('${url}/k', timeout=10).read())" --shortcut`;
   return h("section", { class: "card" }, details("connect", "Как подключить компьютер ученика (один раз на каждый компьютер)",
+    h("p", {}, h("button", { class: "ghost small", onclick: () => { if (confirm("Перезапустить VS Code на всех подключённых компьютерах учеников?")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"),
+      h("span", { class: "muted small" }, " — после обновления курса: панели обновятся сами")),
     h("p", {}, "Откройте на компьютере ученика терминал и выполните команду. Linux:"),
     h("pre", { class: "code" }, linux),
     h("p", { class: "muted" }, "macOS:"), h("pre", { class: "code" }, mac),

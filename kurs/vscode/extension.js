@@ -69,6 +69,7 @@ class Kurs {
     this.tasks = {};       // id → задание с заготовкой (с сервера)
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
+    this.restartSeen = null;   // номер команды «перезапустить VS Code» с пульта, который мы уже видели
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -152,6 +153,7 @@ class Kurs {
       this.schedule(this.boot, IDLE_POLL_MS);
       return;
     }
+    if (this.checkRestart(hello.restart)) return;
     if (!hello.running) {
       this.setScreen("idle", "Занятие ещё не началось. Подожди учителя.");
       this.schedule(this.boot, IDLE_POLL_MS);
@@ -181,6 +183,7 @@ class Kurs {
     if (!["pick", "confirmHere", "denied"].includes(this.v.screen)) return;
     try {
       const hello = await call(this.server(), "GET", "/api/hello?pc=" + encodeURIComponent(this.pc()));
+      if (this.checkRestart(hello.restart)) return;
       if (!hello.running) return this.boot();
       this.v.students = hello.students || [];
       this.v.here = hello.here || null;
@@ -299,6 +302,7 @@ class Kurs {
     if (!this.token) return;
     try {
       const st = await this.api("GET", "/api/state");
+      if (this.checkRestart(st.restart)) return;
       st.local_offset = Date.now() / 1000 - st.now;
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
@@ -364,6 +368,34 @@ class Kurs {
       }
       if (tabs.length) await vscode.window.tabGroups.close(tabs, true);
     } catch (e) { console.error("kurs: close editors", e); }
+  }
+
+  // ---------------------------------------------------------------- перезапуск по команде учителя
+  /** Учитель нажал «Перезапустить VS Code у всех»: номер команды вырос с тех пор, как окно открылось. */
+  checkRestart(seq) {
+    if (typeof seq !== "number") return false;
+    if (this.restartSeen === null || seq <= this.restartSeen) {
+      this.restartSeen = seq;
+      return false;
+    }
+    this.restartSeen = seq;
+    this.restartNow().catch((e) => console.error("kurs: restart", e));
+    return true;
+  }
+
+  async restartNow() {
+    this.toast("Учитель перезапускает VS Code — сохраняю твою работу…");
+    for (const doc of vscode.workspace.textDocuments) {
+      if (doc.isDirty && F.isInside(doc.uri.fsPath, path.join(this.root(), F.WORK))) await doc.save();
+    }
+    await this.upload();
+    // обновить панель тем же запуском, что и ярлык «Курс» (если он есть на этом компьютере)
+    const starter = path.join(os.homedir(), ".kurs", "kurs_start.py");
+    if (fs.existsSync(starter)) {
+      await new Promise((resolve) => cp.execFile(this.python(), [starter, "--no-open", "--server", this.server()],
+        { timeout: 120000 }, () => resolve()));
+    }
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
   }
 
   // ---------------------------------------------------------------- «пиши сам»
