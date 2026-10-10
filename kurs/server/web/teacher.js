@@ -244,10 +244,15 @@ function connectCard() {
   // команда для первого запуска на компьютере ученика: скачивает запуск курса с этого сервера
   const port = location.port || "80";
   const url = `http://${data.addresses[0] || "АДРЕС_УЧИТЕЛЯ"}:${port}`;
-  const cmd = `python3 -c "import urllib.request as u; exec(u.urlopen('${url}/client/kurs_start.py').read())" --server ${url} --shortcut`;
+  const linux = `wget -T 10 -qO- ${url}/k | python3 - --shortcut`;
+  const mac = `curl -sm 10 ${url}/k | python3 - --shortcut`;
+  const win = `py -c "import urllib.request as u; exec(u.urlopen('${url}/k', timeout=10).read())" --shortcut`;
   return h("section", { class: "card" }, details("connect", "Как подключить компьютер ученика (один раз на каждый компьютер)",
-    h("p", {}, "Откройте на компьютере ученика терминал и выполните команду (на Windows вместо python3 — python):"),
-    h("pre", { class: "code" }, cmd),
+    h("p", {}, "Откройте на компьютере ученика терминал и выполните команду. Linux:"),
+    h("pre", { class: "code" }, linux),
+    h("p", { class: "muted" }, "macOS:"), h("pre", { class: "code" }, mac),
+    h("p", { class: "muted" }, "Windows:"), h("pre", { class: "code" }, win),
+    h("p", { class: "muted" }, `Проверка связи: на компьютере ученика в браузере должен открываться ${url}. Не открывается — не тот адрес (другие адреса этого ПК: ${data.addresses.slice(1).join(", ") || "нет"}) или порт ${port} закрыт брандмауэром.`),
     h("p", { class: "muted" }, "Команда поставит панель курса в отдельный профиль VS Code (обычный VS Code не меняется), создаст папку «Курс» и ярлык «Курс» на рабочем столе. Дальше ученик открывает курс ярлыком.")));
 }
 

@@ -32,6 +32,8 @@ PROFILE = os.path.join(KURS_HOME, "vscode-profile")
 EXTDIR = os.path.join(KURS_HOME, "vscode-extensions")
 WORKSPACE = os.path.join(HOME, "Курс")
 STATE = os.path.join(KURS_HOME, "state.json")
+# Адрес сервера подставляет сам сервер, когда отдаёт этот файл по короткому адресу /k
+DEFAULT_SERVER = ""
 
 # Настройки отдельного профиля VS Code: крупно, без лишнего, без «умных» подсказок ИИ
 SETTINGS = {
@@ -244,7 +246,7 @@ def main(argv: list[str]) -> int:
         return 0
     os.makedirs(KURS_HOME, exist_ok=True)
     state = read_json(STATE, {})
-    server = (a.server or os.environ.get("KURS_SERVER") or state.get("server") or "").strip().rstrip("/")
+    server = (a.server or os.environ.get("KURS_SERVER") or DEFAULT_SERVER or state.get("server") or "").strip().rstrip("/")
     if not server:
         server = input("Адрес сервера курса (скажет учитель), например 192.168.1.10:8000: ").strip().rstrip("/")
     if server and not server.startswith(("http://", "https://")):

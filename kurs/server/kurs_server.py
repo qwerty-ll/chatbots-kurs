@@ -661,20 +661,24 @@ def _day_start() -> float:
 
 
 def local_addresses() -> list[str]:
-    out = set()
+    """Адреса этого компьютера. Первым — адрес основной сети (через него идёт маршрут по умолчанию):
+    его пульт подставляет в команду подключения. Docker и прочие виртуальные сети — в конце."""
+    main = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1))
-        out.add(s.getsockname()[0])
+        main = s.getsockname()[0]
         s.close()
     except OSError:
         pass
+    out = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             out.add(info[4][0])
     except OSError:
         pass
-    return sorted(a for a in out if not a.startswith("127."))
+    rest = sorted((a for a in out if not a.startswith("127.") and a != main), key=lambda a: (a.startswith("172.17."), a))
+    return ([main] if main and not main.startswith("127.") else []) + rest
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +798,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_static(self.web_dir, path[len("/teacher/"):])
             if path.startswith("/client/"):
                 return self.send_static(self.client_dir, path[len("/client/"):])
+            if path in ("/k", "/k/"):
+                # короткая команда для ПК ученика: wget -qO- http://IP:8000/k | python3 - --shortcut
+                # отдаём запуск курса с уже вписанным адресом этого сервера
+                host = re.sub(r"[^A-Za-z0-9.:\-\[\]]", "", self.headers.get("Host") or "")
+                try:
+                    with open(os.path.join(self.client_dir, "kurs_start.py"), encoding="utf-8") as fh:
+                        src = fh.read()
+                except OSError:
+                    return self.send_json({"error": "Не найдено"}, 404)
+                src = src.replace('DEFAULT_SERVER = ""', f'DEFAULT_SERVER = "http://{host}"', 1)
+                return self.send_bytes(src.encode("utf-8"), "text/x-python; charset=utf-8")
             return self.send_json({"error": "Не найдено"}, 404)
         except ApiError as e:
             self.kurs.s.db.rollback()
