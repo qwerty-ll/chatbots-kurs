@@ -397,6 +397,7 @@ function tableCard(lesson) {
     const row = h("tr", {}, h("td", { class: "name" },
       h("span", { class: "dot" + (s.online ? " on" : ""), title: s.online ? "на связи" : "не на связи" }),
       h("span", { class: "name-link", onclick: () => showStudent(s.id) }, s.name),
+      s.pastes ? [" ", h("span", { class: "paste-flag", title: `Пытался вставить готовый код: ${s.pastes} раз за занятие. Нажмите на имя — покажу что.`, onclick: () => showStudent(s.id) }, `⚠ ${s.pastes}`)] : null,
       " ", h("span", { class: "pc" }, s.pc || "не вошёл"),
       s.pc ? h("button", { class: "link small", title: "Завершить сеанс ученика", onclick: () => { if (confirm(`Завершить сеанс: ${s.name}?`)) act("kick", { student_id: s.id }); } }, "✕") : null));
     for (const t of lesson.tasks) {
@@ -488,7 +489,8 @@ function aiSettings() {
       field("Вопросов в день на ученика", num("daily_limit")),
       field("Длина вопроса, символов", num("max_prompt_chars")),
       field("Помнить строгие ответы, мин", num("cache_minutes"), "Одинаковый вопрос с temperature ≤ 0.3 — сразу из памяти.")),
-    h("label", { class: "check" }, chk("short_hint"), " просить нейросеть отвечать коротко"));
+    h("label", { class: "check" }, chk("short_hint"), " просить нейросеть отвечать коротко"),
+    h("label", { class: "check" }, chk("no_code"), " не писать ученикам готовый код (задания решают сами)"));
   const box = h("div", { class: "settings" }, field("Поставщик", provider), giga, openai, limits);
   const sync = () => { giga.classList.toggle("hidden", provider.value !== "gigachat"); openai.classList.toggle("hidden", provider.value !== "openai"); };
   provider.addEventListener("change", sync);
@@ -555,7 +557,12 @@ async function showResult(s, t) {
 async function showStudent(id) {
   try {
     const d = await api("GET", "/tapi/student?id=" + id);
+    const when = (ts) => new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     openModal(h("h2", {}, d.name),
+      d.pastes && d.pastes.length ? [h("h3", {}, "⚠ Попытки вставить готовый код"),
+        h("p", { class: "muted" }, "Панель не пустила этот текст в файл задания. Хороший повод подойти и спросить, откуда он."),
+        d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "вставка"}`),
+          h("pre", { class: "code" }, p.text || "")])] : null,
       h("p", { class: "kv" }, "Файлы с компьютера ученика (сохраняются при каждом сохранении и проверке)."),
       d.files.length ? d.files.map((f) => [h("p", { class: "kv" }, f.path), h("pre", { class: "code" }, f.content)])
         : h("p", { class: "muted" }, "Файлов пока нет."));

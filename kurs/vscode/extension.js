@@ -10,6 +10,7 @@ const os = require("os");
 const path = require("path");
 const { call, ApiError } = require("./lib/http");
 const F = require("./lib/files");
+const { Guard } = require("./lib/guard");
 
 const POLL_MS = 3000;
 const IDLE_POLL_MS = 5000;
@@ -25,7 +26,8 @@ function activate(context) {
     vscode.commands.registerCommand("kurs.check", (uri) => kurs.checkFile(uri)),
     vscode.workspace.onDidSaveTextDocument((doc) => kurs.onSave(doc)),
     vscode.window.onDidChangeActiveTextEditor((ed) => kurs.onEditor(ed)),
-    vscode.workspace.onDidChangeTextDocument((e) => kurs.diag.delete(e.document.uri)),
+    vscode.workspace.onDidChangeTextDocument((e) => { kurs.diag.delete(e.document.uri); kurs.onChange(e); }),
+    vscode.workspace.onDidOpenTextDocument((doc) => kurs.onOpen(doc)),
     { dispose: () => kurs.stop() }
   );
   kurs.start();
@@ -66,6 +68,10 @@ class Kurs {
     this.request = null;   // {id, secret} — ждём подтверждения учителя
     this.tasks = {};       // id → задание с заготовкой (с сервера)
     this.pending = [];     // результаты, которые не удалось отправить без связи
+    // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
+    this.guard = new Guard();
+    if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
+    for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
   }
 
   // ---------------------------------------------------------------- настройки
@@ -245,6 +251,11 @@ class Kurs {
     try {
       const mine = await this.api("GET", "/api/files");
       F.restoreWork(root, mine.files);
+      // работа, вернувшаяся с сервера, — своя
+      for (const f of mine.files || []) {
+        const full = path.join(root, F.WORK, ...String(f.path || "").split("/"));
+        try { if (fs.readFileSync(full, "utf8") === f.content && this.isGuarded(full)) this.trust(full, f.content); } catch (err) { /* нет файла */ }
+      }
     } catch (e) { /* не страшно */ }
     this.refreshFiles();
     this.render();
@@ -296,6 +307,7 @@ class Kurs {
       if (lessonChanged) {
         this.v.lesson = await this.api("GET", "/api/lesson");
         this.writeLessonFiles();
+        this.allowLessonTexts();
       }
       // подсказки и образцы, полученные раньше, восстанавливаем из ответов сервера при необходимости
       if (this.v.screen !== "in") this.v.screen = "in";
@@ -354,8 +366,95 @@ class Kurs {
     } catch (e) { console.error("kurs: close editors", e); }
   }
 
+  // ---------------------------------------------------------------- «пиши сам»
+  /** Файл, который ученик пишет сам: .py в Мои_работы, кроме общих модулей класса. */
+  isGuarded(file) {
+    const base = path.basename(file);
+    return file.endsWith(".py") && base !== "ai.py" && base !== "agent.py" &&
+      F.isInside(file, path.join(this.root(), F.WORK));
+  }
+  trustedAll() {
+    return this.ctx.globalState.get("kurs.trusted") || {};
+  }
+  /** Запомнить версию файла, которую ученик написал в редакторе курса (или выдала сама панель). */
+  trust(file, text) {
+    const all = this.trustedAll();
+    all[path.resolve(file)] = String(text);
+    for (const k of Object.keys(all)) if (!fs.existsSync(k) && k !== path.resolve(file)) delete all[k];
+    this.ctx.globalState.update("kurs.trusted", all);
+  }
+  /** Можно ли доверять тексту файла: он совпадает с версией из редактора курса. */
+  isTrusted(file, text) {
+    const t = this.trustedAll()[path.resolve(file)];
+    if (t !== undefined) return t === text;
+    // файлы, созданные до появления этой защиты, принимаем как есть
+    let mtime = 0;
+    try { mtime = fs.statSync(file).mtimeMs; } catch (e) { /* файла нет */ }
+    return !text.trim() || mtime <= (this.ctx.globalState.get("kurs.guardSince") || 0);
+  }
+  /** Текст условий, примеров диалога и ожидаемых ответов можно копировать в код (чтобы не опечататься). */
+  allowLessonTexts() {
+    for (const t of (this.v.lesson && this.v.lesson.tasks) || []) {
+      this.guard.allow(t.statement || "");
+      for (const d of t.dialog || []) this.guard.allow(d[1] || "");
+      for (const test of t.tests || []) for (const e of test.expect || []) this.guard.allow(e);
+    }
+  }
+  ownSources(except) {
+    const out = [];
+    for (const [k, v] of Object.entries(this.trustedAll())) if (k !== path.resolve(except)) out.push(v);
+    return out;
+  }
+
+  async onOpen(doc) {
+    const file = doc.uri.fsPath;
+    if (doc.uri.scheme !== "file" || !this.isGuarded(file)) return;
+    const text = doc.getText();
+    if (this.isTrusted(file, text)) {
+      this.trust(file, text);
+      this.guard.snapshot(file, text);
+      return;
+    }
+    // файл изменили в обход редактора курса — возвращаем версию ученика
+    const back = this.trustedAll()[path.resolve(file)] || "";
+    this.guard.snapshot(file, back);
+    this.guard.allow(back);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), back);
+    await vscode.workspace.applyEdit(edit);
+    this.blockedNotice("outside_edit", file, text);
+  }
+
+  async onChange(e) {
+    const doc = e.document;
+    const file = doc.uri.fsPath;
+    if (doc.uri.scheme !== "file" || !e.contentChanges.length || !this.isGuarded(file)) return;
+    const res = this.guard.inspect(file, doc.getText(), e.contentChanges, this.ownSources(file));
+    if (!res.blocked.length) return;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), res.old);
+    await vscode.workspace.applyEdit(edit);
+    this.blockedNotice("paste_blocked", file, res.blocked.join("\n"));
+  }
+
+  blockedNotice(kind, file, text) {
+    const msg = kind === "paste_blocked"
+      ? "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно только свой код."
+      : "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь.";
+    vscode.window.showWarningMessage(msg);
+    this.toast(msg);
+    if (this.token) {
+      this.api("POST", "/api/event", { kind, file: path.basename(file), chars: String(text).length,
+        text: String(text).slice(0, 400) }).catch(() => {});
+    }
+  }
+
   // ---------------------------------------------------------------- сохранение работы на сервере
   onSave(doc) {
+    if (this.isGuarded(doc.uri.fsPath)) {
+      this.trust(doc.uri.fsPath, doc.getText());
+      this.guard.snapshot(doc.uri.fsPath, doc.getText());
+    }
     if (!this.token) return;
     if (F.isInside(doc.uri.fsPath, path.join(this.root(), F.WORK))) {
       clearTimeout(this.uploadTimer);
@@ -504,7 +603,10 @@ class Kurs {
   async createFile(id) {
     const t = await this.getTask(id);
     const file = this.taskFile(t);
-    if (!fs.existsSync(file)) F.writeFile(file, t.start);
+    if (!fs.existsSync(file)) {
+      F.writeFile(file, t.start);
+      this.trust(file, t.start);
+    }
     this.refreshFiles();
     this.render();
     await this.openPath(file);
@@ -542,12 +644,14 @@ class Kurs {
     if (ok !== "Начать заново") return;
     const file = this.taskFile(t);
     const doc = vscode.workspace.textDocuments.find((d) => path.resolve(d.uri.fsPath) === path.resolve(file));
+    this.guard.allow(t.start);
     if (doc) {
       const ed = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
       await ed.edit((b) => b.replace(new vscode.Range(0, 0, doc.lineCount, 0), t.start));
       await doc.save();
     } else {
       F.writeFile(file, t.start);
+      this.trust(file, t.start);
       await this.openPath(file);
     }
   }
@@ -590,6 +694,14 @@ class Kurs {
     const file = this.taskFile(t);
     if (!fs.existsSync(file)) return this.toast("Сначала нажми «Создать файл для задания».");
     await this.saveIfOpen(file);
+    const disk = fs.readFileSync(file, "utf8");
+    const open = vscode.workspace.textDocuments.find((d) => path.resolve(d.uri.fsPath) === path.resolve(file));
+    if (open && !open.isDirty && open.getText() === disk) this.trust(file, disk);   // текст из редактора курса
+    else if (!this.isTrusted(file, disk)) {
+      if (this.token) this.api("POST", "/api/event", { kind: "outside_edit", file: path.basename(file), chars: disk.length, text: disk.slice(0, 400) }).catch(() => {});
+      await this.openPath(file);   // откроется — и вернётся версия ученика
+      return this.toast("Этот файл меняли не в редакторе курса. Проверка принимает только код, написанный здесь.");
+    }
     const taskJson = path.join(this.root(), F.HIDDEN, "tasks", id + ".json");
     F.writeFile(taskJson, JSON.stringify(t));
     this.v.busy = id;
@@ -669,7 +781,10 @@ class Kurs {
 
   async openNotebook() {
     const file = this.notebookPath();
-    if (!fs.existsSync(file)) F.writeFile(file, this.v.lesson.notebook_template);
+    if (!fs.existsSync(file)) {
+      F.writeFile(file, this.v.lesson.notebook_template);
+      this.trust(file, this.v.lesson.notebook_template);
+    }
     this.refreshFiles();
     this.render();
     await this.openPath(file);

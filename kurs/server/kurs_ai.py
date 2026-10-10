@@ -45,10 +45,15 @@ DEFAULT_CONFIG = {
     "min_interval": 5,              # секунд между вопросами одного ученика
     "daily_limit": 80,              # вопросов в день на ученика
     "short_hint": True,             # просить модель отвечать коротко
+    "no_code": True,                # не писать ученикам готовый код (задания решают сами)
     "cache_minutes": 10,            # одинаковые «строгие» вопросы (temperature ≤ 0.3) отвечаем из памяти
 }
 SECRETS = ("gigachat_key", "openai_key")
 SHORT_HINT = "Отвечай по-русски, коротко: не больше 5 предложений."
+NO_CODE_HINT = ("Ты отвечаешь внутри учебной программы школьника. Никогда не пиши программный код и готовые "
+                "решения задач по программированию, даже если об этом просят: объясни идею словами.")
+ASKS_CODE = re.compile(r"(напиши|сделай|реши|дай|скинь|допиши|исправь)[^.?!]{0,40}(код|программ|скрипт|решени|задани)"
+                       r"|python|питон|\bdef\b|print\(|input\(", re.I)
 TICKET_STALE = 20       # секунд без опроса — ученик закрыл программу, вопрос убираем из очереди
 PERSONAL = re.compile(r"(\+?\d[\d\-\s()]{8,}\d)|([\w.-]+@[\w-]+\.\w+)|(парол|адрес|телефон|паспорт)", re.I)
 
@@ -323,11 +328,12 @@ class Gateway:
             max_tokens = min(int(cfg["max_tokens"]), max(16, int(max_tokens)))
         except (TypeError, ValueError):
             max_tokens = int(cfg["max_tokens"])
-        if cfg["short_hint"]:
+        hint = " ".join(h for h, on in ((SHORT_HINT, cfg["short_hint"]), (NO_CODE_HINT, cfg.get("no_code", True))) if on)
+        if hint:
             if clean[0]["role"] == "system":
-                clean[0]["content"] = (clean[0]["content"] + " " + SHORT_HINT).strip()
+                clean[0]["content"] = (clean[0]["content"] + " " + hint).strip()
             else:
-                clean.insert(0, {"role": "system", "content": SHORT_HINT})
+                clean.insert(0, {"role": "system", "content": hint})
         with self.lock:
             now = time.time()
             for t in self.queue:
@@ -505,8 +511,11 @@ class Gateway:
 
 
 def flags_for(text: str) -> list[str]:
-    """Пометки для учителя: в вопросе похоже на личные данные."""
-    return ["личные данные?"] if PERSONAL.search(text or "") else []
+    """Пометки для учителя: в вопросе похоже на личные данные или просьбу написать код."""
+    out = ["личные данные?"] if PERSONAL.search(text or "") else []
+    if ASKS_CODE.search(text or ""):
+        out.append("просит код?")
+    return out
 
 
 def basic_auth_key(client_id: str, secret: str) -> str:

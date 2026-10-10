@@ -542,6 +542,7 @@ class Kurs:
             "stages": [{"n": s["n"], "title": s["title"]} for s in l["stages"]]}
             for n, l in sorted(self.lib.lessons.items())]
         students = []
+        pastes = self.guard_counts()
         if st["group_id"] is not None:
             lesson = self.lib.lessons.get(st["lesson"], {"task_ids": []})
             for r in self.s.q("SELECT * FROM students WHERE group_id=? AND archived=0 ORDER BY name", (st["group_id"],)):
@@ -553,7 +554,7 @@ class Kurs:
                                              "rating": x["rating"], "summary": x["summary"]}
                 students.append({"id": r["id"], "name": r["name"], "pc": sess["pc"] if sess else None,
                                  "online": bool(sess and now - sess["seen"] < ONLINE_SEC),
-                                 "seen": sess["seen"] if sess else None, "results": res})
+                                 "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0)})
         reqs = []
         for r in self.s.q("SELECT * FROM requests WHERE status='pending' ORDER BY created"):
             reqs.append({"id": r["id"], "kind": r["kind"], "name": self.name(r["student_id"]), "pc": r["pc"],
@@ -627,13 +628,36 @@ class Kurs:
         cur.sort(key=lambda i: self.lib.tasks[i]["num"])
         self.s.set("open_tasks", cur)
 
+    GUARD_EVENTS = ("paste_blocked", "outside_edit")
+
+    def student_event(self, sess, body: dict) -> dict:
+        """Панель сообщает: ученик пытался вставить готовый код или менял файл в обход редактора."""
+        kind = str(body.get("kind", ""))
+        if kind not in self.GUARD_EVENTS:
+            raise ApiError(400, "Неизвестное событие")
+        self.s.log(sess["student_id"], kind, {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
+                                             "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]})
+        return {"ok": True}
+
+    def lesson_started_at(self) -> float:
+        r = self.s.one("SELECT MAX(ts) AS ts FROM events WHERE kind='lesson_start'")
+        return (r["ts"] if r else None) or 0
+
+    def guard_counts(self) -> dict:
+        since = self.lesson_started_at()
+        rows = self.s.q("SELECT student_id, COUNT(*) AS n FROM events WHERE kind IN (?, ?) AND ts>=? GROUP BY student_id",
+                        (*self.GUARD_EVENTS, since))
+        return {r["student_id"]: r["n"] for r in rows}
+
     def student_detail(self, sid: int) -> dict:
         r = self.student(sid)
         if not r:
             raise ApiError(404, "Нет такого ученика")
         res = [dict(x) for x in self.s.q("SELECT * FROM results WHERE student_id=? ORDER BY task_id", (sid,))]
         files = [dict(x) for x in self.s.q("SELECT path,content,updated FROM files WHERE student_id=? ORDER BY path", (sid,))]
-        return {"id": sid, "name": r["name"], "results": res, "files": files}
+        pastes = [dict(json.loads(x["data"] or "{}"), ts=x["ts"], kind=x["kind"]) for x in self.s.q(
+            "SELECT * FROM events WHERE student_id=? AND kind IN (?, ?) ORDER BY ts DESC LIMIT 20", (sid, *self.GUARD_EVENTS))]
+        return {"id": sid, "name": r["name"], "results": res, "files": files, "pastes": pastes}
 
     def export_csv(self) -> str:
         st = self.s.state()
@@ -862,6 +886,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = k.help(sess, str(b.get("text", "")), bool(b.get("cancel")))
             elif method == "POST" and name == "files":
                 out = k.save_files(sess, self.body_json().get("files"))
+            elif method == "POST" and name == "event":
+                out = k.student_event(sess, self.body_json())
             elif method == "GET" and name == "files":
                 out = k.my_files(sess)
             elif method == "POST" and name == "logout":
