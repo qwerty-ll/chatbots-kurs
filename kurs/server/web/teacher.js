@@ -161,7 +161,7 @@ async function refresh() {
     lessonEl.textContent = "Нет связи с сервером";
     return;
   }
-  const attention = data.requests.length + data.help.length + (ai && ai.status.last_error && aiUsed() ? 1 : 0);
+  const attention = data.requests.length + data.help.length + (data.locks || []).length + (ai && ai.status.last_error && aiUsed() ? 1 : 0);
   document.title = (attention ? `(${attention}) ` : "") + "Пульт учителя";
   if (attention > lastAttention) beep();
   lastAttention = attention;
@@ -340,11 +340,23 @@ function tiles() {
 }
 
 function attentionCard() {
-  const n = data.requests.length + data.help.length;
+  const locks = data.locks || [];
+  const n = data.requests.length + data.help.length + locks.length;
   const box = h("section", { class: "card" }, h("div", { class: "card-head" },
     h("h2", {}, "Требует внимания"), h("span", { class: "badge" + (n ? "" : " zero") }, n), h("span", { class: "spacer" }),
     data.requests.length > 1 ? h("button", { class: "ok small", onclick: () => act("approve_all") }, "Пустить всех") : null));
-  if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число.")); return box; }
+  const lockSwitch = h("label", { class: "check small", style: "margin-top:8px", title: "Вставил чужой код — панель ученика блокируется до вашего решения" },
+    h("input", { type: "checkbox", checked: data.state.lock_on_paste ? true : null, onchange: (e) => act("lock_on_paste", { on: e.target.checked }) }),
+    " блокировать панель при вставке чужого кода");
+  if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число."), lockSwitch); return box; }
+  for (const x of locks) {
+    box.append(h("div", { class: "att lock" }, h("span", { class: "ic" }, "🔒"),
+      h("div", { class: "txt" }, h("b", {}, x.name), x.pc ? ` · ${x.pc}` : "",
+        h("small", {}, `${x.kind === "outside_edit" ? "менял файл не в редакторе" : "вставил чужой код"}${x.file ? " · " + x.file : ""} · ${ago(x.ts, data.now)}`),
+        h("div", { class: "row", style: "margin-top:6px" },
+          h("button", { class: "ghost small", onclick: () => showStudent(x.student_id) }, "Посмотреть"),
+          h("button", { class: "ok small", onclick: () => act("unlock", { student_id: x.student_id }) }, "Разблокировать")))));
+  }
   for (const r of data.requests) {
     let text, sub;
     if (r.kind === "switch") { text = [h("b", {}, r.name), " садится за ", r.pc]; sub = `вместо ${r.prev}`; }
@@ -361,6 +373,7 @@ function attentionCard() {
       x.status !== "going" ? h("button", { class: "ghost small", onclick: () => act("help", { id: x.id, going: true }) }, "Иду") : null,
       h("button", { class: "ok small", onclick: () => act("help", { id: x.id }) }, "Готово")));
   }
+  box.append(lockSwitch);
   return box;
 }
 
@@ -417,6 +430,8 @@ function tableCard(lesson) {
     const row = h("tr", {}, h("td", { class: "name" },
       h("span", { class: "dot" + (s.online ? " on" : ""), title: s.online ? "на связи" : "не на связи" }),
       h("span", { class: "name-link", onclick: () => showStudent(s.id) }, s.name),
+      s.locked ? [" ", h("span", { class: "paste-flag", title: "Панель заблокирована за вставку чужого кода. Нажмите — разблокировать",
+        onclick: () => { if (confirm(`Разблокировать панель: ${s.name}?`)) act("unlock", { student_id: s.id }); } }, "🔒")] : null,
       s.pastes ? [" ", h("span", { class: "paste-flag", title: `Пытался вставить готовый код: ${s.pastes} раз за занятие. Нажмите на имя — покажу что.`, onclick: () => showStudent(s.id) }, `⚠ ${s.pastes}`)] : null,
       " ", h("span", { class: "pc" }, s.pc || "не вошёл"),
       s.pc ? h("button", { class: "link small", title: "Перезапустить VS Code у этого ученика (работа сохранится, вход останется)",
@@ -580,7 +595,9 @@ async function showStudent(id) {
   try {
     const d = await api("GET", "/tapi/student?id=" + id);
     const when = (ts) => new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const locked = (data.locks || []).some((x) => x.student_id === id);
     openModal(h("h2", {}, d.name),
+      locked ? h("p", {}, h("button", { class: "ok small", onclick: async () => { await act("unlock", { student_id: id }); closeModal(); } }, "🔓 Разблокировать панель")) : null,
       d.pastes && d.pastes.length ? [h("h3", {}, "⚠ Попытки вставить готовый код"),
         h("p", { class: "muted" }, "Панель не пустила этот текст в файл задания. Хороший повод подойти и спросить, откуда он."),
         d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "вставка"}`),

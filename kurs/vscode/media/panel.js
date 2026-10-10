@@ -200,6 +200,10 @@
     if (ui.tab === "tasks" && ui.task) out.push(actionBar(ui.task));
     if (st.paused) out.push(h("div", { class: "pause" }, h("div", { class: "big-ic" }, "👀"), h("h1", {}, st.pause_text || "Пауза: смотрим на учителя"),
       h("p", {}, "Отпусти мышку и посмотри на экран учителя.")));
+    if (st.locked) out.push(h("div", { class: "pause" }, h("div", { class: "big-ic" }, "🔒"), h("h1", {}, "Панель заблокирована"),
+      h("p", {}, "В файл задания вставили готовый код. Подожди — учитель подойдёт и разблокирует."),
+      st.help_open ? h("p", { class: "muted" }, "Учитель уже знает, что ты ждёшь.")
+        : h("button", { onclick: () => send("help", { text: "Разблокируйте панель, пожалуйста" }) }, "🙋 Позвать учителя")));
     return out;
   }
 

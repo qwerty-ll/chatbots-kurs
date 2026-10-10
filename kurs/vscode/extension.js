@@ -304,6 +304,7 @@ class Kurs {
       const st = await this.api("GET", "/api/state");
       if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me") || this.checkClose(st.close)) return;
       st.local_offset = Date.now() / 1000 - st.now;
+      this.applyLock(!!st.locked);
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
       this.v.me = { name: st.name, pc: st.pc };
@@ -420,6 +421,24 @@ class Kurs {
     await vscode.commands.executeCommand("workbench.action.reloadWindow");
   }
 
+  // ---------------------------------------------------------------- блокировка за чужой код
+  isLocked() {
+    return !!(this.v.state && this.v.state.locked);
+  }
+
+  /** Заблокирован учителем (вставил чужой код): файлы курса только для чтения, пока учитель не разблокирует.
+   *  Блокировка хранится на сервере, поэтому перезапуск VS Code её не снимает. */
+  async applyLock(on) {
+    if (on === this.lockApplied) return;
+    this.lockApplied = on;
+    try {
+      const files = vscode.workspace.getConfiguration("files");
+      const ro = Object.assign({}, files.get("readonlyInclude") || {});
+      if (on) ro[F.WORK + "/**"] = true; else delete ro[F.WORK + "/**"];
+      await files.update("readonlyInclude", Object.keys(ro).length ? ro : undefined, vscode.ConfigurationTarget.Workspace);
+    } catch (e) { console.error("kurs: lock", e); }
+  }
+
   // ---------------------------------------------------------------- «пиши сам»
   /** Файл, который ученик пишет сам: .py в Мои_работы, кроме общих модулей класса. */
   isGuarded(file) {
@@ -520,7 +539,7 @@ class Kurs {
     this.toast(msg);
     if (this.token) {
       this.api("POST", "/api/event", { kind, file: path.basename(file), chars: String(text).length,
-        text: String(text).slice(0, 400) }).catch(() => {});
+        text: String(text).slice(0, 400) }).then((r) => { if (r && r.locked) return this.pollState(); }).catch(() => {});
     }
   }
 
@@ -744,6 +763,7 @@ class Kurs {
   }
 
   async runPath(file) {
+    if (this.isLocked()) return this.toast("Панель заблокирована — подожди, пока учитель разблокирует.");
     if (!fs.existsSync(file)) return this.toast("Сначала создай файл задания.");
     await this.saveIfOpen(file);
     if (this.runner) this.runner.dispose();
@@ -765,6 +785,7 @@ class Kurs {
   }
 
   async checkTask(id) {
+    if (this.isLocked()) return this.toast("Панель заблокирована — подожди, пока учитель разблокирует.");
     const t = await this.getTask(id);
     const file = this.taskFile(t);
     if (!fs.existsSync(file)) return this.toast("Сначала нажми «Создать файл для задания».");

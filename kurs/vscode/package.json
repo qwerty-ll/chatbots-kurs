@@ -2,7 +2,7 @@
   "name": "kurs-panel",
   "displayName": "Курс «Чат-боты на Python»",
   "description": "Панель ученика: задания, теория, проверка кода и помощь учителя.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "kurs",
   "license": "UNLICENSED",
   "private": true,

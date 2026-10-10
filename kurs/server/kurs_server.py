@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
+                 "lock_on_paste": 1, "locks": {},
                  "last_class": None}
 
 
@@ -427,7 +428,7 @@ class Kurs:
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
-                "restart": st["restart_seq"], "close": st["close_seq"],
+                "restart": st["restart_seq"], "close": st["close_seq"], "locked": bool(self.lock_of(sess["student_id"])),
                 "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
 
     def lesson_for(self) -> dict:
@@ -465,6 +466,8 @@ class Kurs:
                   (sid, task_id, time.time()))
 
     def result(self, sess, task_id: str, ok: bool, summary: str, code: str) -> dict:
+        if self.lock_of(sess["student_id"]):
+            raise ApiError(423, "Панель заблокирована: подожди, пока учитель разблокирует")
         t = self.task(task_id)
         sid = sess["student_id"]
         self._touch_result(sid, task_id)
@@ -558,7 +561,8 @@ class Kurs:
                                              "rating": x["rating"], "summary": x["summary"]}
                 students.append({"id": r["id"], "name": r["name"], "pc": sess["pc"] if sess else None,
                                  "online": bool(sess and now - sess["seen"] < ONLINE_SEC),
-                                 "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0)})
+                                 "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0),
+                                 "locked": bool((st["locks"] or {}).get(str(r["id"])))})
         reqs = []
         for r in self.s.q("SELECT * FROM requests WHERE status='pending' ORDER BY created"):
             reqs.append({"id": r["id"], "kind": r["kind"], "name": self.name(r["student_id"]), "pc": r["pc"],
@@ -568,7 +572,8 @@ class Kurs:
                   "status": h["status"], "created": h["created"]}
                  for h in self.s.q("SELECT * FROM help WHERE status!='done' ORDER BY created")]
         return {"state": st, "now": now, "groups": groups, "lessons": lessons, "students": students,
-                "requests": reqs, "help": helps, "addresses": local_addresses()}
+                "requests": reqs, "help": helps, "addresses": local_addresses(),
+                "locks": [dict(v, student_id=int(k), name=self.name(int(k))) for k, v in (st["locks"] or {}).items()]}
 
     def save_group(self, name: str, names: list[str], gid=None) -> dict:
         name = (name or "").strip()[:60]
@@ -652,9 +657,27 @@ class Kurs:
         kind = str(body.get("kind", ""))
         if kind not in self.GUARD_EVENTS:
             raise ApiError(400, "Неизвестное событие")
-        self.s.log(sess["student_id"], kind, {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
-                                             "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]})
-        return {"ok": True}
+        data = {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
+                "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]}
+        self.s.log(sess["student_id"], kind, data)
+        if self.s.get("lock_on_paste"):
+            # панель блокируется до решения учителя; блокировка хранится здесь, перезапуск VS Code её не снимает
+            locks = dict(self.s.get("locks") or {})
+            key = str(sess["student_id"])
+            if key not in locks:
+                locks[key] = dict(data, kind=kind, ts=time.time())
+                self.s.set("locks", locks)
+            return {"ok": True, "locked": True}
+        return {"ok": True, "locked": False}
+
+    def lock_of(self, sid):
+        return (self.s.get("locks") or {}).get(str(sid))
+
+    def unlock(self, sid: int) -> None:
+        locks = dict(self.s.get("locks") or {})
+        if locks.pop(str(sid), None) is not None:
+            self.s.set("locks", locks)
+            self.s.log(sid, "unlock")
 
     def lesson_started_at(self) -> float:
         r = self.s.one("SELECT MAX(ts) AS ts FROM events WHERE kind='lesson_start'")
@@ -1019,6 +1042,10 @@ class Handler(BaseHTTPRequestHandler):
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
                 k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
                 k.s.log(None, "restart_clients")
+            elif name == "unlock":
+                k.unlock(int(b.get("student_id") or 0))
+            elif name == "lock_on_paste":
+                k.s.set("lock_on_paste", 1 if b.get("on") else 0)
             elif name == "close_clients":
                 # все панели сохранят работу и закроют VS Code курса на компьютерах учеников
                 k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
