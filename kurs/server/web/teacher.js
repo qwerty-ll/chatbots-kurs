@@ -414,6 +414,8 @@ function tableCard(lesson) {
       h("span", { class: "name-link", onclick: () => showStudent(s.id) }, s.name),
       s.pastes ? [" ", h("span", { class: "paste-flag", title: `Пытался вставить готовый код: ${s.pastes} раз за занятие. Нажмите на имя — покажу что.`, onclick: () => showStudent(s.id) }, `⚠ ${s.pastes}`)] : null,
       " ", h("span", { class: "pc" }, s.pc || "не вошёл"),
+      s.pc ? h("button", { class: "link small", title: "Перезапустить VS Code у этого ученика (работа сохранится, вход останется)",
+        onclick: () => { if (confirm(`Перезапустить VS Code у ученика ${s.name} (${s.pc})? Работа сохранится, вход останется.`)) act("restart_student", { student_id: s.id }); } }, "🔄") : null,
       s.pc ? h("button", { class: "link small", title: "Завершить сеанс ученика", onclick: () => { if (confirm(`Завершить сеанс: ${s.name}?`)) act("kick", { student_id: s.id }); } }, "✕") : null));
     for (const t of lesson.tasks) {
       const r = s.results[t.id];

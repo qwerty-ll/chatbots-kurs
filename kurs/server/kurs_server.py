@@ -426,7 +426,8 @@ class Kurs:
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
-                "restart": st["restart_seq"]}
+                "restart": st["restart_seq"],
+                "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
 
     def lesson_for(self) -> dict:
         lesson = self.lesson()
@@ -1017,6 +1018,15 @@ class Handler(BaseHTTPRequestHandler):
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
                 k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
                 k.s.log(None, "restart_clients")
+            elif name == "restart_student":
+                # то же самое, но только на компьютере одного ученика
+                sid = int(b.get("student_id") or 0)
+                if not k.student(sid):
+                    raise ApiError(404, "Нет такого ученика")
+                per = dict(k.s.get("restart_students") or {})
+                per[str(sid)] = int(per.get(str(sid), 0)) + 1
+                k.s.set("restart_students", per)
+                k.s.log(sid, "restart_student")
             elif name == "ai/config":
                 k.ai.save_config(b)
             elif name == "ai/mode":

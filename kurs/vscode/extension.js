@@ -69,7 +69,7 @@ class Kurs {
     this.tasks = {};       // id → задание с заготовкой (с сервера)
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
-    this.restartSeen = null;   // номер команды «перезапустить VS Code» с пульта, который мы уже видели
+    this.restartSeen = {};     // номера команд «перезапустить VS Code» с пульта, которые мы уже видели
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -302,7 +302,7 @@ class Kurs {
     if (!this.token) return;
     try {
       const st = await this.api("GET", "/api/state");
-      if (this.checkRestart(st.restart)) return;
+      if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me")) return;
       st.local_offset = Date.now() / 1000 - st.now;
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
@@ -371,14 +371,16 @@ class Kurs {
   }
 
   // ---------------------------------------------------------------- перезапуск по команде учителя
-  /** Учитель нажал «Перезапустить VS Code у всех»: номер команды вырос с тех пор, как окно открылось. */
-  checkRestart(seq) {
+  /** Учитель нажал «Перезапустить VS Code у всех» (kind "all") или только у этого ученика ("me"):
+   *  номер команды вырос с тех пор, как окно открылось. */
+  checkRestart(seq, kind = "all") {
     if (typeof seq !== "number") return false;
-    if (this.restartSeen === null || seq <= this.restartSeen) {
-      this.restartSeen = seq;
+    const seen = this.restartSeen[kind];
+    if (seen === undefined || seq <= seen) {
+      this.restartSeen[kind] = seq;
       return false;
     }
-    this.restartSeen = seq;
+    this.restartSeen[kind] = seq;
     this.restartNow().catch((e) => console.error("kurs: restart", e));
     return true;
   }
