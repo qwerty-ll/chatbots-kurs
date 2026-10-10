@@ -10,7 +10,7 @@ const os = require("os");
 const path = require("path");
 const { call, ApiError } = require("./lib/http");
 const F = require("./lib/files");
-const { Guard } = require("./lib/guard");
+const { Guard, squash } = require("./lib/guard");
 
 const POLL_MS = 3000;
 const IDLE_POLL_MS = 5000;
@@ -424,9 +424,19 @@ class Kurs {
     try { mtime = fs.statSync(file).mtimeMs; } catch (e) { /* файла нет */ }
     return !text.trim() || mtime <= (this.ctx.globalState.get("kurs.guardSince") || 0);
   }
-  /** Текст условий, примеров диалога и ожидаемых ответов можно копировать в код (чтобы не опечататься). */
+  /** Из панели можно копировать: учебник (теория с примерами кода), шпаргалку, условия и примеры диалога.
+   *  Нельзя: подсказки и образцы решений — их перепечатывают сами. */
   allowLessonTexts() {
-    for (const t of (this.v.lesson && this.v.lesson.tasks) || []) {
+    const lesson = this.v.lesson || {};
+    for (const c of lesson.theory || []) {
+      this.guard.allow(c.text || "");
+      this.guard.allow(c.code || "");
+      this.guard.allow(c.try || "");
+    }
+    for (const s of (lesson.cheatsheet && lesson.cheatsheet.sections) || []) {
+      for (const row of s.rows || []) for (const cell of row) this.guard.allow(cell);
+    }
+    for (const t of lesson.tasks || []) {
       this.guard.allow(t.statement || "");
       for (const d of t.dialog || []) this.guard.allow(d[1] || "");
       for (const test of t.tests || []) for (const e of test.expect || []) this.guard.allow(e);
@@ -469,10 +479,21 @@ class Kurs {
     this.blockedNotice("paste_blocked", file, res.blocked.join("\n"));
   }
 
+  /** Вставку взяли из подсказки или образца решения? */
+  fromHintOrSample(text) {
+    const s = squash(text);
+    const pool = [];
+    for (const list of Object.values(this.v.hints || {})) for (const x of list || []) if (x) pool.push(x);
+    for (const sol of Object.values(this.v.solutions || {})) if (sol && sol.code) pool.push(sol.code);
+    return s.length > 0 && pool.some((p) => squash(p).includes(s) || s.includes(squash(p)));
+  }
+
   blockedNotice(kind, file, text) {
-    const msg = kind === "paste_blocked"
-      ? "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно только свой код."
-      : "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь.";
+    const msg = kind !== "paste_blocked"
+      ? "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь."
+      : this.fromHintOrSample(text)
+        ? "Код из подсказки или образца вставлять нельзя — перепечатай его сам, так он лучше запомнится 🙂"
+        : "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно свой код, примеры из «Учебника» и «Шпаргалки».";
     vscode.window.showWarningMessage(msg);
     this.toast(msg);
     if (this.token) {
