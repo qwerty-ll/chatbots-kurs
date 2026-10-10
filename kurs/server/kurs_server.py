@@ -18,6 +18,7 @@ import csv
 import hashlib
 import hmac
 import io
+import errno
 import json
 import os
 import re
@@ -1017,7 +1018,17 @@ def main() -> None:
         print("Пароль учителя сброшен. Задайте новый на странице учителя.")
         return
     build_client()
-    srv = make_server(a.host, a.port, a.data, a.tasks)
+    try:
+        srv = make_server(a.host, a.port, a.data, a.tasks)
+    except OSError as e:
+        if e.errno in (errno.EADDRINUSE, 10048):          # 10048 — тот же случай на Windows
+            print(f"Порт {a.port} уже занят. Скорее всего, сервер курса уже запущен в другом окне —\n"
+                  f"тогда просто откройте пульт: http://localhost:{a.port}/teacher\n"
+                  "Перезапустить: остановите старый сервер (Ctrl+C в его окне"
+                  + (", или: pkill -f kurs_server.py" if os.name != "nt" else "") + ") и запустите снова.\n"
+                  f"Порт занят другой программой — запустите на другом: --port {a.port + 80}")
+            sys.exit(1)
+        raise
     print(f"Сервер курса запущен, версия {VERSION}.")
     print(f"  Страница учителя:  http://localhost:{a.port}/teacher")
     for ip in local_addresses():
