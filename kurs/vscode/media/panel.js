@@ -70,9 +70,88 @@
       const key = JSON.stringify(m.view, (k, v) => (k === "now" || k === "local_offset" ? undefined : v));
       view = m.view;
       if (key !== lastKey) { lastKey = key; render(); }
+      syncPlay();
+    } else if (m.type === "lobby") {
+      lobby = m.lobby;
+      lobbyError = m.error || "";
+      if (ui.tab === "games" && !P.current()) render();
     } else if (m.type === "toast") toast(m.text);
     else if (m.type === "select") go({ tab: "tasks", task: m.task });
   });
+
+  // ---------------------------------------------------------------- игры по сети класса
+  const P = window.KursPlay;
+  let lobby = null;
+  let lobbyError = "";
+  const leftMatches = new Set();   // партии, из которых ученик уже вышел (сервер узнает об этом через секунду)
+  const playState = () => (view && view.state && view.state.play) || null;
+  const playOn = () => { const p = playState(); return !!(p && (p.allowed || p.match)) || !!P.current(); };
+
+  function startNet(m) {
+    P.start({ mode: "net", game: m.game, matchId: m.id, url: `${view.playWs}?match=${encodeURIComponent(m.id)}`, auth: view.playAuth,
+      names: m.names, onEnd: () => { leftMatches.add(m.id); send("playLeave"); render(); } });
+  }
+
+  // партия началась (приняли наш вызов или мы приняли чужой) — сразу открываем её
+  function syncPlay() {
+    const p = playState();
+    if (!p || view.screen !== "in") return;
+    const cur = P.current();
+    if (p.match && !leftMatches.has(p.match.id) && (!cur || cur.matchId !== p.match.id)) {
+      startNet(p.match);
+      if (ui.tab !== "games") go({ tab: "games" }); else render();
+    }
+    if (!p.allowed && !p.match && cur && cur.mode === "cpu") { P.stop(); render(); }
+  }
+
+  // лобби обновляем, пока открыта вкладка игр
+  setInterval(() => {
+    const p = playState();
+    if (view && view.screen === "in" && ui.tab === "games" && !P.current() && p && p.allowed) send("playLobby");
+  }, 3000);
+
+  function inviteBanner(inv) {
+    return h("div", { class: "card invite" },
+      h("b", {}, `${inv.name} зовёт тебя: ${(P.titles[inv.game] || inv.game)}`),
+      h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { onclick: () => send("playAnswer", { id: inv.id, accept: true }) }, "Играть"),
+        h("button", { class: "secondary", onclick: () => send("playAnswer", { id: inv.id, accept: false }) }, "Не сейчас")));
+  }
+
+  function games() {
+    const p = playState();
+    const out = [h("h1", {}, "🎮 Игры")];
+    if (P.current()) { out.push(P.host); return out; }
+    if (!p || !p.allowed) {
+      out.push(h("div", { class: "card" }, h("div", { class: "big-ic" }, "🔒"), h("p", {}, (p && p.reason) || "Игры закрыты — их открывает учитель")));
+      return out;
+    }
+    if (!lobby) {
+      send("playLobby");
+      out.push(h("p", { class: "muted" }, lobbyError || "Загружаю список игроков…"));
+      return out;
+    }
+    for (const inv of lobby.invites_in) out.push(inviteBanner(inv));
+    for (const inv of lobby.invites_out) {
+      out.push(h("div", { class: "card" }, `Ждём ответа: ${inv.name} · ${P.titles[inv.game]} `,
+        h("button", { class: "link", onclick: () => send("playCancel", { id: inv.id }) }, "Отменить")));
+    }
+    const card = h("div", { class: "card" }, h("h2", {}, "С кем сыграть"));
+    if (!lobby.players.length) card.append(h("p", { class: "muted" }, "Сейчас свободных игроков нет. Сыграй пока с компьютером — ниже."));
+    for (const pl of lobby.players) {
+      card.append(h("div", { class: "player" },
+        h("span", { class: "pname" }, pl.key === "t" ? "🎓 " : "", pl.name),
+        pl.busy ? h("span", { class: "muted small-text" }, "играет") :
+          h("span", { class: "row" }, lobby.games.map((g) => h("button", { class: "secondary small", title: "Вызвать: " + P.titles[g],
+            onclick: () => send("playInvite", { to: pl.key, game: g }) }, P.titles[g].split(" ")[0])))));
+    }
+    out.push(card);
+    out.push(h("div", { class: "card" }, h("h2", {}, "С компьютером"),
+      h("div", { class: "row" }, lobby.games.map((g) => h("button", { class: "secondary",
+        onclick: () => { P.start({ mode: "cpu", game: g, names: [view.me.name, "Компьютер"], onEnd: render }); render(); } }, P.titles[g])))));
+    out.push(h("p", { class: "muted small-text" }, "Значки у имени — во что позвать: ♟️ шахматы, 🏒 аэрохоккей, 🚢 морской бой."));
+    return out;
+  }
 
   // ---------------------------------------------------------------- общий рендер
   function render() {
@@ -187,14 +266,20 @@
         view.lesson.uses_ai && st.ai ? h("span", { class: "pill", title: aiTitle(st.ai) }, aiPill(st.ai)) : null,
         st.timer_end ? h("span", { class: "pill", id: "timer", title: st.timer_label || "Таймер" }, timerText()) : null),
       h("div", { class: "dots", title: "Твой прогресс на уроке" }, tasks.map((t) => h("i", { class: statusOf(t.id) || "" })))));
-    out.push(h("div", { class: "tabs" }, [["tasks", "📋", "Задания"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]].map(([id, ic, title]) =>
+    const tabs = [["tasks", "📋", "Задания"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]];
+    if (playOn()) tabs.splice(3, 0, ["games", "🎮", "Игры"]);
+    else if (ui.tab === "games") ui.tab = "tasks";
+    out.push(h("div", { class: "tabs" }, tabs.map(([id, ic, title]) =>
       h("button", { class: ui.tab === id ? "on" : "", onclick: () => go({ tab: id, task: id === "tasks" ? null : ui.task }) }, h("span", { class: "ic" }, ic), title))));
+    const inv = st.play && st.play.invite;
+    if (inv && ui.tab !== "games") out.push(h("div", { class: "page", style: "padding-bottom:0" }, inviteBanner(inv)));
     if (view.offline) out.push(h("div", { class: "banner" }, "Нет связи с сервером. Проверять код можно — результат отправится, когда связь вернётся."));
     const page = h("div", { class: "page" });
     if (!ui.toured[view.me.name]) page.append(tour());
     if (ui.tab === "tasks") page.append(...(ui.task && tasks.some((t) => t.id === ui.task) ? taskView(ui.task) : taskList()));
     else if (ui.tab === "theory") page.append(...theory());
     else if (ui.tab === "cheat") page.append(...cheat());
+    else if (ui.tab === "games") page.append(...games());
     else page.append(...help());
     out.push(page);
     if (ui.tab === "tasks" && ui.task) out.push(actionBar(ui.task));

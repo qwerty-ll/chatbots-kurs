@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import kurs_ai
+import kurs_play
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KURS = os.path.dirname(HERE)
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
                  "lock_on_paste": 1, "locks": {},
+                 "play": {"mode": "off", "games": ["chess", "hockey", "battleship"], "teacher": True, "allow": []},
                  "last_class": None}
 
 
@@ -246,6 +248,7 @@ class Kurs:
         self.s = store
         self.lib = lib
         self.ai = kurs_ai.Gateway(store.data_dir, log_fn=self.ai_log)
+        self.play = kurs_play.Play()
         with store.lock:
             store.ex("DELETE FROM ai_log WHERE ts < ?", (time.time() - AI_LOG_DAYS * 86400,))
             store.db.commit()
@@ -429,6 +432,7 @@ class Kurs:
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
                 "restart": st["restart_seq"], "close": st["close_seq"], "locked": bool(self.lock_of(sess["student_id"])),
+                "play": self.play_brief(sess),
                 "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
 
     def lesson_for(self) -> dict:
@@ -538,6 +542,8 @@ class Kurs:
     # ---------- учитель ----------
     def overview(self) -> dict:
         st = self.s.state()
+        if self.play_cfg()["teacher"]:
+            self.play.touch(kurs_play.TEACHER, "Учитель")   # пульт открыт — учителя можно вызвать на партию
         now = time.time()
         groups = []
         for g in self.s.q("SELECT * FROM groups ORDER BY name"):
@@ -624,7 +630,127 @@ class Kurs:
         self.s.set("open_tasks", [t for t in last.get("open_tasks") or [] if t in valid])
         self.s.set("stage", int(last.get("stage") or 0))
 
+    # ---------- игры по сети класса: доступ открывает учитель, время не тратится ----------
+    PLAY_MODES = ("off", "all", "done")   # закрыты · всем · тем, кто решил все открытые задания
+
+    def play_cfg(self) -> dict:
+        cfg = dict(DEFAULT_STATE["play"])
+        cfg.update(self.s.get("play") or {})
+        return cfg
+
+    def play_allowed(self, sid) -> tuple[bool, str]:
+        st = self.s.state()
+        cfg = self.play_cfg()
+        if not st["running"]:
+            return False, "Занятие не идёт"
+        if st["paused"]:
+            return False, "Пауза: смотрим на учителя"
+        if self.lock_of(sid):
+            return False, "Панель заблокирована"
+        if sid in cfg["allow"] or cfg["mode"] == "all":
+            return True, ""
+        if cfg["mode"] == "done":
+            open_ids = st["open_tasks"] or []
+            passed = {r["task_id"] for r in self.s.q("SELECT task_id FROM results WHERE student_id=? AND status='passed'", (sid,))}
+            if open_ids and all(t in passed for t in open_ids):
+                return True, ""
+            return False, "Игры откроются, когда решишь все открытые задания"
+        return False, "Игры закрыты — их открывает учитель"
+
+    def play_candidates(self) -> dict:
+        """Кого сейчас можно вызвать: ключ → имя (ученики группы с доступом и учитель, если принимает вызовы)."""
+        out = {}
+        gid = self.s.get("group_id")
+        for r in self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0", (gid,)):
+            if self.play_allowed(r["id"])[0]:
+                out[f"s:{r['id']}"] = r["name"]
+        if self.play_cfg()["teacher"]:
+            out[kurs_play.TEACHER] = "Учитель"
+        return out
+
+    def play_brief(self, sess) -> dict:
+        """Для панели ученика: можно ли играть, кто зовёт и идёт ли партия (видно на любой вкладке)."""
+        sid = sess["student_id"]
+        key = f"s:{sid}"
+        ok, why = self.play_allowed(sid)
+        if not ok:
+            self.play.forget(key)
+            if self.play.match_of(key):
+                self.play.leave(key, why)
+            return {"allowed": False, "reason": why, "games": [], "invite": None, "match": None}
+        self.play.touch(key, self.name(sid))
+        info = self.play.info(key)
+        return {"allowed": True, "reason": "", "games": self.play_cfg()["games"],
+                "invite": info["invites_in"][0] if info["invites_in"] else None,
+                "match": info["match"]}
+
+    def play_lobby(self, key: str, name: str) -> dict:
+        allowed = self.play_candidates()
+        online = self.play.online()
+        busy = self.play.busy()
+        players = [{"key": k, "name": n, "busy": k in busy} for k, n in allowed.items()
+                   if k in online and k != key]
+        players.sort(key=lambda p: (p["key"] != kurs_play.TEACHER, p["name"]))
+        return dict(self.play.info(key), players=players, games=self.play_cfg()["games"],
+                    titles=kurs_play.GAMES, me={"key": key, "name": name})
+
+    def play_action(self, key: str, name: str, action: str, b: dict) -> dict:
+        try:
+            if action == "invite":
+                game = str(b.get("game", ""))
+                if game not in self.play_cfg()["games"]:
+                    raise kurs_play.PlayError("Эта игра сейчас закрыта")
+                return {"id": self.play.invite(key, name, str(b.get("to", "")), game, self.play_candidates())}
+            if action == "answer":
+                m = self.play.answer(str(b.get("id", "")), key, bool(b.get("accept")))
+                if m:
+                    self.s.log(None, "play_start", {"game": m["game"], "names": m["names"]})
+                return {"match": self.play.public_match(m, key) if m else None}
+            if action == "cancel":
+                self.play.cancel(str(b.get("id", "")), key)
+                return {"ok": True}
+            if action == "leave":
+                self.play.leave(key, f"{name} вышел из партии")
+                return {"ok": True}
+        except kurs_play.PlayError as e:
+            raise ApiError(409, str(e)) from None
+        raise ApiError(404, "Нет такой команды")
+
+    def play_teacher(self) -> dict:
+        if self.play_cfg()["teacher"]:
+            self.play.touch(kurs_play.TEACHER, "Учитель")
+        else:
+            self.play.forget(kurs_play.TEACHER)
+        out = self.play_lobby(kurs_play.TEACHER, "Учитель")
+        out["config"] = self.play_cfg()
+        out["matches"] = self.play.list_matches()
+        online = self.play.online()
+        gid = self.s.get("group_id")
+        out["students"] = [{"id": r["id"], "name": r["name"], "allowed": self.play_allowed(r["id"])[0],
+                            "manual": r["id"] in self.play_cfg()["allow"], "online": f"s:{r['id']}" in online}
+                           for r in self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (gid,))]
+        return out
+
+    def play_config(self, b: dict) -> None:
+        cfg = self.play_cfg()
+        if "mode" in b:
+            if b["mode"] not in self.PLAY_MODES:
+                raise ApiError(400, "Неизвестный режим")
+            cfg["mode"] = b["mode"]
+        if "games" in b:
+            cfg["games"] = [g for g in b["games"] if g in kurs_play.GAMES]
+        if "teacher" in b:
+            cfg["teacher"] = bool(b["teacher"])
+        if "allow" in b:
+            sid, on = int(b["allow"].get("student_id") or 0), bool(b["allow"].get("on"))
+            allow = [x for x in cfg["allow"] if x != sid]
+            cfg["allow"] = allow + ([sid] if on else [])
+        self.s.set("play", cfg)
+        if cfg["mode"] == "off" and not cfg["allow"]:
+            self.play.stop_all("Учитель закрыл игры")
+
     def end(self) -> None:
+        self.play.stop_all("Занятие завершено")
         # запоминаем, где остановились: «Продолжить занятие» вернёт открытые задания и этап
         if self.s.get("running"):
             self.s.set("last_class", {k: self.s.get(k) for k in ("group_id", "lesson", "open_tasks", "stage")})
@@ -759,6 +885,7 @@ class Handler(BaseHTTPRequestHandler):
     kurs: Kurs = None  # type: ignore[assignment]
     web_dir = os.path.join(HERE, "web")
     client_dir = os.path.join(KURS, "client", "dist")
+    media_dir = os.path.join(KURS, "vscode", "media")
     quiet = False
 
     def log_message(self, fmt, *args):  # noqa: D401
@@ -795,9 +922,10 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "rb") as fh:
             body = fh.read()
         headers = {}
-        if folder == self.web_dir:
+        if folder in (self.web_dir, self.media_dir):
+            host = re.sub(r"[^A-Za-z0-9.:\-\[\]]", "", self.headers.get("Host") or "")
             headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                                  "img-src 'self' data:; frame-ancestors 'none'")
+                                                  f"img-src 'self' data:; connect-src 'self' ws://{host}; frame-ancestors 'none'")
         self.send_bytes(body, STATIC_TYPES.get(os.path.splitext(path)[1], "application/octet-stream"), 200, headers)
 
     # --- разбор запроса ---
@@ -841,6 +969,8 @@ class Handler(BaseHTTPRequestHandler):
         path = u.path
         qs = {k: v[0] for k, v in parse_qs(u.query).items()}
         try:
+            if path == "/ws/play" and method == "GET":
+                return self.ws_play(qs)
             if path == "/tapi/ai/test" and method == "POST":
                 if not self.teacher_ok():
                     raise ApiError(401, "Нужно войти")
@@ -859,6 +989,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/teacher/"):
                 if not self.is_local():
                     return self.send_json({"error": "Только на учительском компьютере"}, 403)
+                if path == "/teacher/play.js":       # игры — тот же файл, что и в панели ученика
+                    return self.send_static(self.media_dir, "play.js")
                 return self.send_static(self.web_dir, path[len("/teacher/"):])
             if path.startswith("/client/"):
                 return self.send_static(self.client_dir, path[len("/client/"):])
@@ -881,6 +1013,38 @@ class Handler(BaseHTTPRequestHandler):
             self.kurs.s.db.rollback()
             sys.stderr.write(f"Ошибка сервера: {e!r}\n")
             return self.send_json({"error": "Ошибка сервера"}, 500)
+
+    # --- партия по WebSocket ---
+    def ws_play(self, qs: dict) -> None:
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key or (self.headers.get("Upgrade") or "").lower() != "websocket":
+            raise ApiError(400, "Нужен WebSocket")
+        teacher = self.teacher_ok()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", kurs_play.ws_accept(key))
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        self.connection.settimeout(90)          # клиент шлёт ping каждые 15 с; пропал — отключаем
+        try:
+            op, payload = kurs_play.ws_read(self.rfile)     # первое сообщение — {"auth": ключ сеанса ученика}
+            token = json.loads(payload.decode("utf-8")).get("auth") if op == 1 else None
+            if teacher:
+                pkey = kurs_play.TEACHER
+            else:
+                with self.kurs.s.lock:
+                    sess = self.kurs.live_session(token)
+                    self.kurs.s.db.commit()
+                pkey = f"s:{sess['student_id']}"
+        except (ApiError, OSError, ValueError, AttributeError):
+            try:
+                kurs_play.ws_send(self.wfile, json.dumps({"type": "stopped", "reason": "Не удалось войти в партию"}, ensure_ascii=False))
+            except OSError:
+                pass
+            return
+        self.kurs.play.serve(qs.get("match", ""), pkey, self.wfile, self.rfile)
 
     # --- API ученика ---
     def student_api(self, method: str, name: str, qs: dict) -> None:
@@ -928,6 +1092,15 @@ class Handler(BaseHTTPRequestHandler):
                 out = k.save_files(sess, self.body_json().get("files"))
             elif method == "POST" and name == "event":
                 out = k.student_event(sess, self.body_json())
+            elif method == "GET" and name == "play":
+                if not k.play_allowed(sess["student_id"])[0]:
+                    raise ApiError(403, k.play_allowed(sess["student_id"])[1])
+                out = k.play_lobby(f"s:{sess['student_id']}", k.name(sess["student_id"]))
+            elif method == "POST" and name.startswith("play/"):
+                ok, why = k.play_allowed(sess["student_id"])
+                if not ok and name != "play/leave":
+                    raise ApiError(403, why)
+                out = k.play_action(f"s:{sess['student_id']}", k.name(sess["student_id"]), name[5:], self.body_json())
             elif method == "GET" and name == "files":
                 out = k.my_files(sess)
             elif method == "POST" and name == "logout":
@@ -977,6 +1150,8 @@ class Handler(BaseHTTPRequestHandler):
             out = dict(k.lib.public_task(t), hints=t.get("hints", []), solution=t["_solution"])
         elif method == "GET" and name == "ai":
             out = k.ai_overview(int(qs["student"]) if qs.get("student") else None)
+        elif method == "GET" and name == "play":
+            out = k.play_teacher()
         elif method == "GET" and name == "stage_code":
             out = k.stage_code(int(qs.get("n") or 0))
         elif method == "GET" and name == "export.csv":
@@ -1042,6 +1217,14 @@ class Handler(BaseHTTPRequestHandler):
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
                 k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
                 k.s.log(None, "restart_clients")
+            elif name == "play/config":
+                k.play_config(b)
+            elif name == "play/stop_all":
+                k.play.stop_all("Учитель остановил все партии")
+            elif name == "play/end":
+                k.play.end(str(b.get("match", "")), "Учитель остановил партию")
+            elif name in ("play/invite", "play/answer", "play/cancel", "play/leave"):
+                out = k.play_action(kurs_play.TEACHER, "Учитель", name[5:], b)
             elif name == "unlock":
                 k.unlock(int(b.get("student_id") or 0))
             elif name == "lock_on_paste":

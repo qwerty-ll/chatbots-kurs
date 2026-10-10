@@ -588,7 +588,10 @@ class Kurs {
       .replace(/{{csp}}/g, w.cspSource)
       .replace(/{{nonce}}/g, nonce)
       .replace("{{css}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.css")).toString())
-      .replace("{{js}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.js")).toString());
+      .replace("{{js}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.js")).toString())
+      .replace("{{play}}", w.asWebviewUri(vscode.Uri.joinPath(media, "play.js")).toString())
+      // игры по сети класса: панель подключается к серверу курса напрямую (WebSocket)
+      .replace("{{connect}}", this.server() ? `${this.server()} ${this.server().replace(/^http/, "ws")}` : "'none'");
     w.html = html;
     w.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.toast(e.message)));
     this.panel.onDidDispose(() => { this.panel = null; });
@@ -602,6 +605,9 @@ class Kurs {
   }
 
   render() {
+    // для игр по сети: адрес канала партии и ключ сеанса (панель входит в партию от имени ученика)
+    this.v.playWs = this.server().replace(/^http/, "ws") + "/ws/play";
+    this.v.playAuth = this.token || "";
     if (this.panel) this.panel.webview.postMessage({ type: "view", view: this.v });
   }
 
@@ -675,8 +681,34 @@ class Kurs {
       case "openNotebook": return this.openNotebook();
       case "runNotebook": return this.runPath(this.notebookPath());
       case "logout": return this.logout();
+      case "playLobby": return this.playLobby();
+      case "playInvite": return this.playAct("invite", { to: m.to, game: m.game });
+      case "playAnswer": return this.playAct("answer", { id: m.id, accept: m.accept });
+      case "playCancel": return this.playAct("cancel", { id: m.id });
+      case "playLeave": return this.playAct("leave", {});
       default: return undefined;
     }
+  }
+
+  // ---------------------------------------------------------------- игры по сети класса
+  async playLobby() {
+    if (!this.token || !this.panel) return;
+    try {
+      const lobby = await this.api("GET", "/api/play");
+      this.panel.webview.postMessage({ type: "lobby", lobby });
+    } catch (e) {
+      this.panel.webview.postMessage({ type: "lobby", lobby: null, error: e.message });
+    }
+  }
+
+  async playAct(action, body) {
+    try {
+      await this.api("POST", "/api/play/" + action, body);
+    } catch (e) {
+      this.toast(e.message);
+    }
+    await this.pollState();
+    await this.playLobby();
   }
 
   async setServer(server) {

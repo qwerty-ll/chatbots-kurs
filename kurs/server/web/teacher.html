@@ -8,10 +8,12 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">Пульт учителя</div>
+  <div class="brand"><span class="logo">🤖</span><span>Пульт учителя</span></div>
   <div id="lesson" class="lesson"></div>
+  <div id="timerbox" class="timerbox"></div>
   <div id="actions" class="actions"></div>
 </header>
+<nav id="nav" class="nav"></nav>
 <main id="app"><p class="muted">Загрузка…</p></main>
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
   <div class="modal-box">
@@ -19,6 +21,7 @@
     <div id="modal-body"></div>
   </div>
 </div>
+<script src="/teacher/play.js"></script>
 <script src="/teacher/teacher.js"></script>
 </body>
 </html>

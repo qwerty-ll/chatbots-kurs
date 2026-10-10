@@ -4,11 +4,18 @@
 const app = document.getElementById("app");
 const lessonEl = document.getElementById("lesson");
 const actionsEl = document.getElementById("actions");
+const timerBox = document.getElementById("timerbox");
+const navEl = document.getElementById("nav");
 const modal = document.getElementById("modal");
 const modalBody = document.getElementById("modal-body");
 
 let data = null;          // последний ответ /tapi/overview
 let ai = null;            // последний ответ /tapi/ai: нейросеть, очередь, лента вопросов
+let play = null;          // последний ответ /tapi/play: игры по сети класса
+let menuOpen = false;     // меню «Ещё» в шапке
+let lastKey = "";         // перерисовываем, только если что-то изменилось (иначе щелчки «съедаются»)
+let lastRenderAt = 0;
+const leftMatches = new Set();
 let feedFilter = "";      // лента: только один ученик
 const openDetails = new Set();   // какие раскрывашки открыты: пульт перерисовывается каждые 2 с, а они не должны закрываться
 
@@ -30,6 +37,10 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* без хранилища просто не запоминаем */ } },
 };
+const TABS = [["class", "🏫", "Класс"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["notebook", "📓", "Тетрадь"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
+let tab = TABS.some((t) => t[0] === store.get("kurs.tab")) ? store.get("kurs.tab") : "class";
+function goTab(t) { tab = t; store.set("kurs.tab", t); menuOpen = false; renderTop(); renderNav(); render(); window.scrollTo(0, 0); }
+document.addEventListener("click", (e) => { if (menuOpen && !e.target.closest(".menu-wrap")) { menuOpen = false; renderTop(); } });
 
 // ---------- помощники ----------
 function h(tag, attrs, ...kids) {
@@ -156,18 +167,25 @@ async function refresh() {
   try {
     data = await api("GET", "/tapi/overview");
     ai = await api("GET", "/tapi/ai" + (feedFilter ? "?student=" + feedFilter : ""));
+    play = await api("GET", "/tapi/play");
   } catch (e) {
     if (e.status === 401) { boot(); return; }
     lessonEl.textContent = "Нет связи с сервером";
     return;
   }
-  const attention = data.requests.length + data.help.length + (data.locks || []).length + (ai && ai.status.last_error && aiUsed() ? 1 : 0);
+  const invites = play ? play.invites_in.length : 0;
+  const attention = data.requests.length + data.help.length + (data.locks || []).length + invites + (ai && ai.status.last_error && aiUsed() ? 1 : 0);
   document.title = (attention ? `(${attention}) ` : "") + "Пульт учителя";
   if (attention > lastAttention) beep();
   lastAttention = attention;
-  // не перерисовываем, пока учитель печатает в форме группы
-  const typing = editingGroup !== null && document.activeElement && ["TEXTAREA", "INPUT"].includes(document.activeElement.tagName);
+  syncTeacherMatch();
+  // не перерисовываем, пока учитель печатает, и если ничего не изменилось
+  const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest(".play-host");
+  const key = JSON.stringify([data, ai, play, tab], (k, v) => (k === "now" || k === "seen" ? undefined : v));
+  if (key === lastKey && Date.now() - lastRenderAt < 30000) return;
+  lastKey = key;
   renderTop();
+  renderNav();
   if (!typing) render();
 }
 
@@ -178,32 +196,40 @@ function renderTop() {
   const st = data.state;
   const l = currentLesson();
   const g = currentGroup();
-  lessonEl.textContent = st.running ? `Занятие ${l.lesson} «${l.title}» · группа ${g ? g.name : "?"}` : "Занятие не идёт";
+  if (st.running) {
+    const online = data.students.filter((x) => x.pc).length;
+    lessonEl.replaceChildren(h("span", { class: "live" }, st.paused ? "⏸ пауза" : "● идёт урок"),
+      h("b", {}, `Занятие ${l.lesson}. ${l.title}`), h("small", {}, `${g ? g.name : "?"} · на уроке ${online} из ${data.students.length}`));
+  } else lessonEl.replaceChildren(h("b", {}, "Занятие не идёт"), h("small", {}, "выберите группу и занятие на вкладке «Класс»"));
+  timerBox.replaceChildren();
+  if (st.running) {
+    timerBox.append(st.timer_end
+      ? h("span", { class: "row" }, h("span", { class: "timer", id: "timer" }, "⏱ " + mmss(Math.max(0, Math.round(st.timer_end - data.now)))),
+          h("button", { class: "ghost small", title: "Добавить 5 минут", onclick: () => act("timer", { add: 5 }) }, "+5"),
+          h("button", { class: "ghost small", title: "Убрать таймер", onclick: () => act("timer", { clear: true }) }, "✕"))
+      : h("span", { class: "row" }, h("span", { class: "small sky" }, "⏱ таймер"),
+          [5, 10, 15, 30].map((m) => h("button", { class: "ghost small", title: `Таймер на ${m} минут`, onclick: () => act("timer", { minutes: m, label: "Практика" }) }, m))));
+  }
   const sound = store.get("kurs.sound") !== "off";
+  const item = (icon, text, fn, hint) => h("button", { class: "menu-item", title: hint || "", onclick: () => { menuOpen = false; fn(); } }, h("span", { class: "mi" }, icon), text);
+  const menu = h("div", { class: "menu" + (menuOpen ? "" : " hidden") },
+    st.running ? item("🖥", "Экран для проектора", () => window.open("/teacher/projector.html", "kurs-projector"), "Таймер и прогресс без имён") : null,
+    item("🔄", "Перезапустить VS Code у всех", () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); }),
+    item("⏻", "Закрыть VS Code у всех", () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); }),
+    st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
+    item(sound ? "🔔" : "🔕", sound ? "Звук сигналов: включён" : "Звук сигналов: выключен", () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); }),
+    h("hr", {}),
+    item("🚪", "Выйти из пульта", async () => { await api("POST", "/tapi/logout", {}); boot(); }));
   const parts = [];
   if (st.running) {
-    parts.push(st.timer_end
-      ? h("span", { class: "row" }, h("span", { class: "timer", id: "timer" }, "⏱ " + mmss(Math.max(0, Math.round(st.timer_end - data.now)))),
-          h("button", { class: "ghost small", onclick: () => act("timer", { add: 5 }) }, "+5 мин"),
-          h("button", { class: "ghost small", title: "Убрать таймер", onclick: () => act("timer", { clear: true }) }, "✕"))
-      : h("span", { class: "row" }, h("span", { class: "small", style: "color:#A9B5FF" }, "Таймер, мин:"),
-          [5, 10, 15, 30].map((m) => h("button", { class: "ghost small", onclick: () => act("timer", { minutes: m, label: "Практика" }) }, m))));
-    parts.push(h("button", { class: st.paused ? "on" : "ghost", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
-    parts.push(h("button", { class: "ghost", title: "Сохранить работу, обновить панель и перезапустить VS Code на всех компьютерах учеников",
-      onclick: () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"));
-    parts.push(h("button", { class: "ghost", title: "Сохранить работу и закрыть VS Code на всех компьютерах учеников",
-      onclick: () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); } }, "⏻ Закрыть VS Code у всех"));
-    parts.push(h("button", { class: "ghost", title: "Экран для проектора: таймер и прогресс без имён", onclick: () => window.open("/teacher/projector.html", "kurs-projector") }, "🖥 Проектор"));
-  }
-  parts.push(h("button", { class: "ghost small", title: "Звук при новых запросах", onclick: () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); } }, sound ? "🔔" : "🔕"));
-  if (st.running) {
+    parts.push(h("button", { class: st.paused ? "on" : "ghost", title: "Закрыть экраны учеников надписью «Смотрим на учителя»", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
     parts.push(h("button", { class: "danger", onclick: () => {
       if (!confirm("Завершить занятие? Работы учеников сохранятся здесь, а с компьютеров учеников сотрутся.")) return;
       const close = confirm("Закрыть VS Code на компьютерах учеников?\n\n«ОК» — закрыть, «Отмена» — оставить открытым.");
       act("end").then(() => { if (close) act("close_clients"); });
     } }, "Завершить занятие"));
   }
-  parts.push(h("button", { class: "ghost small", onclick: async () => { await api("POST", "/tapi/logout", {}); boot(); } }, "Выйти"));
+  parts.push(h("span", { class: "menu-wrap" }, h("button", { class: "ghost", onclick: (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderTop(); } }, "⋯ Ещё"), menu));
   actionsEl.replaceChildren(...parts);
   clearInterval(clockTimer);
   if (st.timer_end) {
@@ -215,9 +241,32 @@ function renderTop() {
   }
 }
 
+function renderNav() {
+  const att = data.requests.length + data.help.length + (data.locks || []).length;
+  const badges = {
+    class: att,
+    ai: ai && ai.status.queue.length ? ai.status.queue.length : (ai && ai.status.last_error && aiUsed() ? "!" : 0),
+    play: play ? play.invites_in.length : 0,
+  };
+  const soft = { play: play && play.matches.length ? play.matches.length : 0 };
+  navEl.replaceChildren(...TABS.map(([id, ic, title]) => h("button", { class: "tab" + (tab === id ? " on" : ""), onclick: () => goTab(id) },
+    h("span", { class: "ic" }, ic), title,
+    badges[id] ? h("span", { class: "badge" }, badges[id]) : null,
+    soft[id] ? h("span", { class: "badge soft", title: "Идут партии" }, soft[id]) : null)));
+}
+
 function render() {
   const y = window.scrollY;
-  app.replaceChildren(...(data.state.running ? renderLesson() : renderIdle()));
+  lastRenderAt = Date.now();
+  const views = {
+    class: () => (data.state.running ? renderLesson() : renderIdle()),
+    ai: () => aiTab(),
+    play: () => playTab(),
+    notebook: () => [data.state.running ? stagesCard(currentLesson()) : h("section", { class: "card" }, h("p", { class: "muted" }, "Тетрадь урока доступна во время занятия."))],
+    groups: () => [renderGroups()],
+    connect: () => [connectCard(), h("section", { class: "card" }, h("h2", {}, "Адрес для учеников"), addresses())],
+  };
+  app.replaceChildren(...[].concat(views[tab]()).filter((x) => x));
   window.scrollTo(0, y);
 }
 
@@ -237,8 +286,11 @@ function renderIdle() {
       h("p", { class: "muted" }, "После начала ученики увидят список группы. Каждый вход вы подтверждаете сами."),
       h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
       addresses())));
-  // нейросеть можно настроить заранее, до занятия 3
-  const cards = [wizard, aiCard && ai ? aiCard() : null, connectCard(), renderGroups()].filter((x) => x);
+  const cards = [wizard,
+    h("div", { class: "hint-cards" },
+      h("button", { class: "hint-card", onclick: () => goTab("groups") }, h("b", {}, "👥 Группы"), h("small", {}, "добавить группу и учеников")),
+      h("button", { class: "hint-card", onclick: () => goTab("connect") }, h("b", {}, "🔌 Подключение"), h("small", {}, "команда для компьютеров учеников")),
+      h("button", { class: "hint-card", onclick: () => goTab("ai") }, h("b", {}, "🤖 Нейросеть"), h("small", {}, "ключ GigaChat и проверка связи")))];
   const last = data.state.last_class;
   const lastGroup = last && data.groups.find((g) => g.id === last.group_id);
   const lastLesson = last && data.lessons.find((l) => l.lesson === last.lesson);
@@ -265,10 +317,7 @@ function connectCard() {
   const linux = `wget -T 10 -qO- ${url}/k | python3 - --shortcut`;
   const mac = `curl -sm 10 ${url}/k | python3 - --shortcut`;
   const win = `py -c "import urllib.request as u; exec(u.urlopen('${url}/k', timeout=10).read())" --shortcut`;
-  return h("section", { class: "card" }, details("connect", "Как подключить компьютер ученика (один раз на каждый компьютер)",
-    h("p", {}, h("button", { class: "ghost small", onclick: () => { if (confirm("Перезапустить VS Code на всех подключённых компьютерах учеников?")) act("restart_clients"); } }, "🔄 Перезапустить VS Code у всех"),
-      " ", h("button", { class: "ghost small", onclick: () => { if (confirm("Закрыть VS Code на всех компьютерах учеников? Их файлы сохранятся.")) act("close_clients"); } }, "⏻ Закрыть VS Code у всех"),
-      h("span", { class: "muted small" }, " — после обновления курса: панели обновятся сами")),
+  return h("section", { class: "card" }, h("h2", {}, "Как подключить компьютер ученика (один раз на каждый компьютер)"), h("div", {},
     h("p", {}, "Откройте на компьютере ученика терминал и выполните команду. Linux:"),
     h("pre", { class: "code" }, linux),
     h("p", { class: "muted" }, "macOS:"), h("pre", { class: "code" }, mac),
@@ -318,10 +367,9 @@ function renderLesson() {
   const out = [];
   if (st.paused) out.push(h("div", { class: "pause-banner" }, "⏸", h("span", {}, "У учеников пауза: панель закрыта экраном «Смотрим на учителя»."),
     h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => act("pause", { paused: false }) }, "Снять паузу")));
-  out.push(tiles());
   out.push(h("div", { class: "grid" },
-    h("div", {}, attentionCard(), aiUsed() ? aiCard() : null, stagesCard(lesson)),
-    h("div", {}, stepsCard(lesson), tableCard(lesson), aiUsed() ? aiFeed() : null)));
+    h("div", { class: "side" }, attentionCard(), stepsCard(lesson)),
+    h("div", {}, tiles(), tableCard(lesson))));
   return out;
 }
 
@@ -341,7 +389,8 @@ function tiles() {
 
 function attentionCard() {
   const locks = data.locks || [];
-  const n = data.requests.length + data.help.length + locks.length;
+  const invites = play ? play.invites_in : [];
+  const n = data.requests.length + data.help.length + locks.length + invites.length;
   const box = h("section", { class: "card" }, h("div", { class: "card-head" },
     h("h2", {}, "Требует внимания"), h("span", { class: "badge" + (n ? "" : " zero") }, n), h("span", { class: "spacer" }),
     data.requests.length > 1 ? h("button", { class: "ok small", onclick: () => act("approve_all") }, "Пустить всех") : null));
@@ -349,6 +398,12 @@ function attentionCard() {
     h("input", { type: "checkbox", checked: data.state.lock_on_paste ? true : null, onchange: (e) => act("lock_on_paste", { on: e.target.checked }) }),
     " блокировать панель при вставке чужого кода");
   if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число."), lockSwitch); return box; }
+  for (const inv of invites) {
+    box.append(h("div", { class: "att" }, h("span", { class: "ic" }, "🎮"),
+      h("div", { class: "txt" }, h("b", {}, inv.name), " зовёт вас сыграть", h("small", {}, KursPlay.titles[inv.game] || inv.game)),
+      h("button", { class: "ok small", onclick: () => act("play/answer", { id: inv.id, accept: true }) }, "Играть"),
+      h("button", { class: "ghost small", onclick: () => act("play/answer", { id: inv.id, accept: false }) }, "Нет")));
+  }
   for (const x of locks) {
     box.append(h("div", { class: "att lock" }, h("span", { class: "ic" }, "🔒"),
       h("div", { class: "txt" }, h("b", {}, x.name), x.pc ? ` · ${x.pc}` : "",
@@ -458,6 +513,91 @@ function tableCard(lesson) {
       h("span", {}, "3× — проверок, 💡2 — подсказок"),
       h("span", {}, "нажмите на клетку — увидите код")),
     h("div", { class: "wrap" }, h("table", { class: "res" }, h("thead", {}, head), body, h("tfoot", {}, foot))));
+}
+
+// ---------- вкладка «Нейросеть» ----------
+function aiTab() {
+  if (!ai) return [h("section", { class: "card" }, h("p", { class: "muted" }, "Загрузка…"))];
+  return [h("div", { class: "grid" }, h("div", { class: "side" }, aiCard()), h("div", {}, aiFeed()))];
+}
+
+// ---------- вкладка «Игры» ----------
+function syncTeacherMatch() {
+  const m = play && play.match;
+  const cur = KursPlay.current();
+  if (m && !leftMatches.has(m.id) && (!cur || cur.matchId !== m.id)) {
+    KursPlay.start({ mode: "net", game: m.game, matchId: m.id, url: `ws://${location.host}/ws/play?match=${encodeURIComponent(m.id)}`, auth: "",
+      names: m.names, onEnd: () => { leftMatches.add(m.id); api("POST", "/tapi/play/leave", {}).catch(() => {}); lastKey = ""; refresh(); } });
+    if (tab !== "play") goTab("play"); else render();
+  }
+}
+
+function playTab() {
+  if (!play) return [h("section", { class: "card" }, h("p", { class: "muted" }, "Загрузка…"))];
+  const cfg = play.config;
+  const titles = KursPlay.titles;
+  const cur = KursPlay.current();
+  const seg = (m, label, hint) => h("button", { class: "seg" + (cfg.mode === m ? " on" : ""), title: hint, onclick: () => act("play/config", { mode: m }) }, label);
+  const access = h("section", { class: "card" }, h("h2", {}, "Доступ к играм"),
+    h("p", { class: "muted small" }, "Шахматы, аэрохоккей и морской бой в панели ученика — друг с другом, с вами или с компьютером. Время урока не тратится; на паузе игры закрыты у всех."),
+    h("div", { class: "segs" }, seg("off", "Закрыты", "Вкладки «Игры» у учеников нет"), seg("all", "Открыты всем"),
+      seg("done", "Решившим задания", "Кто решил все открытые сейчас задания")),
+    h("div", { class: "row", style: "margin-top:10px" }, Object.entries(titles).map(([id, title]) =>
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: cfg.games.includes(id) ? true : null,
+        onchange: (e) => act("play/config", { games: e.target.checked ? cfg.games.concat(id) : cfg.games.filter((x) => x !== id) }) }), title))),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: cfg.teacher ? true : null, onchange: (e) => act("play/config", { teacher: e.target.checked }) }),
+      "принимать вызовы от учеников"),
+    play.matches.length ? h("button", { class: "danger small", style: "margin-top:6px", onclick: () => { if (confirm("Остановить все партии?")) act("play/stop_all"); } }, "■ Остановить все партии") : null);
+  const people = h("section", { class: "card" }, h("h2", {}, "Ученики"),
+    h("p", { class: "muted small" }, cfg.mode === "all" ? "Игры открыты всем." : "Можно открыть игры отдельным ученикам — кнопкой справа от имени."));
+  if (!play.students.length) people.append(h("p", { class: "muted" }, "Занятие не идёт — список появится после начала."));
+  const busy = new Set(play.matches.flatMap((m) => m.names));
+  for (const st of play.students) {
+    people.append(h("div", { class: "list-item" },
+      h("span", { class: "dot" + (st.online ? " on" : "") }),
+      h("span", { class: "grow" }, st.name, busy.has(st.name) ? h("span", { class: "chip" }, "играет") : null),
+      h("span", { class: "chip" + (st.allowed ? " ok" : "") }, st.allowed ? "можно играть" : "закрыто"),
+      cfg.mode !== "all" ? h("button", { class: "ghost small", onclick: () => act("play/config", { allow: { student_id: st.id, on: !st.manual } }) },
+        st.manual ? "Закрыть" : "Открыть") : null));
+  }
+  const right = [];
+  if (cur) {
+    right.push(h("section", { class: "card" }, h("h2", {}, "Ваша партия"), KursPlay.host));
+  } else {
+    const lobbyCard = h("section", { class: "card" }, h("h2", {}, "Сыграть самому"));
+    for (const inv of play.invites_in) {
+      lobbyCard.append(h("div", { class: "att" }, h("span", { class: "ic" }, "🎮"), h("div", { class: "txt" }, h("b", {}, inv.name), " зовёт вас: ", titles[inv.game]),
+        h("button", { class: "ok small", onclick: () => act("play/answer", { id: inv.id, accept: true }) }, "Играть"),
+        h("button", { class: "ghost small", onclick: () => act("play/answer", { id: inv.id, accept: false }) }, "Нет")));
+    }
+    for (const inv of play.invites_out) {
+      lobbyCard.append(h("p", {}, `Ждём ответа: ${inv.name} · ${titles[inv.game]} `,
+        h("button", { class: "link small", onclick: () => act("play/cancel", { id: inv.id }) }, "Отменить")));
+    }
+    const free = play.players.filter((x) => x.key !== "t");
+    if (!free.length) lobbyCard.append(h("p", { class: "muted" }, "Пока никто из учеников не может играть: откройте доступ слева."));
+    for (const pl of free) {
+      lobbyCard.append(h("div", { class: "list-item" }, h("span", { class: "grow" }, h("b", {}, pl.name)),
+        pl.busy ? h("span", { class: "chip" }, "играет") : cfg.games.map((g) =>
+          h("button", { class: "ghost small", title: "Вызвать: " + titles[g], onclick: () => act("play/invite", { to: pl.key, game: g }) }, titles[g]))));
+    }
+    lobbyCard.append(h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "muted small" }, "С компьютером:"),
+      Object.keys(titles).map((g) => h("button", { class: "ghost small", onclick: () => {
+        KursPlay.start({ mode: "cpu", game: g, names: ["Учитель", "Компьютер"], onEnd: () => { lastKey = ""; render(); } });
+        render();
+      } }, titles[g]))));
+    right.push(lobbyCard);
+  }
+  const live = h("section", { class: "card" }, h("h2", {}, "Идут партии"));
+  if (!play.matches.length) live.append(h("p", { class: "muted" }, "Сейчас никто не играет."));
+  for (const m of play.matches) {
+    live.append(h("div", { class: "list-item" },
+      h("span", { class: "grow" }, titles[m.game], " · ", h("b", {}, m.names.join(" — ")),
+        h("small", { class: "muted" }, ` · ${mmss(Math.max(0, Math.round(data.now - m.created)))}` + (m.game === "chess" ? ` · ходов: ${m.moves}` : ""))),
+      h("button", { class: "ghost small", onclick: () => { if (confirm("Остановить эту партию?")) act("play/end", { match: m.id }); } }, "Остановить")));
+  }
+  right.push(live);
+  return [h("div", { class: "grid" }, h("div", { class: "side" }, access, people), h("div", {}, right))];
 }
 
 // ---------- нейросеть ----------

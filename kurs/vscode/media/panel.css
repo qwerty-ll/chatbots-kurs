@@ -190,3 +190,9 @@ table.cheat td:first-child { font-family: var(--mono); white-space: nowrap; font
 .pause h1 { font-size: 28px; color: #fff; }
 .pause p { color: var(--sky); }
 .toast { position: fixed; left: 16px; right: 16px; bottom: 90px; z-index: 30; background: var(--indigo); color: #fff; padding: 12px 16px; border-radius: 12px; box-shadow: var(--shadow); }
+
+/* ---------- игры по сети ---------- */
+.player { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line, #E5E7EB); }
+.player:first-of-type { border-top: 0; }
+.pname { font-weight: 600; }
+.card.invite { border: 2px solid #3FB37F; }
