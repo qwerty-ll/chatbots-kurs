@@ -77,17 +77,47 @@ def get_class_key() -> str:
     return DEFAULT_KEY
 
 
-def find_cloudflared() -> str:
-    p = shutil.which("cloudflared")
-    if p:
-        return p
-    for cand in ("/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"):
-        if os.path.isfile(cand):
-            return cand
-    log("FAIL", "Утилита cloudflared не найдена в системе!", RED)
-    print("Установите её через Homebrew командой: brew install cloudflared")
-    sys.exit(1)
+def start_tunnel() -> tuple[subprocess.Popen, str]:
+    """Поднимает безопасный интернет-туннель: пробует Pinggy (SSH) и Cloudflare."""
+    # 1. Попытка через нативный SSH Pinggy (работает на любом Mac мгновенно через порт 443)
+    ssh = shutil.which("ssh")
+    if ssh:
+        try:
+            log("TUNNEL", f"Запускаю туннель для http://127.0.0.1:{PORT}…", BLUE)
+            cmd = [ssh, "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30",
+                   "-p", "443", f"-R0:localhost:{PORT}", "a.pinggy.io"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.(?:pinggy-free\.link|pinggy\.net)")
+            start = time.time()
+            while time.time() - start < 10:
+                line = proc.stdout.readline() or proc.stderr.readline()
+                if not line and proc.poll() is not None:
+                    break
+                m = pattern.search(line)
+                if m:
+                    return proc, m.group(0)
+            proc.terminate()
+        except Exception:
+            pass
 
+    # 2. Попытка через cloudflared
+    cpath = shutil.which("cloudflared") or "/opt/homebrew/bin/cloudflared"
+    if os.path.isfile(cpath):
+        try:
+            cmd = [cpath, "tunnel", "--url", f"http://127.0.0.1:{PORT}"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+            start = time.time()
+            while time.time() - start < 12:
+                line = proc.stderr.readline()
+                if not line and proc.poll() is not None:
+                    break
+                m = pattern.search(line)
+                if m:
+                    return proc, m.group(0)
+            proc.terminate()
+        except Exception:
+            pass
 
 def test_ai(url: str, key: str) -> bool:
     req_data = {
@@ -105,15 +135,19 @@ def test_ai(url: str, key: str) -> bool:
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            res = json.loads(r.read().decode("utf-8"))
-            content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
-            log("AI", f"Ответ от Gemini 3 Flash получен: «{content.strip()}»", GREEN)
-            return True
-    except Exception as e:
-        log("WARN", f"Тест запроса через туннель не удался: {e}", YELLOW)
-        return False
+    for attempt in range(1, 6):
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                res = json.loads(r.read().decode("utf-8"))
+                content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
+                log("AI", f"Ответ от Gemini 3 Flash получен: «{content.strip()}»", GREEN)
+                return True
+        except Exception as e:
+            if attempt < 5:
+                time.sleep(1.5)
+            else:
+                log("WARN", f"Тест запроса через туннель: {e}", YELLOW)
+    return False
 
 
 def save_bridge_config(tunnel_url: str, key: str, enabled: bool = True) -> dict:
@@ -136,9 +170,7 @@ def save_bridge_config(tunnel_url: str, key: str, enabled: bool = True) -> dict:
 def sync_git(tunnel_url: str) -> None:
     log("GIT", "Синхронизирую новый адрес туннеля с GitHub…", CYAN)
     try:
-        subprocess.run(["git", "-C", HERE, "add", "kurs/server/ai_bridge.json",
-                        "kurs/server/kurs_ai.py", "kurs/server/web/teacher.js"], check=True)
-        # Проверяем, есть ли что коммитить
+        subprocess.run(["git", "-C", HERE, "add", "kurs/server/ai_bridge.json"], check=True)
         status = subprocess.run(["git", "-C", HERE, "diff", "--cached", "--quiet"], check=False)
         if status.returncode != 0:
             commit_msg = f"Auto-update AI bridge: {tunnel_url}"
@@ -161,35 +193,8 @@ def main() -> None:
 
     ensure_antigravity_tools()
     key = get_class_key()
-    cpath = find_cloudflared()
 
-    log("TUNNEL", f"Запускаю Cloudflare Tunnel для http://127.0.0.1:{PORT}…", BLUE)
-    proc = subprocess.Popen(
-        [cpath, "tunnel", "--url", f"http://127.0.0.1:{PORT}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    tunnel_url = None
-    url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
-
-    # Читаем stderr процесса, где cloudflared печатает назначенный адрес
-    start_time = time.time()
-    while time.time() - start_time < 20:
-        line = proc.stderr.readline()
-        if not line and proc.poll() is not None:
-            break
-        m = url_pattern.search(line)
-        if m:
-            tunnel_url = m.group(0)
-            break
-
-    if not tunnel_url:
-        log("FAIL", "Не удалось получить адрес от Cloudflare за 20 секунд.", RED)
-        proc.terminate()
-        sys.exit(1)
-
+    proc, tunnel_url = start_tunnel()
     log("OK", f"Туннель открыт: {BOLD}{tunnel_url}{RESET}", GREEN)
 
     # Проверяем связь
