@@ -62,6 +62,17 @@ ASKS_CODE = re.compile(r"(напиши|сделай|реши|дай|скинь|�
                        r"|python|питон|\bdef\b|print\(|input\(", re.I)
 TICKET_STALE = 20       # секунд без опроса — ученик закрыл программу, вопрос убираем из очереди
 PERSONAL = re.compile(r"(\+?\d[\d\-\s()]{8,}\d)|([\w.-]+@[\w-]+\.\w+)|(парол|адрес|телефон|паспорт)", re.I)
+AI_PASTE_PATTERNS = re.compile(
+    r"```(?:python|py)?|^```"
+    r"|вот\s+(?:готовый\s+)?код"
+    r"|вот\s+(?:полное\s+)?решение"
+    r"|конечно[,!]?\s+вот"
+    r"|держи\s+код"
+    r"|надеюсь[,!]?\s+поможет"
+    r"|here\s+is\s+(?:the\s+)?code"
+    r"|as\s+an\s+ai",
+    re.I | re.M
+)
 
 
 class AIError(Exception):
@@ -273,29 +284,48 @@ class Gateway:
             return getattr(self, "_bridge_info", None)
         self._last_bridge_check = now
 
-        bridge = None
-        # 1. Локальный файл из репозитория курса
-        bridge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_bridge.json")
-        if os.path.isfile(bridge_file):
-            try:
-                with open(bridge_file, encoding="utf-8") as fh:
-                    d = json.load(fh)
-                    if d.get("enabled") and d.get("openai_base_url"):
-                        bridge = d
-            except (OSError, ValueError):
-                pass
-
-        # 2. Попытка запросить свежий адрес из GitHub (если git pull на учительском ПК ещё не делали)
+        # 0. Проверяем локальный Antigravity Tools (если сервер запущен на этом же компьютере)
+        local_direct = False
         try:
-            url = "https://raw.githubusercontent.com/qwerty-ll/chatbots-kurs/main/kurs/server/ai_bridge.json"
-            req = urllib.request.Request(url, headers={"User-Agent": "kurs-server", "Cache-Control": "no-cache"})
-            with urllib.request.urlopen(req, timeout=2.5) as r:
-                d = json.loads(r.read().decode("utf-8"))
-                if d.get("enabled") and d.get("openai_base_url"):
-                    if not bridge or d.get("updated_at", 0) >= bridge.get("updated_at", 0):
-                        bridge = d
+            req_local = urllib.request.Request("http://127.0.0.1:8045/v1/models", headers={"Authorization": "Bearer sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d"})
+            with urllib.request.urlopen(req_local, timeout=0.6) as r:
+                if r.status == 200:
+                    local_direct = True
         except Exception:
             pass
+
+        bridge = None
+        if local_direct:
+            bridge = {
+                "enabled": True,
+                "openai_base_url": "http://127.0.0.1:8045/v1",
+                "openai_key": "sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d",
+                "openai_models": "claude-sonnet-4-6,gemini-3.7-flash,gemini-3.8-flash,gemini-3-flash",
+                "updated_at": now
+            }
+        else:
+            # 1. Локальный файл из репозитория курса
+            bridge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_bridge.json")
+            if os.path.isfile(bridge_file):
+                try:
+                    with open(bridge_file, encoding="utf-8") as fh:
+                        d = json.load(fh)
+                        if d.get("enabled") and d.get("openai_base_url"):
+                            bridge = d
+                except (OSError, ValueError):
+                    pass
+
+            # 2. Попытка запросить свежий адрес из GitHub (если git pull на учительском ПК ещё не делали)
+            try:
+                url = "https://raw.githubusercontent.com/qwerty-ll/chatbots-kurs/main/kurs/server/ai_bridge.json"
+                req = urllib.request.Request(url, headers={"User-Agent": "kurs-server", "Cache-Control": "no-cache"})
+                with urllib.request.urlopen(req, timeout=2.5) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+                    if d.get("enabled") and d.get("openai_base_url"):
+                        if not bridge or d.get("updated_at", 0) >= bridge.get("updated_at", 0):
+                            bridge = d
+            except Exception:
+                pass
 
         if bridge and bridge.get("enabled"):
             with self.lock:
@@ -303,7 +333,7 @@ class Gateway:
                     self.cfg["provider"] = "openai"
                     self.cfg["openai_base_url"] = bridge["openai_base_url"]
                     self.cfg["openai_key"] = bridge.get("openai_key", "")
-                    self.cfg["openai_models"] = bridge.get("openai_models", "gemini-3.8-flash,gemini-3.x-flash")
+                    self.cfg["openai_models"] = bridge.get("openai_models", "claude-sonnet-4-6,gemini-3.7-flash,gemini-3.8-flash")
                     self.cfg["mode"] = "live"
                     self._bridge_info = {
                         "active": True,
@@ -314,6 +344,50 @@ class Gateway:
                     return self._bridge_info
         self._bridge_info = None
         return None
+
+    def check_ai_code(self, text: str) -> tuple[bool, str]:
+        """Определяет с помощью ИИ на учительском ПК, является ли код решением нейросети.
+        Возвращает (is_ai, reason).
+        """
+        if not text or len(text.strip()) < 20:
+            return False, "короткий фрагмент"
+
+        cache_key = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+        if hasattr(self, "_ai_code_cache") and cache_key in self._ai_code_cache:
+            return self._ai_code_cache[cache_key]
+
+        if not hasattr(self, "_ai_code_cache"):
+            self._ai_code_cache = {}
+
+        # 1. Быстрый regex-фильтр: явные фразы решений или разметка
+        if AI_PASTE_PATTERNS.search(text):
+            self._ai_code_cache[cache_key] = (True, "явная разметка/фразы нейросети")
+            return True, "явная разметка/фразы нейросети"
+
+        self.check_bridge()
+        if not self._configured() or self.cfg.get("mode") == "pause":
+            return False, "нейросеть не настроена"
+
+        prompt = (
+            "Ты — строгий школьный арбитр курса программирования Python.\n"
+            "Определи, скопирован ли данный фрагмент кода из нейросети (ChatGPT, GigaChat, DeepSeek и др.) как готовое решение задачи.\n"
+            "Маркеры ИИ: готовые законченные функции учебных задач, типовые комментарии на русском, академичный стиль решения.\n"
+            "Маркеры ученика: 1-2 простые строки, опечатки, отдельные команды, черновик.\n\n"
+            f"Код:\n```\n{text[:1200]}\n```\n\n"
+            "Ответь строго одним словом: AI (если это готовое решение/код из ИИ) или OK (если обычный код)."
+        )
+        t = Ticket(0, None, "арбитр", "", [{"role": "user", "content": prompt}], 0.0, 10, None)
+        try:
+            msg = self._call(t)
+            content = str(msg.get("content", "")).strip().upper()
+            is_ai = "AI" in content
+            reason = "ИИ подтвердил готовое решение" if is_ai else "обычный код"
+            if len(self._ai_code_cache) > 500:
+                self._ai_code_cache.clear()
+            self._ai_code_cache[cache_key] = (is_ai, reason)
+            return is_ai, reason
+        except Exception as e:
+            return False, f"ошибка проверки: {e}"
 
     # --- настройки ---
     def _read(self) -> dict:

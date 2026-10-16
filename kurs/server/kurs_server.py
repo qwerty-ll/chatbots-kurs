@@ -913,18 +913,31 @@ class Kurs:
         kind = str(body.get("kind", ""))
         if kind not in self.GUARD_EVENTS:
             raise ApiError(400, "Неизвестное событие")
+        text = str(body.get("text", ""))
+
+        is_ai = False
+        verdict_reason = ""
+        if kind == "ai_paste_blocked":
+            is_ai = True
+            verdict_reason = "явные признаки кода нейросети"
+        elif kind == "paste_blocked" and len(text.strip()) >= 20:
+            is_ai, verdict_reason = self.ai.check_ai_code(text)
+            if is_ai:
+                kind = "ai_paste_blocked"
+
         data = {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
-                "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]}
+                "chars": int(body.get("chars") or 0), "text": text[:400],
+                "reason": verdict_reason}
         self.s.log(sess["student_id"], kind, data)
-        # Блокировка ТОЛЬКО при вставке кода из ИИ или изменении файлов в обход редактора!
+        # Блокировка ТОЛЬКО если ИИ подтвердил вставку кода или правку вне редактора!
         if self.s.get("lock_on_paste") and kind in ("ai_paste_blocked", "outside_edit"):
             locks = dict(self.s.get("locks") or {})
             key = str(sess["student_id"])
             if key not in locks:
                 locks[key] = dict(data, kind=kind, ts=time.time())
                 self.s.set("locks", locks)
-            return {"ok": True, "locked": True}
-        return {"ok": True, "locked": False}
+            return {"ok": True, "locked": True, "is_ai": is_ai, "reason": verdict_reason}
+        return {"ok": True, "locked": False, "is_ai": is_ai, "reason": verdict_reason}
 
     def lock_of(self, sid):
         return (self.s.get("locks") or {}).get(str(sid))

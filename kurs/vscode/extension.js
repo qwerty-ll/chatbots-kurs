@@ -541,23 +541,34 @@ class Kurs {
     return s.length > 0 && pool.some((p) => squash(p).includes(s) || s.includes(squash(p)));
   }
 
-  blockedNotice(kind, file, text) {
-    let msg;
-    if (kind === "ai_paste_blocked") {
-      msg = "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю.";
-    } else if (kind === "outside_edit") {
-      msg = "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь.";
-    } else if (this.fromHintOrSample(text)) {
-      msg = "Код из подсказки или образца вставлять нельзя — перепечатай его сам, так он лучше запомнится 🙂";
-    } else {
-      msg = "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно свой код, примеры из «Учебника» и «Шпаргалки».";
+  async blockedNotice(kind, file, text) {
+    if (this.token) {
+      try {
+        const r = await this.api("POST", "/api/event", {
+          kind,
+          file: path.basename(file),
+          chars: String(text).length,
+          text: String(text).slice(0, 800)
+        });
+        if (r && r.locked) {
+          const alertMsg = "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю.";
+          vscode.window.showErrorMessage(alertMsg);
+          this.toast(alertMsg);
+          return this.pollState();
+        }
+      } catch (e) {
+        /* оффлайн или ошибка сети */
+      }
     }
+    const msg = kind === "ai_paste_blocked"
+      ? "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю."
+      : kind === "outside_edit"
+        ? "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь."
+        : this.fromHintOrSample(text)
+          ? "Код из подсказки или образца вставлять нельзя — перепечатай его сам, так он лучше запомнится 🙂"
+          : "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно свой код, примеры из «Учебника» и «Шпаргалки».";
     vscode.window.showWarningMessage(msg);
     this.toast(msg);
-    if (this.token) {
-      this.api("POST", "/api/event", { kind, file: path.basename(file), chars: String(text).length,
-        text: String(text).slice(0, 400) }).then((r) => { if (r && r.locked) return this.pollState(); }).catch(() => {});
-    }
   }
 
   // ---------------------------------------------------------------- сохранение работы на сервере
