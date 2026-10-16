@@ -255,8 +255,60 @@ class Gateway:
         self.last_ask: dict = {}
         self.log_fn = log_fn          # (ticket, ms) → запись в ленту учителя
         self.providers = {"gigachat": GigaChat(), "openai": OpenAICompatible()}
+        self._last_bridge_check = 0.0
+        self._bridge_info = None
+        self.check_bridge(force_fetch=True)
         self.worker = threading.Thread(target=self._loop, name="kurs-ai", daemon=True)
         self.worker.start()
+
+    def check_bridge(self, force_fetch: bool = False) -> dict | None:
+        """Проверяет наличие активного туннеля моста ИИ (ai_bridge.json или GitHub)."""
+        now = time.time()
+        if not force_fetch and now - getattr(self, "_last_bridge_check", 0) < 30:
+            return getattr(self, "_bridge_info", None)
+        self._last_bridge_check = now
+
+        bridge = None
+        # 1. Локальный файл из репозитория курса
+        bridge_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_bridge.json")
+        if os.path.isfile(bridge_file):
+            try:
+                with open(bridge_file, encoding="utf-8") as fh:
+                    d = json.load(fh)
+                    if d.get("enabled") and d.get("openai_base_url"):
+                        bridge = d
+            except (OSError, ValueError):
+                pass
+
+        # 2. Попытка запросить свежий адрес из GitHub (если git pull на учительском ПК ещё не делали)
+        try:
+            url = "https://raw.githubusercontent.com/qwerty-ll/chatbots-kurs/main/kurs/server/ai_bridge.json"
+            req = urllib.request.Request(url, headers={"User-Agent": "kurs-server", "Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=2.5) as r:
+                d = json.loads(r.read().decode("utf-8"))
+                if d.get("enabled") and d.get("openai_base_url"):
+                    if not bridge or d.get("updated_at", 0) >= bridge.get("updated_at", 0):
+                        bridge = d
+        except Exception:
+            pass
+
+        if bridge and bridge.get("enabled"):
+            with self.lock:
+                if self.cfg.get("provider") != "gigachat" or not self.cfg.get("gigachat_key"):
+                    self.cfg["provider"] = "openai"
+                    self.cfg["openai_base_url"] = bridge["openai_base_url"]
+                    self.cfg["openai_key"] = bridge.get("openai_key", "")
+                    self.cfg["openai_models"] = bridge.get("openai_models", "gemini-3.8-flash,gemini-3.x-flash")
+                    self.cfg["mode"] = "live"
+                    self._bridge_info = {
+                        "active": True,
+                        "url": bridge["openai_base_url"],
+                        "models": self.cfg["openai_models"],
+                        "updated_at": bridge.get("updated_at", 0),
+                    }
+                    return self._bridge_info
+        self._bridge_info = None
+        return None
 
     # --- настройки ---
     def _read(self) -> dict:
@@ -381,6 +433,7 @@ class Gateway:
 
     # --- учитель ---
     def status(self) -> dict:
+        self.check_bridge()
         with self.lock:
             avg = sum(self.durations) / len(self.durations) if self.durations else None
             return {"mode": self.cfg["mode"], "provider": self.cfg["provider"],
@@ -388,7 +441,8 @@ class Gateway:
                     "queue": [{"name": t.name, "pc": t.pc, "since": t.created} for t in self.queue],
                     "working": {"name": self.working.name, "since": self.working.created} if self.working else None,
                     "avg_seconds": round(avg, 1) if avg else None,
-                    "configured": self._configured()}
+                    "configured": self._configured(),
+                    "bridge": getattr(self, "_bridge_info", None)}
 
     def student_status(self) -> dict:
         with self.lock:
@@ -411,6 +465,7 @@ class Gateway:
 
     def test(self) -> dict:
         """Проверка связи из пульта: один короткий запрос мимо очереди учеников — но тоже «в один поток»."""
+        self.check_bridge(force_fetch=True)
         with self.lock:
             while self.working is not None:
                 self.lock.wait(1)

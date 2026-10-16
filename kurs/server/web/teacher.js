@@ -607,12 +607,14 @@ function aiUsed() {
 
 function aiCard() {
   const st = ai.status;
-  const providerName = st.provider === "gigachat" ? "GigaChat" : "OpenAI-совместимый сервис";
+  const isBridge = st.bridge && st.bridge.active;
+  const providerName = isBridge ? "🌉 Мост к ноутбуку" : (st.provider === "gigachat" ? "GigaChat" : "OpenAI-совместимый сервис");
   let state, cls;
   if (!st.configured) { state = "Не настроена: откройте «Настройки» и введите ключ"; cls = "bad"; }
   else if (st.mode === "pause") { state = "На паузе: ученики не могут спрашивать"; cls = "wait"; }
   else if (st.mode === "offline") { state = "Запасной режим: отвечает заготовка"; cls = "wait"; }
   else if (!st.ok) { state = "Ошибка: " + st.last_error; cls = "bad"; }
+  else if (isBridge) { state = `Мост активен (${st.bridge.models || "Gemini 3 Flash"})` + (st.avg_seconds ? ` · ответ за ~${st.avg_seconds} с` : ""); cls = "ok"; }
   else { state = "Работает" + (st.avg_seconds ? ` · ответ за ~${st.avg_seconds} с` : ""); cls = "ok"; }
   const mode = (m, label) => h("button", { class: "small" + (st.mode === m ? "" : " ghost"), onclick: () => act("ai/mode", { mode: m }) }, label);
   const waitSec = st.avg_seconds ? Math.round(st.avg_seconds * (st.queue.length + (st.working ? 1 : 0))) : null;
