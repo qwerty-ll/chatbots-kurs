@@ -511,17 +511,12 @@
     if (!view.lesson.theory.length && !(view.lesson.stages || []).length) {
       out.push(h("div", { class: "card" }, "Для этого занятия учебника в панели пока нет. Смотри на экран учителя и загляни в «Шпаргалку»."));
     }
-    const stages = view.lesson.stages || [];
-    if (stages.length) {
-      const ready = view.state.stage;
-      out.push(h("div", { class: "card" }, h("h2", {}, "📓 Тетрадь урока"),
-        h("p", {}, "Пиши код вместе с учителем. Когда учитель закончит этап, запусти свою тетрадь ▶ и проверь, что у тебя тоже работает."),
-        stages.map((s) => h("div", { class: "stage" + (s.n <= ready ? " done" : "") }, h("span", { class: "n" }, s.n <= ready ? "✓" : s.n),
-          h("span", {}, s.title), s.n <= ready ? h("span", { class: "muted small-text" }, " — учитель закончил") : null)),
-        h("div", { class: "row", style: "margin-top:8px" },
-          h("button", { onclick: () => send("openNotebook") }, view.notebookExists ? "Открыть тетрадь" : "Создать тетрадь урока"),
-          view.notebookExists ? h("button", { class: "secondary", onclick: () => send("runNotebook") }, "▶ Запустить тетрадь") : null)));
-    }
+    out.push(h("div", { class: "card", style: "border-left: 4px solid var(--accent, #3b82f6); background: rgba(59, 130, 246, 0.08);" },
+      h("h2", {}, "🧪 Поле тренировки и экспериментов"),
+      h("p", {}, "Здесь можно свободно писать любой код, тестировать команды и нейросеть перед решением заданий. Внутри уже есть живые примеры и шпаргалка!"),
+      h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { onclick: () => send("openNotebook") }, view.notebookExists ? "Открыть Тренировка.py" : "Создать поле тренировки"),
+        view.notebookExists ? h("button", { class: "secondary", onclick: () => send("runNotebook") }, "▶ Запустить тренировку") : null)));
     for (const c of view.lesson.theory) {
       out.push(h("div", { class: "card theory" }, h("h2", {}, c.title), h("div", { html: md(c.text) }),
         c.code ? h("pre", {}, c.code) : null,
@@ -535,6 +530,16 @@
     const out = [h("h1", {}, "Шпаргалка")];
     out.push(h("div", { class: "card" }, h("h2", {}, "Главные кнопки"), h("table", { class: "cheat" },
       [["F5", "▶ запустить программу"], ["F6", "✓ проверить задание"], ["Ctrl+Z", "отменить, если что-то сломал"]].map((r) => h("tr", {}, h("td", {}, r[0]), h("td", {}, r[1]))))));
+    const commonMistakes = [
+      ["NameError: name 'ask' is not defined", "Забыл импортировать функцию. Напиши в самом верху файла: from ai import ask"],
+      ["SyntaxError: expected ':'", "В конце строк с if, else, for, while, def обязательно должно стоять двоеточие :"],
+      ["IndentationError: expected an indented block", "После if, for, def все строчки внутри должны быть сдвинуты на 4 пробела (клавиша Tab)"],
+      ["ValueError: invalid literal for int()", "Ввели буквы вместо цифр. input() даёт текст, а int() переводит в число только цифры"],
+      ["TypeError: can only concatenate str to str", "Нельзя склеивать текст и число: используй f-строку f\"Мне {age} лет\""],
+      ["Ответ в консоли печатается как None", "Функция ничего не вернула, либо забыл написать print(ask(...))"],
+    ];
+    out.push(h("div", { class: "card" }, h("h2", {}, "💡 Подсказки и частые ошибки"),
+      h("table", { class: "cheat" }, commonMistakes.map((r) => h("tr", {}, h("td", { style: "color:var(--bad, #f87171);font-weight:600;" }, r[0]), h("td", {}, r[1]))))));
     for (const s of view.lesson.cheatsheet.sections || []) {
       out.push(h("div", { class: "card" }, h("h2", {}, s.title),
         h("table", { class: "cheat" }, s.rows.map((r) => h("tr", {}, h("td", {}, r[0]), h("td", {}, r[1]))))));
@@ -563,8 +568,8 @@
       ["Программа ничего не делает", "Она ждёт ответа. Щёлкни в окно внизу, напиши ответ и нажми Enter."],
       ["Ничего не понимаю, всё сломалось", "В задании есть кнопка «↺ Начать заново». Или позови учителя — это нормально."],
       ["Где мой файл?", "Слева. Если закрыл — открой задание в списке, файл откроется сам."],
-      ["Нейросеть долго думает или пишет «в очереди»", "В классе одна нейросеть на всех, вопросы идут по очереди. Подожди, не запускай программу много раз подряд. Очередь видно вверху: 🤖."],
-      ["Нейросеть пишет «Не так часто» или «закончились»", "Между вопросами нужна пауза в несколько секунд, а в день — не больше лимита. Пока ждёшь — нажми ✓ Проверить: проверка нейросеть не тратит."],
+      ["Нейросеть долго думает", "В классе нейросеть отвечает быстро каждому ученику параллельно. Если статус долго не меняется — проверь подключение к сети или позови учителя."],
+      ["Нейросеть пишет «Не так часто» или «закончились»", "Между вопросами нужна пауза в 1 секунду, а в день — не больше лимита. Пока ждёшь — нажми ✓ Проверить: проверка нейросеть не тратит."],
       ["Где ключ от нейросети?", "В файле .env рядом с ai.py. Панель создала его сама. Никому не показывай!"],
     ];
     out.push(h("div", { class: "card faq" }, h("h2", {}, "Частые вопросы"),

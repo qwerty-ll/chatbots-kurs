@@ -62,6 +62,28 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 .menu-item:hover { background: var(--soft); filter: none; }
 .menu-item .mi { width: 22px; text-align: center; }
 
+/* ---------- светофор готовности ---------- */
+.traffic-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 10px; }
+.traffic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .2);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.traffic-chip:hover { background: rgba(255, 255, 255, .2); }
+.traffic-chip.ok { border-color: rgba(123, 224, 168, .5); color: #C2FADB; }
+.traffic-chip.wait { border-color: rgba(255, 214, 102, .5); color: #FFECA8; }
+.traffic-chip.bad { border-color: rgba(255, 120, 115, .5); color: #FFCDCA; }
+@media (max-width: 950px) { .traffic-row { width: 100%; margin: 6px 0 0; } }
+
 /* ---------- вкладки ---------- */
 .nav { display: flex; gap: 4px; padding: 0 22px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 60px; z-index: 5; overflow-x: auto; }
 .nav .tab { background: none; color: var(--muted); border-radius: 0; padding: 12px 14px 10px; border-bottom: 3px solid transparent; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

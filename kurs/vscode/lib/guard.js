@@ -115,4 +115,43 @@ class Guard {
   }
 }
 
-module.exports = { Guard, looksPasted, squash, MIN_CHARS };
+/** Проверяет, похож ли вставленный текст на ответ или код из нейросети (GigaChat, ChatGPT, Gemini и др.). */
+function isAiGenerated(text) {
+  if (!text || typeof text !== "string") return false;
+  const str = text.trim();
+
+  // 1. Разметка Markdown: блоки кода ```python ... ``` или строки с ```
+  if (/```(?:python|py)?[\s\S]*?```/.test(str) || /^```/m.test(str)) {
+    return true;
+  }
+
+  // 2. Характерные реплики и вводные фразы ИИ
+  const aiPhrases = [
+    /вот\s+(?:готовый\s+)?код/i,
+    /вот\s+(?:полное\s+)?решение/i,
+    /конечно[,!]?\s+вот/i,
+    /держи\s+код/i,
+    /надеюсь[,!]?\s+поможет/i,
+    /разбор\s+задачи/i,
+    /пояснение\s+к\s+коду/i,
+    /вот\s+исправленн/i,
+    /здесь\s+представлен\s+код/i,
+    /шаг\s+1[:.]\s+/i,
+    /обратите\s+внимание/i,
+    /в\s+данном\s+(?:примере|коде|скрипте)/i,
+    /here\s+is\s+(?:the\s+)?code/i,
+    /as\s+an\s+ai/i,
+  ];
+  if (aiPhrases.some((re) => re.test(str))) {
+    return true;
+  }
+
+  // 3. Шапки и комментарии, типичные для сгенерированного решения
+  if (/(?:#|"""|''')\s*(?:Решение\s+задачи|Пример\s+использования|Код\s+для\s+задания|Полный\s+код)/i.test(str)) {
+    return true;
+  }
+
+  return false;
+}
+
+module.exports = { Guard, looksPasted, squash, isAiGenerated, MIN_CHARS };

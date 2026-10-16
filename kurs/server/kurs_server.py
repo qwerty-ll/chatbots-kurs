@@ -148,12 +148,141 @@ def notebook_upto(text: str, n: int) -> str:
     return "\n".join(lines[start:end]).rstrip() + "\n"
 
 
-def notebook_template(lesson: dict) -> str:
-    out = [f"# Тетрадь урока {lesson['lesson']}. {lesson['title']}",
-           "# Пиши код за учителем под меткой этапа. Отстал — нажми в панели «Взять код этапа».", ""]
-    for s in lesson.get("stages", []):
-        out += [f"# ЭТАП {s['n']}: {s['title']}", "", ""]
-    return "\n".join(out)
+def training_template(lesson: dict) -> str:
+    n = lesson.get("lesson", 1)
+    title = lesson.get("title", "")
+    header = [
+        "# =====================================================================",
+        f"# 🧪 ПОЛЕ ТРЕНИРОВКИ И ЭКСПЕРИМЕНТОВ: Урок {n}. {title}",
+        "# =====================================================================",
+        "# Здесь можно свободно писать любой код, пробовать команды и проверять идеи!",
+        "# Запуск файла: кнопка «▶ Запустить тренировку» в панели или треугольник вверху.",
+        "# =====================================================================",
+        "",
+    ]
+    if n == 1:
+        body = [
+            "# 1. Вывод текста на экран:",
+            'print("Привет! Я тренируюсь писать код на Python.")',
+            "",
+            "# 2. Ввод данных от пользователя (input всегда возвращает строку):",
+            'name = input("Как тебя зовут? ")',
+            'print(f"Приятно познакомиться, {name}!")',
+            "",
+            "# 3. Числа и вычисления (int превращает текст из input в целое число):",
+            'age = int(input("Сколько тебе лет? "))',
+            'print(f"Через 5 лет тебе будет {age + 5} лет!")',
+            "",
+            "# 4. Условие if / else (не забывай двоеточие : и отступ в 4 пробела!):",
+            'if age >= 18:',
+            '    print("Ты совершеннолетний!")',
+            'else:',
+            '    print("У тебя всё впереди!")',
+        ]
+    elif n == 2:
+        body = [
+            "# 1. Списки (коллекции команд и слов):",
+            'commands = ["привет", "помощь", "погода", "пока"]',
+            'print("Список команд бота:", commands)',
+            "",
+            "# 2. Проверка наличия в списке через 'in':",
+            'msg = input("Введи команду: ").lower()',
+            'if msg in commands:',
+            '    print(f"Команда «{msg}» принята в работу!")',
+            'else:',
+            '    print("Неизвестная команда. Попробуй ещё раз.")',
+            "",
+            "# 3. Цикл for для перебора элементов:",
+            'for cmd in commands:',
+            '    print("Доступно:", cmd)',
+        ]
+    elif n == 3:
+        body = [
+            "# 1. Подключение нейросети курса одной строкой:",
+            'from ai import ask',
+            "",
+            "# 2. Простой вопрос к нейросети:",
+            'print("Спрашиваю нейросеть…")',
+            'answer = ask("Расскажи очень короткий забавный факт о котиках")',
+            'print("Ответ нейросети:")',
+            'print(answer)',
+            "",
+            "# 3. Интерактивный вопрос от пользователя:",
+            'user_query = input("О чём спросить ИИ? ")',
+            'if user_query.strip():',
+            '    print(ask(user_query))',
+            "",
+            "# 💡 ПОДСКАЗКА:",
+            "# Если видишь NameError: name 'ask' is not defined — проверь первую строку: from ai import ask",
+        ]
+    elif n == 4:
+        body = [
+            "# 1. Роли и системный промпт (задаём характер нейросети):",
+            'from ai import ask',
+            "",
+            'pirate = ask("Как погода?", role="Ты старый морской пират. Отвечай с пиратским акцентом.")',
+            'print("Пират:")',
+            'print(pirate)',
+            "",
+            "# 2. Температура ответа (temperature):",
+            '# 0.1–0.3 — строгий и точный ответ (для фактов и математики)',
+            '# 0.7–1.0 — творческий и образный ответ (для историй и игр)',
+            'fact = ask("Сколько океанов на Земле?", temperature=0.1)',
+            'print("Точный факт:", fact)',
+        ]
+    elif n == 5:
+        body = [
+            "# 1. Память диалога (chat вместо ask):",
+            'from ai import chat',
+            "",
+            "# Список сообщений с ролями system / user / assistant:",
+            'history = [',
+            '    {"role": "system", "content": "Ты дружелюбный ассистент."},',
+            '    {"role": "user", "content": "Меня зовут Саша, мне 13 лет."},',
+            ']',
+            'reply = chat(history)',
+            'print("ИИ:", reply.content)',
+            "",
+            '# Сохраняем ответ и задаём следующий вопрос:',
+            'history.append({"role": "assistant", "content": reply.content})',
+            'history.append({"role": "user", "content": "Как меня зовут?"})',
+            'reply2 = chat(history)',
+            'print("ИИ с памятью:", reply2.content)',
+        ]
+    elif n == 6:
+        body = [
+            "# 1. Инструменты (Function Calling):",
+            'from ai import chat',
+            "",
+            'tools = [{',
+            '    "type": "function",',
+            '    "function": {',
+            '        "name": "get_time",',
+            '        "description": "Узнать точное время в городе",',
+            '        "parameters": {',
+            '            "type": "object",',
+            '            "properties": {"city": {"type": "string"}},',
+            '            "required": ["city"]',
+            '        }',
+            '    }',
+            '}]',
+            'resp = chat([{"role": "user", "content": "Сколько сейчас времени в Токио?"}], tools=tools)',
+            'if resp.tool_calls:',
+            '    print("ИИ вызвал инструмент:", resp.tool_calls[0].function.name)',
+            '    print("Аргументы:", resp.tool_calls[0].function.arguments)',
+        ]
+    else:
+        body = [
+            "# Итоговый проект:",
+            'from ai import ask, chat',
+            "",
+            'print("Мой чат-бот запущен!")',
+            '# Пиши свой код здесь.',
+        ]
+    return "\n".join(header + body) + "\n"
+
+
+notebook_template = training_template
 
 
 def _read(path: str) -> str:
@@ -438,8 +567,9 @@ class Kurs:
     def lesson_for(self) -> dict:
         lesson = self.lesson()
         return {"lesson": lesson["lesson"], "title": lesson["title"], "steps": lesson["steps"],
-                "theory": lesson["theory"], "stages": [{"n": s["n"], "title": s["title"]} for s in lesson["stages"]],
-                "notebook_template": notebook_template(lesson),
+                "theory": lesson["theory"], "stages": [],
+                "training_template": training_template(lesson),
+                "notebook_template": training_template(lesson),
                 "files": lesson.get("_files", {}), "uses_ai": bool(lesson.get("uses_ai")), "note": lesson.get("note", ""),
                 "tasks": [self.lib.public_task(self.lib.tasks[i], with_start=False) for i in lesson["task_ids"]],
                 "cheatsheet": self.lib.cheatsheet}
@@ -776,7 +906,7 @@ class Kurs:
         cur.sort(key=lambda i: self.lib.tasks[i]["num"])
         self.s.set("open_tasks", cur)
 
-    GUARD_EVENTS = ("paste_blocked", "outside_edit")
+    GUARD_EVENTS = ("paste_blocked", "ai_paste_blocked", "outside_edit")
 
     def student_event(self, sess, body: dict) -> dict:
         """Панель сообщает: ученик пытался вставить готовый код или менял файл в обход редактора."""
@@ -786,8 +916,8 @@ class Kurs:
         data = {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
                 "chars": int(body.get("chars") or 0), "text": str(body.get("text", ""))[:400]}
         self.s.log(sess["student_id"], kind, data)
-        if self.s.get("lock_on_paste"):
-            # панель блокируется до решения учителя; блокировка хранится здесь, перезапуск VS Code её не снимает
+        # Блокировка ТОЛЬКО при вставке кода из ИИ или изменении файлов в обход редактора!
+        if self.s.get("lock_on_paste") and kind in ("ai_paste_blocked", "outside_edit"):
             locks = dict(self.s.get("locks") or {})
             key = str(sess["student_id"])
             if key not in locks:
@@ -811,7 +941,8 @@ class Kurs:
 
     def guard_counts(self) -> dict:
         since = self.lesson_started_at()
-        rows = self.s.q("SELECT student_id, COUNT(*) AS n FROM events WHERE kind IN (?, ?) AND ts>=? GROUP BY student_id",
+        placeholders = ",".join("?" for _ in self.GUARD_EVENTS)
+        rows = self.s.q(f"SELECT student_id, COUNT(*) AS n FROM events WHERE kind IN ({placeholders}) AND ts>=? GROUP BY student_id",
                         (*self.GUARD_EVENTS, since))
         return {r["student_id"]: r["n"] for r in rows}
 
@@ -1321,11 +1452,27 @@ def main() -> None:
                   f"Порт занят другой программой — запустите на другом: --port {a.port + 80}")
             sys.exit(1)
         raise
-    print(f"Сервер курса запущен, версия {VERSION}.")
-    print(f"  Страница учителя:  http://localhost:{a.port}/teacher")
-    for ip in local_addresses():
-        print(f"  Адрес для учеников: http://{ip}:{a.port}")
-    print("  Остановить: Ctrl+C")
+    ips = local_addresses()
+    ip_str = f"http://{ips[0]}:{a.port}" if ips else f"http://localhost:{a.port}"
+    bridge = srv.RequestHandlerClass.kurs.ai.check_bridge(force_fetch=True)
+    if bridge and bridge.get("active"):
+        ai_banner = f"🟢 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Активен ({bridge.get('models', 'Gemini 3 Flash')}, прямой туннель)"
+    elif srv.RequestHandlerClass.kurs.ai._configured():
+        ai_banner = f"🟢 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Активен ({srv.RequestHandlerClass.kurs.ai.cfg.get('provider')})"
+    else:
+        ai_banner = "🟡 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Запасной режим (настройте ключ в пульте при необходимости)"
+
+    print("\n" + "=" * 66)
+    print("             🚦 СВЕТОФОР ГОТОВНОСТИ КУРСА К ЗАНЯТИЮ 🚦")
+    print("=" * 66)
+    print(f"🟢 [1] СЕРВЕР КУРСА     : Готов на порту {a.port} (версия {VERSION})")
+    print(f"🟢 [2] СЕТЬ ДЛЯ КЛАССА   : {ip_str}")
+    for extra_ip in ips[1:]:
+        print(f"                           (резервный адрес: http://{extra_ip}:{a.port})")
+    print(ai_banner)
+    print(f"🟢 [4] ПУЛЬТ УЧИТЕЛЯ    : http://localhost:{a.port}/teacher")
+    print("=" * 66)
+    print("  Остановить сервер: нажмите Ctrl+C в этом окне\n")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -10,7 +10,7 @@ const os = require("os");
 const path = require("path");
 const { call, ApiError } = require("./lib/http");
 const F = require("./lib/files");
-const { Guard, squash } = require("./lib/guard");
+const { Guard, squash, isAiGenerated } = require("./lib/guard");
 
 const POLL_MS = 3000;
 const IDLE_POLL_MS = 5000;
@@ -526,7 +526,10 @@ class Kurs {
       edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), res.old);
     }
     await vscode.workspace.applyEdit(edit);
-    this.blockedNotice("paste_blocked", file, res.blocked.join("\n"));
+    const blockedText = res.blocked.join("\n");
+    const isAi = isAiGenerated(blockedText);
+    const kind = isAi ? "ai_paste_blocked" : "paste_blocked";
+    this.blockedNotice(kind, file, blockedText);
   }
 
   /** Вставку взяли из подсказки или образца решения? */
@@ -539,11 +542,16 @@ class Kurs {
   }
 
   blockedNotice(kind, file, text) {
-    const msg = kind !== "paste_blocked"
-      ? "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь."
-      : this.fromHintOrSample(text)
-        ? "Код из подсказки или образца вставлять нельзя — перепечатай его сам, так он лучше запомнится 🙂"
-        : "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно свой код, примеры из «Учебника» и «Шпаргалки».";
+    let msg;
+    if (kind === "ai_paste_blocked") {
+      msg = "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю.";
+    } else if (kind === "outside_edit") {
+      msg = "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь.";
+    } else if (this.fromHintOrSample(text)) {
+      msg = "Код из подсказки или образца вставлять нельзя — перепечатай его сам, так он лучше запомнится 🙂";
+    } else {
+      msg = "Готовый код вставлять нельзя — напиши сам 🙂 Копировать можно свой код, примеры из «Учебника» и «Шпаргалки».";
+    }
     vscode.window.showWarningMessage(msg);
     this.toast(msg);
     if (this.token) {
@@ -911,16 +919,21 @@ class Kurs {
     this.keepPanelRight();
   }
 
-  // --- тетрадь урока
+  // --- поле тренировки (песочница)
   notebookPath() {
-    return path.join(this.workDir(), `Тетрадь_урока_${this.lessonNum()}.py`);
+    const trainingFile = path.join(this.workDir(), "Тренировка.py");
+    const legacyFile = path.join(this.workDir(), `Тетрадь_урока_${this.lessonNum()}.py`);
+    if (fs.existsSync(trainingFile)) return trainingFile;
+    if (fs.existsSync(legacyFile)) return legacyFile;
+    return trainingFile;
   }
 
   async openNotebook() {
     const file = this.notebookPath();
     if (!fs.existsSync(file)) {
-      F.writeFile(file, this.v.lesson.notebook_template);
-      this.trust(file, this.v.lesson.notebook_template);
+      const template = (this.v.lesson && (this.v.lesson.training_template || this.v.lesson.notebook_template)) || "";
+      F.writeFile(file, template);
+      this.trust(file, template);
     }
     this.refreshFiles();
     this.render();

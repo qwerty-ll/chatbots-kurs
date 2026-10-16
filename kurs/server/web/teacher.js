@@ -8,6 +8,7 @@ const timerBox = document.getElementById("timerbox");
 const navEl = document.getElementById("nav");
 const modal = document.getElementById("modal");
 const modalBody = document.getElementById("modal-body");
+const trafficLightEl = document.getElementById("traffic-light");
 
 let data = null;          // последний ответ /tapi/overview
 let ai = null;            // последний ответ /tapi/ai: нейросеть, очередь, лента вопросов
@@ -38,7 +39,7 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* без хранилища просто не запоминаем */ } },
 };
-const TABS = [["class", "🏫", "Класс"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["notebook", "📓", "Тетрадь"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
+const TABS = [["class", "🏫", "Класс"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
 let tab = TABS.some((t) => t[0] === store.get("kurs.tab")) ? store.get("kurs.tab") : "class";
 function goTab(t) { tab = t; store.set("kurs.tab", t); menuOpen = false; renderTop(); renderNav(); render(); window.scrollTo(0, 0); }
 document.addEventListener("click", (e) => { if (menuOpen && !e.target.closest(".menu-wrap")) { menuOpen = false; renderTop(); } });
@@ -193,10 +194,65 @@ async function refresh() {
 const currentLesson = () => data.lessons.find((l) => l.lesson === data.state.lesson) || data.lessons[0];
 const currentGroup = () => data.groups.find((g) => g.id === data.state.group_id);
 
+function renderTrafficLight() {
+  if (!trafficLightEl || !data) return;
+  const st = data.state;
+  const online = (data.students || []).filter((x) => x.pc).length;
+  const mainIp = (data.addresses && data.addresses[0]) || window.location.hostname || "localhost";
+  const port = window.location.port || "8000";
+  const studentUrl = `http://${mainIp}:${port}`;
+
+  let aiClass = "ok";
+  let aiText = "🟢 ИИ готов";
+  if (ai && ai.status) {
+    if (ai.status.bridge && ai.status.bridge.active) {
+      aiClass = "ok";
+      aiText = `🟢 Мост ИИ: ${ai.status.bridge.models ? ai.status.bridge.models.split(',')[0].trim() : "Gemini"}`;
+    } else if (ai.status.ok && ai.status.configured) {
+      aiClass = "ok";
+      aiText = `🟢 ИИ: ${ai.status.provider}`;
+    } else if (ai.status.mode === "offline") {
+      aiClass = "wait";
+      aiText = "🟡 ИИ: Запасной режим";
+    } else if (ai.status.mode === "pause") {
+      aiClass = "wait";
+      aiText = "⏸ ИИ: На паузе";
+    } else {
+      aiClass = "bad";
+      aiText = "🔴 ИИ: Требует ключ";
+    }
+  }
+
+  const chips = [
+    h("span", { class: "traffic-chip ok", title: "Сервер курса активен на этом порту" }, "🟢 Порт " + port),
+    h("button", {
+      class: "traffic-chip ok",
+      title: "Адрес для учеников (нажмите, чтобы скопировать)",
+      onclick: () => {
+        navigator.clipboard.writeText(studentUrl);
+        alert("Адрес для учеников скопирован в буфер:\n" + studentUrl);
+      }
+    }, `🟢 Сеть: ${studentUrl}`),
+    h("button", {
+      class: "traffic-chip " + aiClass,
+      title: "Статус нейросети (нажмите для перехода к настройкам и проверке связи)",
+      onclick: () => goTab("ai")
+    }, aiText),
+    h("button", {
+      class: "traffic-chip " + (st.running ? "ok" : "wait"),
+      title: "Статус класса (нажмите для перехода)",
+      onclick: () => goTab("class")
+    }, st.running ? `🟢 Класс: ${online} онлайн` : "⚪ Занятие не начато"),
+  ];
+
+  trafficLightEl.replaceChildren(...chips);
+}
+
 function renderTop() {
   const st = data.state;
   const l = currentLesson();
   const g = currentGroup();
+  renderTrafficLight();
   if (st.running) {
     const online = data.students.filter((x) => x.pc).length;
     lessonEl.replaceChildren(h("span", { class: "live" }, st.paused ? "⏸ пауза" : "● идёт урок"),
@@ -246,7 +302,7 @@ function renderNav() {
   const att = data.requests.length + data.help.length + (data.locks || []).length;
   const badges = {
     class: att,
-    ai: ai && ai.status.queue.length ? ai.status.queue.length : (ai && ai.status.last_error && aiUsed() ? "!" : (ai && ai.today ? ai.today : 0)),
+    ai: ai && ai.status.active_count ? ai.status.active_count : (ai && ai.status.last_error && aiUsed() ? "!" : (ai && ai.today ? ai.today : 0)),
     play: play ? play.invites_in.length : 0,
   };
   const soft = { play: play && play.matches.length ? play.matches.length : 0 };
@@ -263,7 +319,6 @@ function render() {
     class: () => (data.state.running ? renderLesson() : renderIdle()),
     ai: () => aiTab(),
     play: () => playTab(),
-    notebook: () => [data.state.running ? stagesCard(currentLesson()) : h("section", { class: "card" }, h("p", { class: "muted" }, "Тетрадь урока доступна во время занятия."))],
     groups: () => [renderGroups()],
     connect: () => [connectCard(), h("section", { class: "card" }, h("h2", {}, "Адрес для учеников"), addresses())],
   };
@@ -431,30 +486,6 @@ function attentionCard() {
   }
   box.append(lockSwitch);
   return box;
-}
-
-function stagesCard(lesson) {
-  const st = data.state;
-  const box = h("section", { class: "card" }, h("h2", {}, "📓 Тетрадь урока"));
-  if (!lesson.stages.length) { box.append(h("p", { class: "muted" }, "У этого занятия нет этапов.")); return box; }
-  box.append(h("p", { class: "muted small" }, "Печатайте код этапа на проекторе, ученики пишут за вами. Закончили — «Этап готов»: ученики увидят, что пора запустить и проверить свою тетрадь. Готовый код ученикам не выдаётся."));
-  for (const s of lesson.stages) {
-    const ready = s.n <= st.stage;
-    box.append(h("div", { class: "stage" + (ready ? " done" : "") }, h("span", { class: "n" }, ready ? "✓" : s.n),
-      h("span", { class: "t" }, s.title),
-      h("button", { class: "link small", title: "Код этапа для вас — показать на проекторе", onclick: () => showStage(s) }, "Код"),
-      !ready && s.n === st.stage + 1 ? h("button", { class: "small", onclick: () => act("stage", { stage: s.n }) }, "Этап готов") : null));
-  }
-  if (st.stage > 0) box.append(h("button", { class: "link small", onclick: () => act("stage", { stage: st.stage - 1 }) }, "↶ Отменить последний этап"));
-  return box;
-}
-
-async function showStage(s) {
-  try {
-    const r = await api("GET", "/tapi/stage_code?n=" + s.n);
-    openModal(h("h2", {}, `Этап ${s.n}. ${s.title}`), h("p", { class: "muted small" }, "Только для вас: код тетради до этого этапа. Крупный шрифт — удобно показывать на проекторе."),
-      h("pre", { class: "code huge" }, r.code));
-  } catch (e) { alert(e.message); }
 }
 
 function stepsCard(lesson) {
@@ -813,7 +844,7 @@ async function showStudent(id) {
       ] : h("p", { class: "muted", style: "margin:10px 0;" }, "🤖 Запросов к нейросети от этого ученика пока нет."),
       d.pastes && d.pastes.length ? [h("h3", {}, "⚠ Попытки вставить готовый код"),
         h("p", { class: "muted" }, "Панель не пустила этот текст в файл задания. Хороший повод подойти и спросить, откуда он."),
-        d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "вставка"}`),
+        d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "ai_paste_blocked" ? "⚠ вставка из ИИ (панель заблокирована)" : p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "обычная вставка"}`),
           h("pre", { class: "code" }, p.text || "")])] : null,
       h("p", { class: "kv" }, "Файлы с компьютера ученика (сохраняются при каждом сохранении и проверке)."),
       d.files.length ? d.files.map((f) => [h("p", { class: "kv" }, f.path), h("pre", { class: "code" }, f.content)])

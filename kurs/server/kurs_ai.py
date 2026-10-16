@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_CONFIG = {
     "provider": "gigachat",
@@ -42,7 +43,7 @@ DEFAULT_CONFIG = {
     # ограничения для класса
     "max_tokens": 400,              # длина одного ответа: короче ответ — быстрее очередь
     "max_prompt_chars": 2000,       # длина вопроса
-    "min_interval": 5,              # секунд между вопросами одного ученика
+    "min_interval": 1,              # секунд между вопросами одного ученика
     "daily_limit": 80,              # вопросов в день на ученика
     "short_hint": True,             # просить модель отвечать коротко
     "no_code": True,                # не писать ученикам готовый код (задания решают сами)
@@ -248,10 +249,11 @@ class Gateway:
         self.cfg = dict(DEFAULT_CONFIG)
         self.cfg.update(self._read())
         self.lock = threading.Condition()
-        self.queue: collections.deque[Ticket] = collections.deque()
         self.tickets: dict[int, Ticket] = {}
         self.next_id = 1
-        self.working: Ticket | None = None
+        self.active_students: set = set()
+        self.active_tickets: dict[int, Ticket] = {}
+        self.executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="kurs-ai")
         self.last_ok: float | None = None
         self.last_error = ""
         self.fails = 0
@@ -263,8 +265,6 @@ class Gateway:
         self._last_bridge_check = 0.0
         self._bridge_info = None
         self.check_bridge(force_fetch=True)
-        self.worker = threading.Thread(target=self._loop, name="kurs-ai", daemon=True)
-        self.worker.start()
 
     def check_bridge(self, force_fetch: bool = False) -> dict | None:
         """Проверяет наличие активного туннеля моста ИИ (ai_bridge.json или GitHub)."""
@@ -393,10 +393,7 @@ class Gateway:
                 clean.insert(0, {"role": "system", "content": hint})
         with self.lock:
             now = time.time()
-            for t in self.queue:
-                if t.student_id == student_id:
-                    raise AIError("Ты уже ждёшь ответа на прошлый вопрос.")
-            if self.working and self.working.student_id == student_id:
+            if student_id is not None and student_id in self.active_students:
                 raise AIError("Ты уже ждёшь ответа на прошлый вопрос.")
             wait = cfg["min_interval"] - (now - self.last_ask.get(student_id, 0))
             # результат инструмента — продолжение того же шага агента, его не задерживаем
@@ -416,8 +413,11 @@ class Gateway:
                 t.status, t.message = "done", offline_answer(clean)
                 self._log(t, 0)
             else:
-                self.queue.append(t)
-                self.lock.notify_all()
+                t.status = "working"
+                if student_id is not None:
+                    self.active_students.add(student_id)
+                self.active_tickets[t.id] = t
+                self.executor.submit(self._process_ticket, t)
             self._gc()
             return t
 
@@ -427,10 +427,7 @@ class Gateway:
             if not t or t.student_id != student_id:
                 raise AIError("Вопрос не найден. Задай его ещё раз.")
             t.polled = time.time()
-            if t.status == "queued":
-                pos = next((i for i, x in enumerate(self.queue) if x.id == tid), 0) + (1 if self.working else 0)
-                return {"status": "queued", "position": pos}
-            if t.status == "working":
+            if t.status in ("queued", "working"):
                 return {"status": "working"}
             if t.status == "done":
                 return {"status": "done", "message": t.message, "cached": t.cached}
@@ -441,27 +438,37 @@ class Gateway:
         self.check_bridge()
         with self.lock:
             avg = sum(self.durations) / len(self.durations) if self.durations else None
+            active_list = [{"name": t.name, "pc": t.pc, "since": t.created} for t in self.active_tickets.values()]
+            if len(active_list) > 1:
+                names_str = ", ".join(x["name"] for x in active_list[:3])
+                if len(active_list) > 3:
+                    names_str += f" (+{len(active_list) - 3})"
+                working = {"name": f"{names_str} ({len(active_list)} параллельно)", "since": active_list[0]["since"]}
+            elif active_list:
+                working = active_list[0]
+            else:
+                working = None
+
             return {"mode": self.cfg["mode"], "provider": self.cfg["provider"],
                     "ok": self.fails == 0, "last_error": self.last_error, "last_ok": self.last_ok,
-                    "queue": [{"name": t.name, "pc": t.pc, "since": t.created} for t in self.queue],
-                    "working": {"name": self.working.name, "since": self.working.created} if self.working else None,
+                    "queue": [],
+                    "active_count": len(active_list),
+                    "working": working,
                     "avg_seconds": round(avg, 1) if avg else None,
                     "configured": self._configured(),
                     "bridge": getattr(self, "_bridge_info", None)}
 
     def student_status(self) -> dict:
         with self.lock:
-            return {"mode": self.cfg["mode"], "ok": self.fails == 0, "queue": len(self.queue) + (1 if self.working else 0)}
+            return {"mode": self.cfg["mode"], "ok": self.fails == 0, "queue": 0, "active": len(self.active_tickets)}
 
     def set_mode(self, mode: str) -> None:
         if mode not in ("live", "offline", "pause"):
             raise AIError("Неизвестный режим")
         self.save_config({"mode": mode})
         if mode != "live":
-            # вопросы, которые уже ждут, получают ответ запасного режима или отказ
             with self.lock:
-                while self.queue:
-                    t = self.queue.popleft()
+                for t in list(self.active_tickets.values()):
                     if mode == "offline":
                         t.status, t.message = "done", offline_answer(t.messages)
                     else:
@@ -469,13 +476,9 @@ class Gateway:
                     self._log(t, 0)
 
     def test(self) -> dict:
-        """Проверка связи из пульта: один короткий запрос мимо очереди учеников — но тоже «в один поток»."""
+        """Проверка связи из пульта: тестовый короткий запрос напрямую."""
         self.check_bridge(force_fetch=True)
-        with self.lock:
-            while self.working is not None:
-                self.lock.wait(1)
-            t = Ticket(0, None, "учитель", "", [{"role": "user", "content": "Ответь одним словом: работаешь?"}], 0.1, 20, None)
-            self.working = t
+        t = Ticket(0, None, "учитель", "", [{"role": "user", "content": "Ответь одним словом: работаешь?"}], 0.1, 20, None)
         start = time.time()
         try:
             msg = self._call(t)
@@ -484,10 +487,9 @@ class Gateway:
         except AIError as e:
             self._mark_fail(str(e))
             return {"ok": False, "error": str(e)}
-        finally:
-            with self.lock:
-                self.working = None
-                self.lock.notify_all()
+        except Exception as e:
+            self._mark_fail(str(e))
+            return {"ok": False, "error": str(e)}
 
     # --- внутреннее ---
     def _configured(self) -> bool:
@@ -533,41 +535,31 @@ class Gateway:
         for k in [k for k, (ts, _) in self.cache.items() if time.time() - ts > self.cfg["cache_minutes"] * 60]:
             del self.cache[k]
 
-    def _loop(self) -> None:
-        while True:
+    def _process_ticket(self, t: Ticket) -> None:
+        start = time.time()
+        try:
+            msg = self._call(t)
+            dur = time.time() - start
+            self._mark_ok(dur)
             with self.lock:
-                while not self.queue or self.working is not None:
-                    self.lock.wait(1)
-                t = self.queue.popleft()
-                if time.time() - t.polled > TICKET_STALE:
-                    t.status, t.error = "error", "вопрос отменён: программа закрылась"
-                    continue
-                self.working = t
-                t.status = "working"
-            start = time.time()
-            try:
-                msg = self._call(t)
-                dur = time.time() - start
-                self._mark_ok(dur)
-                with self.lock:
-                    t.status, t.message = "done", msg
-                    key = self._cache_key(t)
-                    if key:
-                        self.cache[key] = (time.time(), msg)
-                self._log(t, int(dur * 1000))
-            except AIError as e:
-                self._mark_fail(str(e))
-                with self.lock:
-                    t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
-                self._log(t, int((time.time() - start) * 1000))
-            except Exception as e:  # noqa: BLE001
-                self._mark_fail(f"ошибка шлюза: {e!r}")
-                with self.lock:
-                    t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
-            finally:
-                with self.lock:
-                    self.working = None
-                    self.lock.notify_all()
+                t.status, t.message = "done", msg
+                key = self._cache_key(t)
+                if key:
+                    self.cache[key] = (time.time(), msg)
+            self._log(t, int(dur * 1000))
+        except AIError as e:
+            self._mark_fail(str(e))
+            with self.lock:
+                t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
+            self._log(t, int((time.time() - start) * 1000))
+        except Exception as e:  # noqa: BLE001
+            self._mark_fail(f"ошибка шлюза: {e!r}")
+            with self.lock:
+                t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
+        finally:
+            with self.lock:
+                self.active_students.discard(t.student_id)
+                self.active_tickets.pop(t.id, None)
 
 
 def flags_for(text: str) -> list[str]:
