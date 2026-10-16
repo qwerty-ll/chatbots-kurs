@@ -258,7 +258,7 @@ class Kurs:
         """Запись в ленту учителя: кто что спросил и что ответила нейросеть."""
         question = next((m["content"] for m in reversed(t.messages) if m["role"] == "user"), "")
         system = next((m["content"] for m in t.messages if m["role"] == "system"), "")
-        system = system.replace(kurs_ai.SHORT_HINT, "").strip()
+        system = system.replace(kurs_ai.SHORT_HINT, "").replace(kurs_ai.NO_CODE_HINT, "").strip()
         answer = (t.message or {}).get("content") if t.status == "done" else t.error
         if t.status == "done" and (t.message or {}).get("tool_calls"):
             answer = "🔧 " + ", ".join(c["function"]["name"] for c in t.message["tool_calls"])
