@@ -29,8 +29,10 @@
 .play-status { font-weight: 600; margin: 4px 0; }
 .play-game { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .play-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.play-row .spacer { flex: 1; }
-.play-done { background: #E8F5EE; color: #1F6B45; border-radius: 10px; padding: 10px 12px; font-weight: 600; }
+.spacer { flex: 1; }
+.play-exit-btn { border: 1.5px solid #D1D5DB; background: #FFFFFF; color: #1F2937; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all .15s ease; }
+.play-exit-btn:hover { background: #FEE2E2; border-color: #F87171; color: #991B1B; }
+.play-done { background: #E8F5EE; color: #1F6B45; border-radius: 10px; padding: 10px 12px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .play-done.hidden { display: none; }
 .play-help { font-size: 12px; color: #6B7280; margin: 0; text-align: center; }
 .chess { display: grid; grid-template-columns: repeat(8, 40px); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
@@ -570,23 +572,34 @@
   const host = el("div", { class: "play-host" });
   let cur = null;
 
+  function exitGame() {
+    if (!cur) return;
+    const c = cur;
+    if (!c.ended && c.opts && c.opts.mode === "net") {
+      try { c.send({ type: "resign" }); } catch (e) {}
+    }
+    finish();
+  }
+
   function frame(opts, names) {
     const nameA = el("b", {}, names[0]), nameB = el("b", {}, names[1]);
     const bubble = el("span", { class: "play-bubble" });
-    const head = el("div", { class: "play-head" }, el("span", {}, TITLES[opts.game]), el("span", { class: "play-vs" }, nameA, " — ", nameB), bubble);
+    const exitTop = el("button", { class: "play-exit-btn", title: "Выйти из игры (Esc)", onclick: exitGame }, "✕ Выйти");
+    const head = el("div", { class: "play-head" },
+      el("span", {}, TITLES[opts.game]),
+      el("span", { class: "play-vs" }, nameA, " — ", nameB),
+      bubble,
+      el("span", { class: "spacer" }),
+      exitTop
+    );
     const gameBox = el("div", {});
     const done = el("div", { class: "play-done hidden" });
+    const exitBottom = el("button", { class: "play-exit-btn", onclick: exitGame }, "🚪 Выйти из игры");
     const foot = el("div", { class: "row play-row" },
       opts.mode === "net" ? REACTIONS.map((r) => el("button", { class: "secondary small", onclick: () => cur && cur.send({ type: "react", e: r }) }, r)) : null,
       el("span", { class: "spacer" }),
-      el("button", { class: "secondary small", onclick: () => {
-        if (!cur) return;
-        if (!cur.ended) {
-          if (!confirm(opts.mode === "net" ? "Сдаться и выйти из партии?" : "Закончить игру?")) return;
-          cur.send({ type: "resign" });
-        }
-        finish();
-      } }, "Выйти"));
+      exitBottom
+    );
     host.replaceChildren(head, gameBox, done, foot);
     return { gameBox, bubble, done };
   }
@@ -610,7 +623,23 @@
     };
     if (opts.mode === "cpu") store.set("fleet", null);
     const c = { opts, ui, ended: false, game: null, ws: null, timer: null };
-    const finished = (text) => { if (!c.ended) { c.ended = true; ui.done.textContent = text + " · «Выйти» — к списку игроков"; ui.done.classList.remove("hidden"); } };
+    const finished = (text) => {
+      if (!c.ended) {
+        c.ended = true;
+        ui.done.replaceChildren(
+          el("span", {}, text + " · "),
+          el("button", { class: "play-exit-btn", onclick: exitGame }, "← К списку игроков")
+        );
+        ui.done.classList.remove("hidden");
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        exitGame();
+      }
+    };
+    window.addEventListener("keydown", onKey);
     const make = (you, sendFn, isCpu) => {
       if (c.game) c.game.stop();
       c.game = GAMES[opts.game]({ you, names, send: sendFn, finished, store, cpu: isCpu });
@@ -621,7 +650,7 @@
       const toPlayer = (msg) => { msg.by = 1; if (c.game) c.game.onMessage(msg); };
       c.send = (msg) => { msg.by = 0; if (c.game && c.game.ai) c.game.ai.reply(msg, toPlayer); };
       make(0, (m) => c.send(m), true);
-      c.close = () => { if (c.game) c.game.stop(); };
+      c.close = () => { window.removeEventListener("keydown", onKey); if (c.game) c.game.stop(); };
     } else {
       let tries = 0;
       const connect = () => {
@@ -646,7 +675,7 @@
       };
       c.send = (msg) => { if (c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
       c.timer = setInterval(() => c.send({ type: "ping" }), 15000);
-      c.close = () => { c.dead = true; clearInterval(c.timer); if (c.game) c.game.stop(); if (c.ws) c.ws.close(); };
+      c.close = () => { window.removeEventListener("keydown", onKey); c.dead = true; clearInterval(c.timer); if (c.game) c.game.stop(); if (c.ws) c.ws.close(); };
       connect();
     }
     cur = c;

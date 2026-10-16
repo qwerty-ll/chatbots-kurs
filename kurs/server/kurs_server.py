@@ -965,8 +965,9 @@ class Kurs:
             raise ApiError(404, "Нет такого ученика")
         res = [dict(x) for x in self.s.q("SELECT * FROM results WHERE student_id=? ORDER BY task_id", (sid,))]
         files = [dict(x) for x in self.s.q("SELECT path,content,updated FROM files WHERE student_id=? ORDER BY path", (sid,))]
+        placeholders = ",".join("?" for _ in self.GUARD_EVENTS)
         pastes = [dict(json.loads(x["data"] or "{}"), ts=x["ts"], kind=x["kind"]) for x in self.s.q(
-            "SELECT * FROM events WHERE student_id=? AND kind IN (?, ?) ORDER BY ts DESC LIMIT 20", (sid, *self.GUARD_EVENTS))]
+            f"SELECT * FROM events WHERE student_id=? AND kind IN ({placeholders}) ORDER BY ts DESC LIMIT 20", (sid, *self.GUARD_EVENTS))]
         ai_queries = [dict(id=x["id"], ts=x["ts"], pc=x["pc"], question=x["question"],
                            system=x["system"], answer=x["answer"], status=x["status"],
                            ms=x["ms"], cached=bool(x["cached"]),
