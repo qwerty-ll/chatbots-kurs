@@ -86,10 +86,19 @@ class Guard {
   inspect(file, newText, changes, sources) {
     const old = this.snapshots.has(file) ? this.snapshots.get(file) : null;
     const blocked = [];
+    const blockedChanges = [];
     if (old !== null) {
       const own = [old].concat(sources || []);
       for (const c of changes) {
-        if (c.text && this.isForeign(c.text, own)) blocked.push(c.text);
+        if (c.text && this.isForeign(c.text, own)) {
+          blocked.push(c.text);
+          blockedChanges.push({
+            rangeOffset: c.rangeOffset,
+            rangeLength: c.rangeLength,
+            text: c.text,
+            originalText: old.substr(c.rangeOffset, c.rangeLength),
+          });
+        }
       }
       if (!blocked.length) {
         for (const c of changes) {
@@ -102,7 +111,7 @@ class Guard {
       }
     }
     if (!blocked.length || old === null) this.snapshot(file, newText);
-    return { blocked, old };
+    return { blocked, blockedChanges, old };
   }
 }
 

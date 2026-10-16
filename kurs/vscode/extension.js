@@ -515,7 +515,16 @@ class Kurs {
     const res = this.guard.inspect(file, doc.getText(), e.contentChanges, this.ownSources(file));
     if (!res.blocked.length) return;
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), res.old);
+    if (res.blockedChanges && res.blockedChanges.length) {
+      const sorted = res.blockedChanges.slice().sort((a, b) => b.rangeOffset - a.rangeOffset);
+      for (const bc of sorted) {
+        const startPos = doc.positionAt(bc.rangeOffset);
+        const endPos = doc.positionAt(bc.rangeOffset + bc.text.length);
+        edit.replace(doc.uri, new vscode.Range(startPos, endPos), bc.originalText);
+      }
+    } else {
+      edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), res.old);
+    }
     await vscode.workspace.applyEdit(edit);
     this.blockedNotice("paste_blocked", file, res.blocked.join("\n"));
   }
