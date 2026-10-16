@@ -499,14 +499,14 @@ def chat(messages, tools=None, temperature=0.7, max_tokens=1500):
     return SimpleNamespace(role="assistant", content=_answer((user[-1] if user else "") + " " + system), tool_calls=None)
 
 
-def chat_text(messages, **options):
-    return chat(messages, **options).content
+def chat_text(messages, temperature=0.7, max_tokens=1500, **options):
+    return chat(messages, temperature=temperature, max_tokens=max_tokens, **options).content
 
 
-def ask(question, system=None, **options):
+def ask(question, system=None, temperature=0.7, max_tokens=1500, **options):
     messages = [{"role": "system", "content": system}] if system else []
     messages.append({"role": "user", "content": str(question)})
-    return chat_text(messages, **options)
+    return chat_text(messages, temperature=temperature, max_tokens=max_tokens, **options)
 '''
 
 

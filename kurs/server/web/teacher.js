@@ -17,6 +17,7 @@ let lastKey = "";         // перерисовываем, только если
 let lastRenderAt = 0;
 const leftMatches = new Set();
 let feedFilter = "";      // лента: только один ученик
+let feedSearch = "";      // лента: поиск по тексту
 const openDetails = new Set();   // какие раскрывашки открыты: пульт перерисовывается каждые 2 с, а они не должны закрываться
 
 // раскрывашка, которая помнит, открыта ли она
@@ -245,7 +246,7 @@ function renderNav() {
   const att = data.requests.length + data.help.length + (data.locks || []).length;
   const badges = {
     class: att,
-    ai: ai && ai.status.queue.length ? ai.status.queue.length : (ai && ai.status.last_error && aiUsed() ? "!" : 0),
+    ai: ai && ai.status.queue.length ? ai.status.queue.length : (ai && ai.status.last_error && aiUsed() ? "!" : (ai && ai.today ? ai.today : 0)),
     play: play ? play.invites_in.length : 0,
   };
   const soft = { play: play && play.matches.length ? play.matches.length : 0 };
@@ -698,22 +699,71 @@ function aiFeed() {
   const sel = h("select", { onchange: (e) => { feedFilter = e.target.value; refresh(); } },
     h("option", { value: "" }, "Все ученики"), data.students.map((s) => h("option", { value: s.id }, s.name)));
   sel.value = feedFilter;
-  const box = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "Что спрашивают у нейросети"),
-    h("span", { class: "muted small" }, `сегодня: ${ai.today}`), h("span", { class: "spacer" }), sel,
-    h("button", { class: "ghost small", onclick: () => { if (confirm("Очистить всю ленту вопросов?")) act("ai/clear"); } }, "Очистить")));
-  if (!ai.log.length) box.append(h("p", { class: "muted" }, "Вопросов пока нет. Здесь появится всё, что ученики отправляют нейросети, и её ответы."));
-  for (const r of ai.log.slice(0, 60)) {
-    box.append(h("div", { class: "feed-item" + (r.flags.length ? " flagged" : "") },
-      h("div", { class: "feed-meta" }, h("b", { class: "name-link", onclick: () => { feedFilter = String(r.student_id); refresh(); } }, r.name),
-        ` · ${r.pc || ""} · ${time(r.ts)}`,
+
+  const searchInput = h("input", {
+    type: "search",
+    placeholder: "🔍 Поиск по вопросу или ПК…",
+    value: feedSearch,
+    style: "padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;width:220px;",
+    oninput: (e) => { feedSearch = e.target.value; render(); }
+  });
+
+  const clearBtn = (feedFilter || feedSearch)
+    ? h("button", { class: "ghost small", onclick: () => { feedFilter = ""; feedSearch = ""; refresh(); } }, "Сбросить фильтр")
+    : null;
+
+  const term = feedSearch.toLowerCase().trim();
+  const filtered = (ai.log || []).filter((r) => {
+    if (term) {
+      const match = (r.name && r.name.toLowerCase().includes(term)) ||
+                    (r.pc && r.pc.toLowerCase().includes(term)) ||
+                    (r.question && r.question.toLowerCase().includes(term)) ||
+                    (r.answer && r.answer.toLowerCase().includes(term)) ||
+                    (r.system && r.system.toLowerCase().includes(term));
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const box = h("section", { class: "card" },
+    h("div", { class: "card-head", style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;" },
+      h("h2", {}, "Что спрашивают у нейросети"),
+      h("span", { class: "muted small" }, `сегодня: ${ai.today}` + (filtered.length !== ai.log.length ? ` · найдено: ${filtered.length}` : "")),
+      h("span", { class: "spacer" }),
+      searchInput,
+      sel,
+      clearBtn,
+      h("button", { class: "ghost small", onclick: () => { if (confirm("Очистить всю ленту вопросов?")) act("ai/clear"); } }, "Очистить")
+    )
+  );
+
+  if (!ai.log.length) {
+    box.append(h("p", { class: "muted" }, "Вопросов пока нет. Здесь появится всё, что ученики отправляют нейросети, и её ответы."));
+  } else if (!filtered.length) {
+    box.append(h("p", { class: "muted" }, "По вашему поисковому запросу ничего не найдено."));
+  }
+
+  for (const r of filtered.slice(0, 150)) {
+    box.append(h("div", { class: "feed-item" + (r.flags.length ? " flagged" : ""), style: "border-top:1px solid var(--line);padding:12px 0;" },
+      h("div", { class: "feed-meta", style: "display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;color:var(--muted);" },
+        h("b", { class: "name-link", style: "cursor:pointer;color:var(--blue);", onclick: () => showStudent(r.student_id) }, "👤 " + r.name),
+        h("span", { style: "font-weight:600;color:var(--ink);" }, `· 🖥 ${r.pc || "ПК"}`),
+        h("span", {}, `· ⏰ ${time(r.ts)}`),
+        r.ms ? h("span", { class: "chip" }, `⚡ ${(r.ms / 1000).toFixed(1)} с`) : null,
         r.cached ? h("span", { class: "chip" }, "из памяти") : null,
         r.status !== "done" ? h("span", { class: "chip bad" }, "ошибка") : null,
-        r.flags.map((f) => h("span", { class: "chip bad" }, "⚠ " + f))),
-      r.system ? h("div", { class: "feed-role" }, "Роль: " + r.system) : null,
-      h("div", { class: "feed-q" }, r.question),
-      details("ai" + r.id, "Ответ" + (r.ms ? ` · ${(r.ms / 1000).toFixed(1)} с` : ""), h("div", { class: "feed-a" }, r.answer))));
+        r.flags.map((f) => h("span", { class: "chip bad" }, "⚠ " + f))
+      ),
+      r.system ? h("div", { class: "feed-role", style: "margin:4px 0 2px;font-size:13px;color:var(--blue-ink);" }, "🎭 Роль: " + r.system) : null,
+      h("div", { style: "margin:6px 0 2px;" },
+        h("div", { class: "feed-q", style: "font-weight:600;white-space:pre-wrap;color:var(--ink);line-height:1.4;" }, "💬 " + r.question)
+      ),
+      h("div", { class: "feed-a", style: "white-space:pre-wrap;background:#F4F6FC;border:1px solid #E4E8F4;border-radius:8px;padding:8px 12px;margin-top:6px;line-height:1.45;font-size:13.5px;color:#1E234D;" },
+        (r.status === "done" ? "🤖 " : "❌ ") + (r.answer || "(пустой ответ)")
+      )
+    ));
   }
-  box.append(h("p", { class: "muted small" }, "Лента хранится 30 дней на этом компьютере, потом удаляется сама."));
+  box.append(h("p", { class: "muted small", style: "margin-top:12px;" }, "Лента хранится 30 дней на этом компьютере, потом удаляется сама."));
   return box;
 }
 
@@ -740,6 +790,27 @@ async function showStudent(id) {
     const locked = (data.locks || []).some((x) => x.student_id === id);
     openModal(h("h2", {}, d.name),
       locked ? h("p", {}, h("button", { class: "ok small", onclick: async () => { await act("unlock", { student_id: id }); closeModal(); } }, "🔓 Разблокировать панель")) : null,
+      d.ai_queries && d.ai_queries.length ? [
+        h("h3", { style: "margin-top:14px;display:flex;align-items:center;gap:8px;" }, "🤖 Запросы к нейросети", h("span", { class: "chip" }, d.ai_queries.length)),
+        h("p", { class: "muted small" }, "Что ученик отправлял ИИ и какие ответы получал:"),
+        h("div", { style: "max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;margin:8px 0 16px;padding-right:4px;" },
+          d.ai_queries.map((q) => h("div", { class: "feed-item" + (q.flags && q.flags.length ? " flagged" : ""),
+                                              style: "border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;" },
+            h("div", { class: "feed-meta", style: "display:flex;flex-wrap:wrap;gap:6px;align-items:center;" },
+              h("span", { style: "font-weight:700;" }, `🖥 ${q.pc || "ПК"}`),
+              h("span", {}, `· ⏰ ${when(q.ts)}`),
+              q.ms ? h("span", { class: "chip" }, `⚡ ${(q.ms / 1000).toFixed(1)} с`) : null,
+              q.cached ? h("span", { class: "chip" }, "из памяти") : null,
+              q.status !== "done" ? h("span", { class: "chip bad" }, "ошибка") : null,
+              (q.flags || []).map((f) => h("span", { class: "chip bad" }, "⚠ " + f))
+            ),
+            q.system ? h("div", { class: "feed-role", style: "margin-top:4px;font-size:13px;color:var(--blue-ink);" }, "🎭 Роль: " + q.system) : null,
+            h("div", { class: "feed-q", style: "margin:6px 0 4px;font-weight:600;" }, "💬 " + q.question),
+            h("div", { class: "feed-a", style: "background:#F4F6FC;border:1px solid #E4E8F4;border-radius:8px;padding:8px 10px;margin-top:4px;font-size:13px;" },
+              (q.status === "done" ? "🤖 " : "❌ ") + (q.answer || "(нет ответа)"))
+          ))
+        )
+      ] : h("p", { class: "muted", style: "margin:10px 0;" }, "🤖 Запросов к нейросети от этого ученика пока нет."),
       d.pastes && d.pastes.length ? [h("h3", {}, "⚠ Попытки вставить готовый код"),
         h("p", { class: "muted" }, "Панель не пустила этот текст в файл задания. Хороший повод подойти и спросить, откуда он."),
         d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "вставка"}`),

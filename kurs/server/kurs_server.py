@@ -285,7 +285,7 @@ class Kurs:
 
     def ai_overview(self, student_id=None) -> dict:
         names = {r["id"]: r["name"] for r in self.s.q("SELECT id, name FROM students")}
-        sql = "SELECT * FROM ai_log" + (" WHERE student_id=?" if student_id else "") + " ORDER BY id DESC LIMIT 150"
+        sql = "SELECT * FROM ai_log" + (" WHERE student_id=?" if student_id else "") + " ORDER BY id DESC LIMIT 500"
         rows = self.s.q(sql, (student_id,) if student_id else ())
         log = [{"id": r["id"], "ts": r["ts"], "student_id": r["student_id"], "name": names.get(r["student_id"], "?"), "pc": r["pc"],
                 "question": r["question"], "system": r["system"], "answer": r["answer"], "status": r["status"],
@@ -823,7 +823,12 @@ class Kurs:
         files = [dict(x) for x in self.s.q("SELECT path,content,updated FROM files WHERE student_id=? ORDER BY path", (sid,))]
         pastes = [dict(json.loads(x["data"] or "{}"), ts=x["ts"], kind=x["kind"]) for x in self.s.q(
             "SELECT * FROM events WHERE student_id=? AND kind IN (?, ?) ORDER BY ts DESC LIMIT 20", (sid, *self.GUARD_EVENTS))]
-        return {"id": sid, "name": r["name"], "results": res, "files": files, "pastes": pastes}
+        ai_queries = [dict(id=x["id"], ts=x["ts"], pc=x["pc"], question=x["question"],
+                           system=x["system"], answer=x["answer"], status=x["status"],
+                           ms=x["ms"], cached=bool(x["cached"]),
+                           flags=[f for f in (x["flags"] or "").split(",") if f])
+                      for x in self.s.q("SELECT * FROM ai_log WHERE student_id=? ORDER BY id DESC LIMIT 50", (sid,))]
+        return {"id": sid, "name": r["name"], "results": res, "files": files, "pastes": pastes, "ai_queries": ai_queries}
 
     def export_csv(self) -> str:
         st = self.s.state()

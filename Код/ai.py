@@ -180,24 +180,25 @@ def chat_direct(messages, tools, temperature, max_tokens):
     return None
 
 
-def chat_text(messages, **options):
+def chat_text(messages, temperature=0.7, max_tokens=1500, **options):
     """То же, что chat(), но возвращает только текст ответа."""
-    message = chat(messages, **options)
+    message = chat(messages, temperature=temperature, max_tokens=max_tokens)
     if message is None:
         return "Нейросеть сейчас недоступна. Попробуй через минуту."
     return message.content or "(пустой ответ)"
 
 
-def ask(question, system=None, **options):
+def ask(question, system=None, temperature=0.7, max_tokens=1500, **options):
     """Самое простое: задать один вопрос и получить текст.
 
     system — необязательная «роль» бота (например: «Ты весёлый пират»).
+    temperature — творчество (0.0 — строго, 1.0 — фантазия).
     """
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": question})
-    return chat_text(messages, **options)
+    return chat_text(messages, temperature=temperature, max_tokens=max_tokens, **options)
 
 
 if __name__ == "__main__":
