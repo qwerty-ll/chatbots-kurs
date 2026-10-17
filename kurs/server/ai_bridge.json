@@ -1,10 +1,10 @@
 {
   "enabled": true,
   "provider": "openai",
-  "openai_base_url": "https://talented-spot-cycle-olympus.trycloudflare.com/v1",
+  "openai_base_url": "https://institutional-dog-faced-parish.trycloudflare.com/v1",
   "openai_key": "sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d",
   "openai_models": "gemini-3.8-flash,gemini-3.x-flash",
-  "updated_at": 1792238487,
-  "tunnel_url": "https://talented-spot-cycle-olympus.trycloudflare.com",
+  "updated_at": 1792238526,
+  "tunnel_url": "https://institutional-dog-faced-parish.trycloudflare.com",
   "hostname": "Mac"
 }
