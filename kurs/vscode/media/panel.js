@@ -5,7 +5,7 @@
   const vscode = acquireVsCodeApi();
   const root = document.getElementById("root");
   const toastEl = document.getElementById("toast");
-  const ui = Object.assign({ tab: "tasks", task: null, helpText: "", server: "", toured: {} }, vscode.getState() || {});
+  const ui = Object.assign({ tab: "tasks", task: null, helpText: "", server: "", toured: {}, chatHistory: [], chatDraft: "", chatLoading: false }, vscode.getState() || {});
   let view = null;
   let toastTimer = null;
   let clockTimer = null;
@@ -75,6 +75,18 @@
       lobby = m.lobby;
       lobbyError = m.error || "";
       if (ui.tab === "games" && !P.current()) render();
+    } else if (m.type === "aiChatReply") {
+      ui.chatLoading = false;
+      ui.chatHistory = ui.chatHistory || [];
+      ui.chatHistory.push({ role: "assistant", content: m.message, ts: Date.now() });
+      save();
+      render();
+    } else if (m.type === "aiChatError") {
+      ui.chatLoading = false;
+      ui.chatHistory = ui.chatHistory || [];
+      ui.chatHistory.push({ role: "error", content: m.error || "Ошибка нейросети", ts: Date.now() });
+      save();
+      render();
     } else if (m.type === "toast") toast(m.text);
     else if (m.type === "select") go({ tab: "tasks", task: m.task });
   });
@@ -266,8 +278,8 @@
         view.lesson.uses_ai && st.ai ? h("span", { class: "pill", title: aiTitle(st.ai) }, aiPill(st.ai)) : null,
         st.timer_end ? h("span", { class: "pill", id: "timer", title: st.timer_label || "Таймер" }, timerText()) : null),
       h("div", { class: "dots", title: "Твой прогресс на уроке" }, tasks.map((t) => h("i", { class: statusOf(t.id) || "" })))));
-    const tabs = [["tasks", "📋", "Задания"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]];
-    if (playOn()) tabs.splice(3, 0, ["games", "🎮", "Игры"]);
+    const tabs = [["tasks", "📋", "Задания"], ["chat", "🤖", "Помощник"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]];
+    if (playOn()) tabs.splice(4, 0, ["games", "🎮", "Игры"]);
     else if (ui.tab === "games") ui.tab = "tasks";
     out.push(h("div", { class: "tabs" }, tabs.map(([id, ic, title]) =>
       h("button", { class: ui.tab === id ? "on" : "", onclick: () => go({ tab: id, task: id === "tasks" ? null : ui.task }) }, h("span", { class: "ic" }, ic), title))));
@@ -277,6 +289,7 @@
     const page = h("div", { class: "page" });
     if (!ui.toured[view.me.name]) page.append(tour());
     if (ui.tab === "tasks") page.append(...(ui.task && tasks.some((t) => t.id === ui.task) ? taskView(ui.task) : taskList()));
+    else if (ui.tab === "chat") page.append(...chatView());
     else if (ui.tab === "theory") page.append(...theory());
     else if (ui.tab === "cheat") page.append(...cheat());
     else if (ui.tab === "games") page.append(...games());
@@ -376,6 +389,7 @@
     out.push(hintsCard(t, st));
     out.push(h("div", { class: "row", style: "margin-top:6px" },
       view.files[id] ? h("button", { class: "secondary small", onclick: () => send("reset", { task: id }) }, "↺ Начать заново") : null,
+      h("button", { class: "secondary small", onclick: () => askAiAboutTask(t) }, "🤖 Спросить ИИ"),
       h("button", { class: "secondary small", onclick: () => go({ tab: "help" }) }, "🙋 Позвать учителя")));
     return out;
   }
@@ -447,7 +461,9 @@
         h("h2", {}, "Что мешает программе"),
         e.code_line ? h("div", { class: "line" }, e.line ? h("small", {}, `строка ${e.line}`) : null, e.code_line.trim()) : null,
         h("div", {}, e.text),
-        e.line ? h("p", { class: "muted small-text" }, "Эта строка подчёркнута красным в твоём файле.") : null));
+        e.line ? h("p", { class: "muted small-text" }, "Эта строка подчёркнута красным в твоём файле.") : null,
+        h("div", { style: "margin-top:8px" },
+          h("button", { class: "secondary small", onclick: () => askAiAboutError(t, r) }, "🤖 Разобрать ошибку с ИИ-наставником"))));
     }
     const failed = r.items.filter((i) => !i.ok);
     const failedTests = failed.filter((i) => i.kind === "test");
@@ -467,6 +483,12 @@
       out.push(h("div", { class: "card test" }, h("div", { class: "q" }, "В коде не хватает: " + it.title.replace(/^есть /, "")), h("p", {}, it.message)));
     }
     if (good) out.push(h("p", { class: "passed-list" }, `✓ ${good} ${plural(good, "проверка прошла", "проверки прошли", "проверок прошли")}.`));
+    if (!r.ok && !r.error) {
+      out.push(h("div", { class: "card", style: "background: var(--brand-soft); border-left: 3px solid var(--brand); margin-top: 10px;" },
+        h("b", {}, "Не получается найти ошибку?"),
+        h("p", { class: "small-text muted", style: "margin: 4px 0 8px;" }, "ИИ-наставник посмотрит на твой код и подскажет, что именно нужно исправить."),
+        h("button", { class: "small", onclick: () => askAiAboutError(t, r) }, "🤖 Разобрать с ИИ-наставником")));
+    }
     return out;
   }
 
@@ -503,6 +525,184 @@
       }
     }
     return box;
+  }
+
+  // ---------- ИИ-помощник
+  function formatAiMarkdown(text) {
+    if (!text) return "";
+    const codeBlocks = [];
+    let s = String(text).replace(/```(?:[a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, (_m, code) => {
+      codeBlocks.push(code.trim());
+      return `___CODE_BLOCK_${codeBlocks.length - 1}___`;
+    });
+    s = esc(s);
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    s = s.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
+    s = s.replace(/\n/g, "<br>");
+    s = s.replace(/___CODE_BLOCK_(\d+)___/g, (_m, idx) => {
+      return `<pre><code>${esc(codeBlocks[Number(idx)] || "")}</code></pre>`;
+    });
+    return s;
+  }
+
+  function sendAiMessage(text, taskId) {
+    text = (text || "").trim();
+    if (!text || ui.chatLoading) return;
+    ui.chatHistory = ui.chatHistory || [];
+    ui.chatHistory.push({ role: "user", content: text, ts: Date.now() });
+    ui.chatLoading = true;
+    ui.chatDraft = "";
+    save();
+    render();
+    setTimeout(() => {
+      const box = document.getElementById("chat-box");
+      if (box) box.scrollTop = box.scrollHeight;
+    }, 50);
+
+    const msgsToSend = ui.chatHistory
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    send("aiChat", {
+      messages: msgsToSend,
+      taskId: taskId || ui.task || null
+    });
+  }
+
+  function askAiAboutTask(t) {
+    go({ tab: "chat", task: t.id });
+    sendAiMessage(`Привет! Помоги мне с заданием «${t.num}. ${t.title}»: ${t.statement}. С чего мне лучше начать?`, t.id);
+  }
+
+  function askAiAboutError(t, check) {
+    go({ tab: "chat", task: t.id });
+    let prompt = `Я решаю задание «${t.num}. ${t.title}». При проверке возникла ошибка. `;
+    if (check.error && check.error.text) {
+      prompt += `Ошибка: ${check.error.text}`;
+      if (check.error.code_line) prompt += ` в строке: ${check.error.code_line.trim()}`;
+      prompt += `. Помоги понять, что не так в коде?`;
+    } else if (check.items) {
+      const bad = check.items.find((i) => !i.ok);
+      if (bad) {
+        if (bad.why) prompt += bad.why + ". ";
+        if (bad.message) prompt += bad.message + ". ";
+        if (bad.dialog && bad.dialog.length) {
+          prompt += "В диалоге бот ответил не то, что ожидалось. ";
+        }
+      }
+      prompt += "Подскажи, где я ошибся, но не давай готовый код!";
+    } else {
+      prompt += "Программа не проходит проверку. В чём может быть причина?";
+    }
+    sendAiMessage(prompt, t.id);
+  }
+
+  function chatView() {
+    const out = [];
+    const tasks = (view && view.lesson && view.lesson.tasks) || [];
+    const currentTask = ui.task ? tasks.find((t) => t.id === ui.task) : null;
+
+    out.push(h("div", { class: "chat-head" },
+      h("h1", { style: "margin:0" }, "🤖 ИИ-Помощник"),
+      ui.chatHistory && ui.chatHistory.length ? h("button", {
+        class: "secondary small",
+        onclick: () => {
+          ui.chatHistory = [];
+          ui.chatDraft = "";
+          save();
+          render();
+        }
+      }, "🗑️ Очистить") : null));
+
+    if (currentTask) {
+      out.push(h("div", { class: "card", style: "margin-top:8px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;" },
+        h("div", {},
+          h("span", { class: "muted small-text" }, "Контекст задания: "),
+          h("b", {}, `${currentTask.num}. ${currentTask.title}`)),
+        h("button", { class: "link small", onclick: () => { ui.task = null; save(); render(); } }, "Сбросить")));
+    }
+
+    // Чипсы быстрых вопросов
+    const chips = currentTask ? [
+      "💡 С чего начать решение?",
+      "🔍 Проверь мой код и укажи на ошибку",
+      "📖 Объясни условие простыми словами",
+      "🐍 Напомни нужные команды Python"
+    ] : [
+      "Как работает input() и print()?",
+      "В чём разница между if и elif?",
+      "Как работает нейросеть ask()?",
+      "Что делать, если программа выдаёт ошибку?"
+    ];
+
+    out.push(h("div", { class: "chat-chips" }, chips.map((c) =>
+      h("button", {
+        class: "chat-chip",
+        onclick: () => sendAiMessage(c, currentTask ? currentTask.id : null)
+      }, c))));
+
+    // Сообщения
+    const msgList = h("div", { class: "chat-msgs", id: "chat-box" });
+    const hist = ui.chatHistory || [];
+    if (!hist.length) {
+      msgList.append(h("div", { class: "card", style: "text-align: center; color: var(--muted); padding: 24px 16px;" },
+        h("div", { style: "font-size: 32px; margin-bottom: 8px;" }, "👋"),
+        h("b", { style: "font-size: 15px; color: var(--ink);" }, "Привет! Я твой ИИ-наставник по Python"),
+        h("p", { style: "margin: 8px 0 0; font-size: 13px;" }, "Спроси меня о задании, командах языка или непонятной ошибке. Я не даю готовых решений, но помогу дойти до правильного ответа самому!")));
+    } else {
+      for (const m of hist) {
+        if (m.role === "user") {
+          msgList.append(h("div", { class: "chat-msg user" }, m.content));
+        } else if (m.role === "assistant") {
+          msgList.append(h("div", { class: "chat-msg assistant", html: formatAiMarkdown(m.content) }));
+        } else if (m.role === "error") {
+          msgList.append(h("div", { class: "chat-msg error" },
+            h("b", {}, "⚠️ Ошибка: "), m.content));
+        }
+      }
+    }
+
+    if (ui.chatLoading) {
+      msgList.append(h("div", { class: "chat-typing" }, "Наставник печатает ответ…"));
+    }
+
+    out.push(msgList);
+
+    // Поле ввода
+    const inp = h("input", {
+      type: "text",
+      placeholder: currentTask ? `Спросить о задании «${currentTask.title}»…` : "Задай вопрос наставнику…",
+      value: ui.chatDraft || "",
+      disabled: ui.chatLoading
+    });
+    inp.addEventListener("input", (e) => {
+      ui.chatDraft = e.target.value;
+      save();
+    });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAiMessage(inp.value, currentTask ? currentTask.id : null);
+      }
+    });
+
+    const sendBtn = h("button", {
+      class: "ok",
+      disabled: ui.chatLoading || !(ui.chatDraft || "").trim(),
+      onclick: () => sendAiMessage(inp.value, currentTask ? currentTask.id : null)
+    }, ui.chatLoading ? "Думает…" : "Отправить");
+
+    out.push(h("div", { class: "chat-input-row" }, inp, sendBtn));
+
+    setTimeout(() => {
+      const box = document.getElementById("chat-box");
+      if (box) box.scrollTop = box.scrollHeight;
+      if (inp && !ui.chatLoading) inp.focus();
+    }, 50);
+
+    return out;
   }
 
   // ---------- учебник

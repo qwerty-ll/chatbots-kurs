@@ -714,7 +714,58 @@ class Kurs {
       case "playAnswer": return this.playAct("answer", { id: m.id, accept: m.accept });
       case "playCancel": return this.playAct("cancel", { id: m.id });
       case "playLeave": return this.playAct("leave", {});
+      case "aiChat": return this.handleAiChat(m);
       default: return undefined;
+    }
+  }
+
+  // ---------------------------------------------------------------- ИИ-наставник / чат помощи
+  async handleAiChat(m) {
+    if (!this.panel) return;
+    try {
+      const messages = Array.isArray(m.messages) ? m.messages : [];
+      let currentCode = "";
+      let taskTitle = "";
+      if (m.taskId) {
+        const t = this.taskById(m.taskId);
+        if (t) {
+          taskTitle = `${t.num}. ${t.title}`;
+          const file = this.taskFile(t);
+          if (fs.existsSync(file)) {
+            currentCode = fs.readFileSync(file, "utf-8").slice(0, 3500);
+          }
+        }
+      }
+      const systemPrompt = "Ты — дружелюбный школьный ИИ-наставник по Python курса «Чат-боты». Твоя задача — помочь ученику самостоятельно разобраться и решить задачу. Объясняй простыми словами на понятных примерах для начинающих. Если ученик спрашивает, где ошибка — укажи на опечатку или неверную команду, но не пиши готовое решение задания целиком. Подсказывай наводящими вопросами и показывай короткие примеры из 1-2 строк.";
+
+      const payloadMessages = [
+        { role: "system", content: systemPrompt + (currentCode ? `\n\n[Текущий файл задания ${taskTitle}]:\n\`\`\`python\n${currentCode}\n\`\`\`` : "") },
+        ...messages
+      ];
+
+      const res = await this.api("POST", "/api/ai/ask", {
+        messages: payloadMessages,
+        temperature: 0.7,
+        max_tokens: 1200
+      });
+
+      const tid = res.ticket;
+      if (!tid) throw new Error("Сервер не вернул номер тикета ИИ");
+
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 600));
+        const ticket = await this.api("GET", `/api/ai/ticket?id=${tid}`);
+        if (ticket.status === "done") {
+          this.panel.webview.postMessage({ type: "aiChatReply", message: ticket.message });
+          return;
+        } else if (ticket.status === "error") {
+          this.panel.webview.postMessage({ type: "aiChatError", error: ticket.error || "Ошибка нейросети" });
+          return;
+        }
+      }
+      this.panel.webview.postMessage({ type: "aiChatError", error: "Нейросеть отвечает дольше обычного. Попробуй ещё раз." });
+    } catch (e) {
+      this.panel.webview.postMessage({ type: "aiChatError", error: e.message });
     }
   }
 
