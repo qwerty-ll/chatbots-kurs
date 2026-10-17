@@ -170,6 +170,7 @@ def save_bridge_config(tunnel_url: str, key: str, enabled: bool = True) -> dict:
 def sync_git(tunnel_url: str) -> None:
     log("GIT", "Синхронизирую новый адрес туннеля с GitHub…", CYAN)
     try:
+        subprocess.run(["git", "-C", HERE, "pull", "--rebase", "origin", "main"], capture_output=True, check=False)
         subprocess.run(["git", "-C", HERE, "add", "kurs/server/ai_bridge.json"], check=True)
         status = subprocess.run(["git", "-C", HERE, "diff", "--cached", "--quiet"], check=False)
         if status.returncode != 0:
@@ -230,8 +231,19 @@ def main() -> None:
 
     while True:
         if proc.poll() is not None:
-            log("FAIL", "Процесс туннеля неожиданно завершился.", RED)
-            sys.exit(1)
+            log("WARN", "Туннель закрылся (истёк лимит сессии или обрыв сети). Переподключаю…", YELLOW)
+            time.sleep(2)
+            try:
+                proc, tunnel_url = start_tunnel()
+                log("OK", f"Туннель переоткрыт: {BOLD}{tunnel_url}{RESET}", GREEN)
+                test_ai(f"{tunnel_url}/v1", key)
+                save_bridge_config(tunnel_url, key, enabled=True)
+                sync_git(tunnel_url)
+                log("OK", f"Мост обновлён и доступен: {tunnel_url}/v1", GREEN)
+            except Exception as e:
+                log("WARN", f"Ошибка переподключения: {e}. Повтор через 5 секунд…", YELLOW)
+                time.sleep(5)
+                continue
         time.sleep(2)
 
 
