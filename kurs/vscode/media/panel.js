@@ -78,7 +78,8 @@
     } else if (m.type === "aiChatReply") {
       ui.chatLoading = false;
       ui.chatHistory = ui.chatHistory || [];
-      ui.chatHistory.push({ role: "assistant", content: m.message, ts: Date.now() });
+      const reply = typeof m.message === "object" && m.message ? (m.message.content || "") : String(m.message || "");
+      ui.chatHistory.push({ role: "assistant", content: reply, ts: Date.now() });
       save();
       render();
     } else if (m.type === "aiChatError") {
@@ -529,6 +530,9 @@
 
   // ---------- ИИ-помощник
   function formatAiMarkdown(text) {
+    if (typeof text === "object" && text !== null) {
+      text = text.content || "";
+    }
     if (!text) return "";
     const codeBlocks = [];
     let s = String(text).replace(/```(?:[a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, (_m, code) => {
@@ -563,7 +567,10 @@
     const msgsToSend = ui.chatHistory
       .filter((m) => m.role === "user" || m.role === "assistant")
       .slice(-10)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: typeof m.content === "object" && m.content ? (m.content.content || "") : String(m.content || "")
+      }));
 
     send("aiChat", {
       messages: msgsToSend,
@@ -653,13 +660,14 @@
         h("p", { style: "margin: 8px 0 0; font-size: 13px;" }, "Спроси меня о задании, командах языка или непонятной ошибке. Я не даю готовых решений, но помогу дойти до правильного ответа самому!")));
     } else {
       for (const m of hist) {
+        const text = typeof m.content === "object" && m.content ? (m.content.content || "") : String(m.content || "");
         if (m.role === "user") {
-          msgList.append(h("div", { class: "chat-msg user" }, m.content));
+          msgList.append(h("div", { class: "chat-msg user" }, text));
         } else if (m.role === "assistant") {
-          msgList.append(h("div", { class: "chat-msg assistant", html: formatAiMarkdown(m.content) }));
+          msgList.append(h("div", { class: "chat-msg assistant", html: formatAiMarkdown(text) }));
         } else if (m.role === "error") {
           msgList.append(h("div", { class: "chat-msg error" },
-            h("b", {}, "⚠️ Ошибка: "), m.content));
+            h("b", {}, "⚠️ Ошибка: "), text));
         }
       }
     }

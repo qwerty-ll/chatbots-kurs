@@ -756,7 +756,13 @@ class Kurs {
         await new Promise((r) => setTimeout(r, 600));
         const ticket = await this.api("GET", `/api/ai/ticket?id=${tid}`);
         if (ticket.status === "done") {
-          this.panel.webview.postMessage({ type: "aiChatReply", message: ticket.message });
+          let replyText = "";
+          if (typeof ticket.message === "string") {
+            replyText = ticket.message;
+          } else if (ticket.message && typeof ticket.message === "object") {
+            replyText = ticket.message.content || "";
+          }
+          this.panel.webview.postMessage({ type: "aiChatReply", message: replyText });
           return;
         } else if (ticket.status === "error") {
           this.panel.webview.postMessage({ type: "aiChatError", error: ticket.error || "Ошибка нейросети" });
