@@ -156,11 +156,27 @@ function showPasswordForm(setup) {
       boot();
     } catch (ex) { err.textContent = ex.message; }
   };
+  const resetBtn = !setup ? h("button", {
+    type: "button",
+    class: "link small",
+    style: "margin-top:14px;background:none;border:none;color:var(--blue-ink);cursor:pointer;text-decoration:underline;display:inline-block;",
+    onclick: async () => {
+      if (confirm("Сбросить старый пароль и задать новый прямо сейчас?")) {
+        try {
+          await api("POST", "/tapi/reset_password");
+          boot();
+        } catch (ex) {
+          err.textContent = ex.message;
+        }
+      }
+    }
+  }, "Забыли пароль? Нажмите для сброса") : null;
   app.replaceChildren(h("form", { class: "card center", onsubmit: go },
     h("h2", {}, setup ? "Первый запуск: придумайте пароль учителя" : "Вход для учителя"),
     setup ? h("p", { class: "muted" }, "Пароль нужен, чтобы пульт не открыл посторонний. Не короче 6 символов.") : null,
     pw, pw2, err,
-    h("button", { type: "submit", class: "big" }, setup ? "Сохранить пароль" : "Войти")));
+    h("button", { type: "submit", class: "big" }, setup ? "Сохранить пароль" : "Войти"),
+    resetBtn));
   pw.focus();
 }
 

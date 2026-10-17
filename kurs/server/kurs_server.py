@@ -1283,6 +1283,11 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(0.5)
                 raise ApiError(403, "Неверный пароль")
             return self.teacher_login_ok()
+        if method == "POST" and name == "reset_password":
+            p = k.s.password_file()
+            if os.path.isfile(p):
+                os.remove(p)
+            return self.send_json({"ok": True})
         if not self.teacher_ok():
             raise ApiError(401, "Нужно войти")
         if method == "POST" and name == "logout":
