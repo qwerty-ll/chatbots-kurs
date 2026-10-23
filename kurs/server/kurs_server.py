@@ -67,13 +67,24 @@ CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, ts REAL NOT NULL, stud
 CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS ai_log(id INTEGER PRIMARY KEY, ts REAL NOT NULL, student_id INTEGER, pc TEXT,
     question TEXT, system TEXT, answer TEXT, status TEXT, ms INTEGER, cached INTEGER, flags TEXT);
+CREATE TABLE IF NOT EXISTS ideas(student_id INTEGER PRIMARY KEY, title TEXT NOT NULL DEFAULT '', about TEXT NOT NULL DEFAULT '',
+    tools TEXT NOT NULL DEFAULT '', updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL, name TEXT NOT NULL,
+    topic TEXT NOT NULL DEFAULT '', bot_name TEXT NOT NULL DEFAULT '', persona TEXT NOT NULL DEFAULT '',
+    banned TEXT NOT NULL DEFAULT '[]', edited_by TEXT NOT NULL DEFAULT '', created REAL NOT NULL, updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS team_members(student_id INTEGER PRIMARY KEY, team_id INTEGER NOT NULL,
+    plan TEXT NOT NULL DEFAULT '', joined REAL NOT NULL);
 """
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
                  "lock_on_paste": 1, "locks": {},
                  "play": {"mode": "off", "games": ["chess", "hockey", "battleship"], "teacher": True, "allow": []},
+                 "teams": {"open": True, "min": 2, "max": 0}, "team_notices": {},
                  "last_class": None}
+MAX_TEAMS = 30                 # команд в одной группе
+IDEA_LIMITS = {"title": 80, "about": 400, "tools": 400}
+TEAM_LIMITS = {"topic": 120, "bot_name": 40, "persona": 400}
 
 
 # ---------------------------------------------------------------------------
@@ -232,44 +243,40 @@ def training_template(lesson: dict) -> str:
         ]
     elif n == 5:
         body = [
-            "# 1. Память диалога (chat вместо ask):",
-            'from ai import chat',
+            "# 1. Функция: def создаёт, return отдаёт результат:",
+            'import random',
             "",
-            "# Список сообщений с ролями system / user / assistant:",
-            'history = [',
-            '    {"role": "system", "content": "Ты дружелюбный ассистент."},',
-            '    {"role": "user", "content": "Меня зовут Саша, мне 13 лет."},',
-            ']',
-            'reply = chat(history)',
-            'print("ИИ:", reply.content)',
             "",
-            '# Сохраняем ответ и задаём следующий вопрос:',
-            'history.append({"role": "assistant", "content": reply.content})',
-            'history.append({"role": "user", "content": "Как меня зовут?"})',
-            'reply2 = chat(history)',
-            'print("ИИ с памятью:", reply2.content)',
+            'def roll_dice(sides=6):',
+            '    return random.randint(1, sides)',
+            "",
+            "",
+            'print("Кубик:", roll_dice(), "· кубик на 20:", roll_dice(20))',
+            "",
+            "# 2. Инструмент = функция + описание для нейросети + строчка в словаре функций:",
+            'from agent import agent_answer, make_tool',
+            "",
+            'TOOLS = [make_tool("roll_dice", "Бросить игральный кубик.",',
+            '                   {"sides": {"type": "integer", "description": "Число граней"}})]',
+            'FUNCTIONS = {"roll_dice": lambda args: roll_dice(args.get("sides", 6))}',
+            "",
+            "# 3. Агент сам решает, когда звать инструмент (строки 🔧 — вызовы):",
+            'messages = [{"role": "user", "content": "Брось кубик на 12 граней"}]',
+            'print("Агент:", agent_answer(messages, TOOLS, FUNCTIONS))',
         ]
     elif n == 6:
         body = [
-            "# 1. Инструменты (Function Calling):",
-            'from ai import chat',
+            "# Здесь можно пробовать идеи для своих инструментов, не трогая Мои_инструменты.py.",
+            'import random',
             "",
-            'tools = [{',
-            '    "type": "function",',
-            '    "function": {',
-            '        "name": "get_time",',
-            '        "description": "Узнать точное время в городе",',
-            '        "parameters": {',
-            '            "type": "object",',
-            '            "properties": {"city": {"type": "string"}},',
-            '            "required": ["city"]',
-            '        }',
-            '    }',
-            '}]',
-            'resp = chat([{"role": "user", "content": "Сколько сейчас времени в Токио?"}], tools=tools)',
-            'if resp.tool_calls:',
-            '    print("ИИ вызвал инструмент:", resp.tool_calls[0].function.name)',
-            '    print("Аргументы:", resp.tool_calls[0].function.arguments)',
+            "",
+            'def fact():',
+            '    return random.choice(["У осьминога три сердца.", "Мёд не портится тысячи лет."])',
+            "",
+            "",
+            'print(fact())',
+            "",
+            "# Весь бот команды — файл Наш_бот.py: он сам соберёт инструменты всех участников.",
         ]
     else:
         body = [
@@ -562,6 +569,8 @@ class Kurs:
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
                 "restart": st["restart_seq"], "close": st["close_seq"], "locked": bool(self.lock_of(sess["student_id"])),
                 "play": self.play_brief(sess),
+                # команды: панель заново спрашивает /api/team, только когда что-то изменилось
+                "team_v": self.team_version(sess) if lesson.get("teams") else None,
                 "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
 
     def lesson_for(self) -> dict:
@@ -571,6 +580,8 @@ class Kurs:
                 "training_template": training_template(lesson),
                 "notebook_template": training_template(lesson),
                 "files": lesson.get("_files", {}), "uses_ai": bool(lesson.get("uses_ai")), "note": lesson.get("note", ""),
+                "project_idea": bool(lesson.get("project_idea")), "teams": bool(lesson.get("teams")),
+                "team_task": (lesson.get("teams") or {}).get("task"),
                 "tasks": [self.lib.public_task(self.lib.tasks[i], with_start=False) for i in lesson["task_ids"]],
                 "cheatsheet": self.lib.cheatsheet}
 
@@ -679,7 +690,8 @@ class Kurs:
         for g in self.s.q("SELECT * FROM groups ORDER BY name"):
             names = [r["name"] for r in self.s.q("SELECT name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (g["id"],))]
             groups.append({"id": g["id"], "name": g["name"], "students": names})
-        lessons = [{"lesson": n, "title": l["title"], "steps": l["steps"], "uses_ai": bool(l.get("uses_ai")), "tasks": [
+        lessons = [{"lesson": n, "title": l["title"], "steps": l["steps"], "uses_ai": bool(l.get("uses_ai")),
+                    "project_idea": bool(l.get("project_idea")), "teams": bool(l.get("teams")), "tasks": [
             {"id": i, "num": self.lib.tasks[i]["num"], "title": self.lib.tasks[i]["title"],
              "level": self.lib.tasks[i]["level"], "step": self.lib.tasks[i]["step"]} for i in l["task_ids"]],
             "stages": [{"n": s["n"], "title": s["title"]} for s in l["stages"]]}
@@ -878,6 +890,265 @@ class Kurs:
         self.s.set("play", cfg)
         if cfg["mode"] == "off" and not cfg["allow"]:
             self.play.stop_all("Учитель закрыл игры")
+
+    # ---------- проект: идеи учеников и команды ----------
+    def idea_of(self, sid) -> dict | None:
+        r = self.s.one("SELECT * FROM ideas WHERE student_id=?", (sid,))
+        return {"title": r["title"], "about": r["about"], "tools": r["tools"], "updated": r["updated"]} if r else None
+
+    def idea_save(self, sess, b: dict) -> dict:
+        vals = {k: str(b.get(k) or "").strip()[:n] for k, n in IDEA_LIMITS.items()}
+        if not any(vals.values()):
+            raise ApiError(400, "Напиши хотя бы название идеи")
+        self.s.ex("INSERT INTO ideas(student_id,title,about,tools,updated) VALUES(?,?,?,?,?) ON CONFLICT(student_id) "
+                  "DO UPDATE SET title=excluded.title, about=excluded.about, tools=excluded.tools, updated=excluded.updated",
+                  (sess["student_id"], vals["title"], vals["about"], vals["tools"], time.time()))
+        self.s.log(sess["student_id"], "idea", vals)
+        return {"idea": self.idea_of(sess["student_id"])}
+
+    def teams_cfg(self) -> dict:
+        cfg = dict(DEFAULT_STATE["teams"])
+        cfg.update(self.s.get("teams") or {})
+        return cfg
+
+    def team_task(self) -> dict | None:
+        """Задание «Мои инструменты», если идёт занятие с командами: из его файла товарищи получают инструменты."""
+        lesson = self.lib.lessons.get(self.s.get("lesson"), {})
+        return self.lib.tasks.get((lesson.get("teams") or {}).get("task", ""))
+
+    def team_rows(self, gid=None):
+        return self.s.q("SELECT * FROM teams WHERE group_id=? ORDER BY id", (self.s.get("group_id") if gid is None else gid,))
+
+    def team_row(self, tid):
+        r = self.s.one("SELECT * FROM teams WHERE id=?", (tid,))
+        if not r or r["group_id"] != self.s.get("group_id"):
+            raise ApiError(404, "Нет такой команды")
+        return r
+
+    def team_of(self, sid):
+        return self.s.one("SELECT t.* FROM teams t JOIN team_members m ON m.team_id=t.id WHERE m.student_id=?", (sid,))
+
+    def team_members(self, tid):
+        return self.s.q("SELECT s.id, s.name, m.plan, m.joined FROM team_members m JOIN students s ON s.id=m.student_id "
+                        "WHERE m.team_id=? AND s.archived=0 ORDER BY m.joined", (tid,))
+
+    def team_notice(self, sid, text: str | None) -> None:
+        notices = dict(self.s.get("team_notices") or {})
+        if text:
+            notices[str(sid)] = text
+        else:
+            notices.pop(str(sid), None)
+        self.s.set("team_notices", notices)
+
+    @staticmethod
+    def tool_names(code: str) -> list[str]:
+        """Имена инструментов из файла ученика: make_tool("имя", ...). Нужны, чтобы заметить одинаковые имена в команде."""
+        return [n for n in re.findall(r"make_tool\(\s*[\"']([^\"']+)[\"']", code or "") if "___" not in n]
+
+    def team_file(self, sid) -> tuple[str, float] | None:
+        """Файл «Мои инструменты» ученика: (текст, когда сохранён)."""
+        t = self.team_task()
+        if not t:
+            return None
+        r = self.s.one("SELECT content, updated FROM files WHERE student_id=? AND path=?",
+                       (sid, f"Занятие_{t['lesson']}/{t['file']}"))
+        return (r["content"], r["updated"]) if r else None
+
+    def _online(self, sid, now: float) -> bool:
+        sess = self.active_session_of(sid)
+        return bool(sess and now - sess["seen"] < ONLINE_SEC)
+
+    def _task_status(self, sid) -> str | None:
+        t = self.team_task()
+        r = self.s.one("SELECT status FROM results WHERE student_id=? AND task_id=?", (sid, t["id"])) if t else None
+        return r["status"] if r else None
+
+    def team_view(self, sess) -> dict:
+        """Всё про команды для панели ученика: список команд, своя команда, файлы товарищей."""
+        sid = sess["student_id"]
+        cfg = self.teams_cfg()
+        now = time.time()
+        mine = self.team_of(sid)
+        teams = []
+        for t in self.team_rows():
+            names = [m["name"] for m in self.team_members(t["id"])]
+            teams.append({"id": t["id"], "name": t["name"], "topic": t["topic"], "bot_name": t["bot_name"],
+                          "members": names, "full": bool(cfg["max"]) and len(names) >= cfg["max"],
+                          "banned": sid in json.loads(t["banned"] or "[]")})
+        out = {"cfg": cfg, "teams": teams, "my": mine["id"] if mine else None, "team": None,
+               "notice": (self.s.get("team_notices") or {}).get(str(sid), "")}
+        if mine:
+            members, files, used = [], [], set()
+            for m in self.team_members(mine["id"]):
+                f = self.team_file(m["id"])
+                base = re.sub(r"[^\w\-]+", "_", m["name"]).strip("_") or f"ученик_{m['id']}"
+                if base in used:
+                    base = f"{base}_{m['id']}"
+                used.add(base)
+                members.append({"id": m["id"], "name": m["name"], "me": m["id"] == sid, "plan": m["plan"],
+                                "online": self._online(m["id"], now), "idea": self.idea_of(m["id"]),
+                                "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else [],
+                                "file": base + ".py"})
+                if f and m["id"] != sid:
+                    files.append({"student_id": m["id"], "author": m["name"], "name": base + ".py", "content": f[0]})
+            out["team"] = {"id": mine["id"], "name": mine["name"], "topic": mine["topic"], "bot_name": mine["bot_name"],
+                           "persona": mine["persona"], "edited_by": mine["edited_by"], "members": members, "files": files}
+        return out
+
+    def team_version(self, sess) -> str:
+        return hashlib.sha1(json.dumps(self.team_view(sess), ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+
+    def _need_team_lesson(self) -> None:
+        if not self.team_task():
+            raise ApiError(409, "Команды собираются на занятии-проекте")
+
+    def team_join(self, sess, tid: int) -> None:
+        self._need_team_lesson()
+        sid = sess["student_id"]
+        cfg = self.teams_cfg()
+        if not cfg["open"]:
+            raise ApiError(403, "Запись в команды закрыта — попроси учителя")
+        t = self.team_row(tid)
+        if sid in json.loads(t["banned"] or "[]"):
+            raise ApiError(403, "Учитель убрал тебя из этой команды — выбери другую")
+        cur = self.team_of(sid)
+        if cur and cur["id"] == tid:
+            return
+        if cfg["max"] and len(self.team_members(tid)) >= cfg["max"]:
+            raise ApiError(409, f"В команде уже {cfg['max']} — выбери другую")
+        self.s.ex("INSERT INTO team_members(student_id,team_id,joined) VALUES(?,?,?) ON CONFLICT(student_id) "
+                  "DO UPDATE SET team_id=excluded.team_id, plan='', joined=excluded.joined", (sid, tid, time.time()))
+        self.team_notice(sid, None)
+        self.s.log(sid, "team_join", {"team": t["name"]})
+
+    def team_leave(self, sess) -> None:
+        if not self.teams_cfg()["open"]:
+            raise ApiError(403, "Запись в команды закрыта — попроси учителя")
+        t = self.team_of(sess["student_id"])
+        if t:
+            self.s.ex("DELETE FROM team_members WHERE student_id=?", (sess["student_id"],))
+            self.s.log(sess["student_id"], "team_leave", {"team": t["name"]})
+
+    def team_card(self, sess, b: dict) -> None:
+        t = self.team_of(sess["student_id"])
+        if not t:
+            raise ApiError(409, "Сначала вступи в команду")
+        for k, n in TEAM_LIMITS.items():
+            if k in b:
+                self.s.ex(f"UPDATE teams SET {k}=? WHERE id=?", (str(b[k] or "").strip()[:n], t["id"]))
+        self.s.ex("UPDATE teams SET edited_by=?, updated=? WHERE id=?", (self.name(sess["student_id"]), time.time(), t["id"]))
+
+    def team_plan(self, sess, plan: str) -> None:
+        if not self.team_of(sess["student_id"]):
+            raise ApiError(409, "Сначала вступи в команду")
+        self.s.ex("UPDATE team_members SET plan=? WHERE student_id=?", (str(plan or "").strip()[:200], sess["student_id"]))
+
+    def teams_teacher(self) -> dict:
+        """Пульт: команды группы, кто без команды и идеи учеников."""
+        gid = self.s.get("group_id")
+        cfg = self.teams_cfg()
+        now = time.time()
+        students = self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (gid,)) if gid else []
+        in_team = set()
+        teams = []
+        team_name = {}
+        for t in self.team_rows() if gid else []:
+            members = []
+            for m in self.team_members(t["id"]):
+                in_team.add(m["id"])
+                f = self.team_file(m["id"])
+                members.append({"id": m["id"], "name": m["name"], "plan": m["plan"], "online": self._online(m["id"], now),
+                                "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else []})
+                team_name[m["id"]] = t["name"]
+            banned = json.loads(t["banned"] or "[]")
+            teams.append({"id": t["id"], "name": t["name"], "topic": t["topic"], "bot_name": t["bot_name"],
+                          "persona": t["persona"], "edited_by": t["edited_by"], "members": members,
+                          "banned": [{"id": b, "name": self.name(b)} for b in banned]})
+        free = [{"id": r["id"], "name": r["name"], "online": self._online(r["id"], now)} for r in students if r["id"] not in in_team]
+        ideas = []
+        for r in students:
+            idea = self.idea_of(r["id"])
+            if idea:
+                ideas.append(dict(idea, student_id=r["id"], name=r["name"], team=team_name.get(r["id"])))
+        return {"cfg": cfg, "teams": teams, "free": free, "ideas": ideas, "team_lesson": bool(self.team_task()),
+                "group": bool(gid)}
+
+    def teams_create(self, count: int, names: list) -> None:
+        gid = self.s.get("group_id")
+        if not gid:
+            raise ApiError(400, "Сначала начните занятие с группой")
+        have = self.team_rows()
+        count = max(0, min(int(count or 0), MAX_TEAMS - len(have)))
+        if not count:
+            raise ApiError(400, f"Команд уже {len(have)} — больше {MAX_TEAMS} нельзя" if have else "Сколько команд создать?")
+        taken = {t["name"] for t in have}
+        now = time.time()
+        for i in range(count):
+            name = (str(names[i]).strip()[:40] if i < len(names or []) and str(names[i]).strip() else "")
+            n = len(have) + i + 1          # «Команда N» — по месту в списке
+            while not name or name in taken:
+                name = f"Команда {n}"
+                n += 1
+            taken.add(name)
+            self.s.ex("INSERT INTO teams(group_id,name,created,updated) VALUES(?,?,?,?)", (gid, name, now, now))
+        self.s.log(None, "teams_create", {"count": count})
+
+    def teams_config(self, b: dict) -> None:
+        cfg = self.teams_cfg()
+        if "open" in b:
+            cfg["open"] = bool(b["open"])
+        for k in ("min", "max"):
+            if k in b:
+                cfg[k] = max(0, min(int(b[k] or 0), 50))
+        self.s.set("teams", cfg)
+
+    def teams_delete(self, tid: int | None) -> None:
+        ids = [self.team_row(tid)["id"]] if tid else [t["id"] for t in self.team_rows()]
+        for i in ids:
+            self.s.ex("DELETE FROM team_members WHERE team_id=?", (i,))
+            self.s.ex("DELETE FROM teams WHERE id=?", (i,))
+
+    def teams_kick(self, sid: int) -> None:
+        """Учитель убирает ученика из команды: вернуться в неё сам он уже не сможет (перевести может учитель)."""
+        t = self.team_of(sid)
+        if not t:
+            return
+        banned = json.loads(t["banned"] or "[]")
+        if sid not in banned:
+            banned.append(sid)
+        self.s.ex("UPDATE teams SET banned=? WHERE id=?", (json.dumps(banned), t["id"]))
+        self.s.ex("DELETE FROM team_members WHERE student_id=?", (sid,))
+        self.team_notice(sid, f"Учитель убрал тебя из команды «{t['name']}». Выбери другую команду.")
+        self.s.log(sid, "team_kick", {"team": t["name"]})
+
+    def teams_assign(self, sid: int, tid: int) -> None:
+        """Учитель сам переводит ученика в команду (или выводит из команды, если tid = 0): без ограничений записи."""
+        st = self.student(sid)
+        if not st or st["group_id"] != self.s.get("group_id"):
+            raise ApiError(404, "Нет такого ученика")
+        if not tid:
+            t = self.team_of(sid)
+            self.s.ex("DELETE FROM team_members WHERE student_id=?", (sid,))
+            if t:
+                self.team_notice(sid, f"Учитель вывел тебя из команды «{t['name']}».")
+            return
+        t = self.team_row(tid)
+        banned = [x for x in json.loads(t["banned"] or "[]") if x != sid]
+        self.s.ex("UPDATE teams SET banned=? WHERE id=?", (json.dumps(banned), tid))
+        cur = self.team_of(sid)
+        if cur and cur["id"] == tid:
+            return
+        self.s.ex("INSERT INTO team_members(student_id,team_id,joined) VALUES(?,?,?) ON CONFLICT(student_id) "
+                  "DO UPDATE SET team_id=excluded.team_id, plan='', joined=excluded.joined", (sid, tid, time.time()))
+        self.team_notice(sid, f"Учитель перевёл тебя в команду «{t['name']}».")
+        self.s.log(sid, "team_assign", {"team": t["name"]})
+
+    def teams_rename(self, tid: int, name: str) -> None:
+        name = (name or "").strip()[:40]
+        if not name:
+            raise ApiError(400, "Нужно название команды")
+        self.team_row(tid)
+        self.s.ex("UPDATE teams SET name=?, updated=? WHERE id=?", (name, time.time(), tid))
 
     def end(self) -> None:
         self.play.stop_all("Занятие завершено")
@@ -1253,6 +1524,27 @@ class Handler(BaseHTTPRequestHandler):
                 out = k.play_action(f"s:{sess['student_id']}", k.name(sess["student_id"]), name[5:], self.body_json())
             elif method == "GET" and name == "files":
                 out = k.my_files(sess)
+            elif method == "GET" and name == "idea":
+                out = {"idea": k.idea_of(sess["student_id"])}
+            elif method == "POST" and name == "idea":
+                out = k.idea_save(sess, self.body_json())
+            elif method == "GET" and name == "team":
+                out = k.team_view(sess)
+            elif method == "POST" and name.startswith("team/"):
+                b = self.body_json()
+                if name == "team/join":
+                    k.team_join(sess, int(b.get("team_id") or 0))
+                elif name == "team/leave":
+                    k.team_leave(sess)
+                elif name == "team/card":
+                    k.team_card(sess, b)
+                elif name == "team/plan":
+                    k.team_plan(sess, str(b.get("plan", "")))
+                elif name == "team/notice_ok":
+                    k.team_notice(sess["student_id"], None)
+                else:
+                    raise ApiError(404, "Нет такой команды")
+                out = k.team_view(sess)
             elif method == "POST" and name == "logout":
                 k.close_session(sess["token"], "Ты вышел")
                 k.s.log(sess["student_id"], "logout", {"pc": sess["pc"]})
@@ -1307,6 +1599,8 @@ class Handler(BaseHTTPRequestHandler):
             out = k.ai_overview(int(qs["student"]) if qs.get("student") else None)
         elif method == "GET" and name == "play":
             out = k.play_teacher()
+        elif method == "GET" and name == "teams":
+            out = k.teams_teacher()
         elif method == "GET" and name == "stage_code":
             out = k.stage_code(int(qs.get("n") or 0))
         elif method == "GET" and name == "export.csv":
@@ -1380,6 +1674,18 @@ class Handler(BaseHTTPRequestHandler):
                 k.play.end(str(b.get("match", "")), "Учитель остановил партию")
             elif name in ("play/invite", "play/answer", "play/cancel", "play/leave"):
                 out = k.play_action(kurs_play.TEACHER, "Учитель", name[5:], b)
+            elif name == "teams/create":
+                k.teams_create(int(b.get("count") or 0), list(b.get("names") or []))
+            elif name == "teams/config":
+                k.teams_config(b)
+            elif name == "teams/rename":
+                k.teams_rename(int(b.get("team_id") or 0), str(b.get("name", "")))
+            elif name == "teams/delete":
+                k.teams_delete(None if b.get("all") else int(b.get("team_id") or 0))
+            elif name == "teams/kick":
+                k.teams_kick(int(b.get("student_id") or 0))
+            elif name == "teams/assign":
+                k.teams_assign(int(b.get("student_id") or 0), int(b.get("team_id") or 0))
             elif name == "unlock":
                 k.unlock(int(b.get("student_id") or 0))
             elif name == "lock_on_paste":

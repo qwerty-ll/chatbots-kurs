@@ -13,6 +13,7 @@ const trafficLightEl = document.getElementById("traffic-light");
 let data = null;          // последний ответ /tapi/overview
 let ai = null;            // последний ответ /tapi/ai: нейросеть, очередь, лента вопросов
 let play = null;          // последний ответ /tapi/play: игры по сети класса
+let teams = null;         // последний ответ /tapi/teams: команды проекта и идеи учеников
 let menuOpen = false;     // меню «Ещё» в шапке
 let lastKey = "";         // перерисовываем, только если что-то изменилось (иначе щелчки «съедаются»)
 let lastRenderAt = 0;
@@ -39,7 +40,7 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* без хранилища просто не запоминаем */ } },
 };
-const TABS = [["class", "🏫", "Класс"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
+const TABS = [["class", "🏫", "Класс"], ["project", "🚀", "Проекты"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
 let tab = TABS.some((t) => t[0] === store.get("kurs.tab")) ? store.get("kurs.tab") : "class";
 function goTab(t) { tab = t; store.set("kurs.tab", t); menuOpen = false; renderTop(); renderNav(); render(); window.scrollTo(0, 0); }
 document.addEventListener("click", (e) => { if (menuOpen && !e.target.closest(".menu-wrap")) { menuOpen = false; renderTop(); } });
@@ -186,6 +187,7 @@ async function refresh() {
     data = await api("GET", "/tapi/overview");
     ai = await api("GET", "/tapi/ai" + (feedFilter ? "?student=" + feedFilter : ""));
     play = await api("GET", "/tapi/play");
+    teams = await api("GET", "/tapi/teams");
   } catch (e) {
     if (e.status === 401) { boot(); return; }
     lessonEl.textContent = "Нет связи с сервером";
@@ -199,7 +201,7 @@ async function refresh() {
   syncTeacherMatch();
   // не перерисовываем, пока учитель печатает, и если ничего не изменилось
   const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest(".play-host");
-  const key = JSON.stringify([data, ai, play, tab], (k, v) => (k === "now" || k === "seen" ? undefined : v));
+  const key = JSON.stringify([data, ai, play, teams, tab], (k, v) => (k === "now" || k === "seen" ? undefined : v));
   if (key === lastKey && Date.now() - lastRenderAt < 30000) return;
   lastKey = key;
   renderTop();
@@ -320,6 +322,8 @@ function renderNav() {
     class: att,
     ai: ai && ai.status.active_count ? ai.status.active_count : (ai && ai.status.last_error && aiUsed() ? "!" : (ai && ai.today ? ai.today : 0)),
     play: play ? play.invites_in.length : 0,
+    // на занятии-проекте: сколько учеников ещё без команды
+    project: teams && teams.team_lesson && teams.teams.length ? teams.free.length : 0,
   };
   const soft = { play: play && play.matches.length ? play.matches.length : 0 };
   navEl.replaceChildren(...TABS.map(([id, ic, title]) => h("button", { class: "tab" + (tab === id ? " on" : ""), onclick: () => goTab(id) },
@@ -335,6 +339,7 @@ function render() {
     class: () => (data.state.running ? renderLesson() : renderIdle()),
     ai: () => aiTab(),
     play: () => playTab(),
+    project: () => projectTab(),
     groups: () => [renderGroups()],
     connect: () => [connectCard(), h("section", { class: "card" }, h("h2", {}, "Адрес для учеников"), addresses())],
   };
@@ -440,9 +445,21 @@ function renderLesson() {
   if (st.paused) out.push(h("div", { class: "pause-banner" }, "⏸", h("span", {}, "У учеников пауза: панель закрыта экраном «Смотрим на учителя»."),
     h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => act("pause", { paused: false }) }, "Снять паузу")));
   out.push(h("div", { class: "grid" },
-    h("div", { class: "side" }, attentionCard(), stepsCard(lesson)),
+    h("div", { class: "side" }, attentionCard(), projectBrief(lesson), stepsCard(lesson)),
     h("div", {}, tiles(), tableCard(lesson))));
   return out;
+}
+
+// на занятиях с проектом: коротко про идеи и команды, подробно — на вкладке «Проекты»
+function projectBrief(lesson) {
+  if (!teams || !(lesson.project_idea || lesson.teams)) return null;
+  const text = lesson.teams
+    ? (teams.teams.length ? `Команд: ${teams.teams.length} · без команды: ${teams.free.length}` +
+        (teams.cfg.open ? " · запись открыта" : " · запись закрыта") : "Команд ещё нет — создайте их, ученики выберут сами.")
+    : `Идей записано: ${teams.ideas.length} из ${data.students.length}. Ученики пишут их на вкладке «💡 Проект».`;
+  return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, lesson.teams ? "👥 Команды" : "💡 Идеи проектов"),
+    h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => goTab("project") }, "Открыть «Проекты»")),
+    h("p", { class: "small" }, text));
 }
 
 function tiles() {
@@ -646,6 +663,101 @@ function playTab() {
   }
   right.push(live);
   return [h("div", { class: "grid" }, h("div", { class: "side" }, access, people), h("div", {}, right))];
+}
+
+// ---------- вкладка «Проекты»: команды и идеи учеников ----------
+function projectTab() {
+  if (!teams) return [h("section", { class: "card" }, h("p", { class: "muted" }, "Загрузка…"))];
+  if (!teams.group) return [h("section", { class: "card" }, h("h2", {}, "🚀 Проекты"),
+    h("p", { class: "muted" }, "Начните занятие с группой — здесь появятся идеи учеников и команды для проекта."))];
+  const cfg = teams.cfg;
+  const inTeams = teams.teams.reduce((n, t) => n + t.members.length, 0);
+  const small = teams.teams.filter((t) => t.members.length < cfg.min);
+  const num = (key, label, hint) => h("label", { class: "field" }, h("span", {}, label),
+    h("input", { type: "number", min: "0", max: "50", value: cfg[key], style: "width:90px",
+      onchange: (e) => act("teams/config", { [key]: Number(e.target.value || 0) }) }), hint ? h("small", { class: "muted" }, hint) : null);
+  const count = h("input", { type: "number", min: "1", max: "30", value: teams.teams.length ? 1 : 7, style: "width:90px" });
+  const names = h("textarea", { placeholder: "Названия по одному в строке (можно не писать — будет «Команда 1», «Команда 2»…)", rows: "3", style: "min-height:64px;margin-top:6px" });
+  const create = () => act("teams/create", { count: Number(count.value || 0), names: names.value.split("\n").map((x) => x.trim()).filter(Boolean) });
+  const seg = (open, label, hint) => h("button", { class: "seg" + (!!cfg.open === open ? " on" : ""), title: hint, onclick: () => act("teams/config", { open }) }, label);
+
+  const manage = h("section", { class: "card" }, h("h2", {}, "👥 Команды"),
+    !teams.team_lesson ? h("p", { class: "muted small" }, "Ученики выбирают команду на занятии-проекте (Занятие 6). Создать команды можно и заранее.") : null,
+    h("div", { class: "row", style: "align-items:flex-end;gap:10px" },
+      h("label", { class: "field" }, h("span", {}, teams.teams.length ? "Добавить команд" : "Сколько команд"), count),
+      h("button", { onclick: create }, teams.teams.length ? "+ Добавить" : "Создать команды")),
+    names,
+    h("div", { class: "segs", style: "margin-top:10px" }, seg(true, "Запись открыта", "Ученики сами вступают и выходят"),
+      seg(false, "Запись закрыта", "Состав меняете только вы")),
+    h("div", { class: "row", style: "gap:16px;margin-top:6px" },
+      num("min", "Минимум в команде"), num("max", "Максимум", "0 — без ограничения")),
+    h("p", { class: "small", style: "margin-top:8px" }, `В командах ${inTeams} из ${inTeams + teams.free.length}` +
+      (teams.free.length ? ` · без команды: ${teams.free.length}` : " · все распределены ✓") +
+      (small.length && teams.teams.length ? ` · мало участников: ${small.map((t) => t.name).join(", ")}` : "")),
+    teams.teams.length ? h("button", { class: "danger small", style: "margin-top:6px", onclick: () => {
+      if (confirm("Удалить все команды? Ученики останутся без команд, их файлы сохранятся.")) act("teams/delete", { all: true });
+    } }, "Удалить все команды") : null);
+
+  const assignSelect = (sid, current, label) => {
+    const sel = h("select", { class: "small", onchange: (e) => { if (e.target.value !== "") act("teams/assign", { student_id: sid, team_id: Number(e.target.value) }); } },
+      h("option", { value: "" }, label),
+      teams.teams.filter((t) => t.id !== current).map((t) => h("option", { value: t.id }, `→ ${t.name} (${t.members.length})`)),
+      current ? h("option", { value: "0" }, "→ без команды") : null);
+    return sel;
+  };
+
+  const free = h("section", { class: "card" }, h("h2", {}, `Без команды (${teams.free.length})`));
+  if (!teams.free.length) free.append(h("p", { class: "muted" }, "Все ученики в командах."));
+  for (const st of teams.free) {
+    free.append(h("div", { class: "list-item" }, h("span", { class: "dot" + (st.online ? " on" : "") }),
+      h("span", { class: "grow name-link", onclick: () => showStudent(st.id) }, st.name),
+      teams.teams.length ? assignSelect(st.id, null, "в команду…") : null));
+  }
+
+  const ideasCard = h("section", { class: "card" }, h("h2", {}, `💡 Идеи учеников (${teams.ideas.length})`));
+  if (!teams.ideas.length) ideasCard.append(h("p", { class: "muted" }, "Идей пока нет. Ученики записывают их во вкладке «💡 Проект» на Занятии 5."));
+  for (const x of teams.ideas) {
+    ideasCard.append(h("div", { class: "list-item", style: "align-items:flex-start;flex-direction:column;gap:2px" },
+      h("div", {}, h("b", {}, x.name), x.team ? h("span", { class: "chip" }, x.team) : null, " ", h("span", {}, x.title || "")),
+      x.about ? h("div", { class: "small" }, x.about) : null,
+      x.tools ? h("div", { class: "small muted", style: "white-space:pre-wrap" }, "🔧 " + x.tools) : null));
+  }
+
+  const mark = { passed: ["✓ инструменты работают", "ok"], failed: ["✗ ошибки", "bad"], started: ["… пишет", ""] };
+  const grid = h("div", { class: "team-grid" });
+  if (!teams.teams.length) grid.append(h("section", { class: "card" }, h("p", { class: "muted" }, "Команд пока нет: создайте их слева. Ученики сами выберут команду в панели.")));
+  for (const t of teams.teams) {
+    const owners = {};
+    for (const m of t.members) for (const x of m.tools) (owners[x] = owners[x] || []).push(m.name);
+    const card = h("section", { class: "card team" },
+      h("div", { class: "card-head" },
+        h("h2", { class: "name-link", title: "Переименовать", onclick: () => { const n = prompt("Название команды", t.name); if (n) act("teams/rename", { team_id: t.id, name: n }); } }, t.name),
+        h("span", { class: "badge" + (t.members.length < cfg.min ? "" : " zero") }, t.members.length),
+        h("span", { class: "spacer" }),
+        h("button", { class: "ghost small", title: "Удалить команду", onclick: () => { if (confirm(`Удалить команду «${t.name}»? Её участники останутся без команды.`)) act("teams/delete", { team_id: t.id }); } }, "✕")),
+      t.bot_name || t.topic ? h("p", { class: "small" }, [t.bot_name ? `🤖 ${t.bot_name}` : "", t.topic].filter(Boolean).join(" · ")) : null,
+      t.persona ? h("p", { class: "small muted" }, "🎭 " + t.persona) : null,
+      t.members.length < cfg.min ? h("p", { class: "small", style: "color:var(--bad)" }, `Мало участников: нужно минимум ${cfg.min}`) : null);
+    if (!t.members.length) card.append(h("p", { class: "muted small" }, "Пока никого."));
+    for (const m of t.members) {
+      const st = mark[m.status] || [m.tools.length ? "файл сохранён" : "нет файла", ""];
+      card.append(h("div", { class: "member" },
+        h("div", { class: "row" },
+          h("span", { class: "dot" + (m.online ? " on" : "") }),
+          h("span", { class: "name-link", onclick: () => showStudent(m.id) }, h("b", {}, m.name)),
+          h("span", { class: "chip " + st[1] }, st[0]),
+          h("span", { class: "actions" }, assignSelect(m.id, t.id, "перевести…"),
+            h("button", { class: "ghost small", title: "Убрать из команды: сам вернуться не сможет", onclick: () => { if (confirm(`Убрать ${m.name} из команды «${t.name}»? Вернуться в неё сам ученик не сможет — только вы его переведёте.`)) act("teams/kick", { student_id: m.id }); } }, "Выгнать"))),
+        m.plan ? h("div", { class: "small muted" }, "📝 " + m.plan) : null,
+        m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (owners[x].length > 1 ? " bad" : ""), title: owners[x].length > 1 ? "Такое же имя у товарища" : "" }, "🔧 " + x))) : null));
+    }
+    if (t.banned.length) {
+      card.append(h("p", { class: "small muted" }, "Выгнаны: ", t.banned.map((b, i) => [i ? ", " : "", b.name, " ",
+        h("button", { class: "link small", onclick: () => act("teams/assign", { student_id: b.id, team_id: t.id }) }, "вернуть")])));
+    }
+    grid.append(card);
+  }
+  return [h("div", { class: "grid" }, h("div", { class: "side" }, manage, free, ideasCard), h("div", {}, grid))];
 }
 
 // ---------- нейросеть ----------
