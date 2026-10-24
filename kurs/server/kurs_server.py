@@ -28,6 +28,7 @@ import sqlite3
 import sys
 import threading
 import time
+import zipfile
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -1156,6 +1157,10 @@ class Kurs:
         # запоминаем, где остановились: «Продолжить занятие» вернёт открытые задания и этап
         if self.s.get("running"):
             self.s.set("last_class", {k: self.s.get(k) for k in ("group_id", "lesson", "open_tasks", "stage")})
+            try:
+                self.export_projects_data()
+            except Exception as e:
+                print("Auto-export projects error:", e)
         for r in self.s.q("SELECT token FROM sessions WHERE closed IS NULL"):
             self.close_session(r["token"], "Занятие завершено")
         self.s.ex("UPDATE requests SET status='cancelled' WHERE status='pending'")
@@ -1264,6 +1269,153 @@ class Kurs:
                     row.append(f"{mark}; попыток {r['attempts']}; подсказок {r['hints']}")
             w.writerow(row)
         return "﻿" + buf.getvalue()
+
+    def export_projects_data(self) -> dict:
+        """Полная структурированная выгрузка проектов команд и идей в JSON для анализа и парсинга."""
+        gid = self.s.get("group_id")
+        group_row = self.s.one("SELECT name FROM groups WHERE id=?", (gid,)) if gid else None
+        group_name = group_row["name"] if group_row else "Общая группа"
+        st = self.s.state()
+        now = time.time()
+
+        teams_list = []
+        for t in self.team_rows() if gid else []:
+            members = []
+            for m in self.team_members(t["id"]):
+                f = self.team_file(m["id"])
+                code_content = f[0] if f else ""
+                student_files = [
+                    {"path": r["path"], "content": r["content"], "updated": r["updated"]}
+                    for r in self.s.q("SELECT path, content, updated FROM files WHERE student_id=?", (m["id"],))
+                ]
+                members.append({
+                    "student_id": m["id"],
+                    "name": m["name"],
+                    "plan": m["plan"],
+                    "status": self._task_status(m["id"]),
+                    "tools": self.tool_names(code_content) if code_content else [],
+                    "code": code_content,
+                    "updated": f[1] if f else None,
+                    "files": student_files,
+                })
+            banned = json.loads(t["banned"] or "[]")
+            teams_list.append({
+                "team_id": t["id"],
+                "team_name": t["name"],
+                "topic": t["topic"],
+                "bot_name": t["bot_name"],
+                "persona": t["persona"],
+                "edited_by": t["edited_by"],
+                "created": t["created"],
+                "updated": t["updated"],
+                "members": members,
+                "banned": [{"id": b, "name": self.name(b)} for b in banned],
+            })
+
+        ideas_list = []
+        students = self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (gid,)) if gid else []
+        for s in students:
+            idea = self.idea_of(s["id"])
+            if idea:
+                ideas_list.append({
+                    "student_id": s["id"],
+                    "name": s["name"],
+                    "title": idea.get("title", ""),
+                    "about": idea.get("about", ""),
+                    "tools": idea.get("tools", ""),
+                    "updated": idea.get("updated"),
+                })
+
+        out = {
+            "version": "1.0",
+            "exported_at": now,
+            "exported_at_iso": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "group": group_name,
+            "group_id": gid,
+            "lesson": st.get("lesson", 6),
+            "teams_count": len(teams_list),
+            "teams": teams_list,
+            "ideas": ideas_list,
+        }
+
+        # Автоматическое резервное сохранение на диск учительского ПК
+        try:
+            proj_dir = os.path.join(self.s.data_dir, "projects")
+            os.makedirs(proj_dir, exist_ok=True)
+            safe_grp = re.sub(r"[^\w\-]", "_", group_name)
+            save_path = os.path.join(proj_dir, f"projects_{safe_grp}.json")
+            with open(save_path, "w", encoding="utf-8") as fh:
+                json.dump(out, fh, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("Auto-save projects json error:", e)
+
+        return out
+
+    def export_projects_zip(self) -> bytes:
+        """Собирает ZIP-архив со всеми проектами: JSON, папки команд, файлы участников и Наш_бот.py."""
+        data = self.export_projects_data()
+        group_name = data.get("group", "class")
+        safe_grp = re.sub(r"[^\w\-]", "_", group_name)
+
+        code_dir = os.path.join(REPO, "Код")
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            # 1. Главный машиночитаемый JSON
+            z.writestr("projects.json", json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+
+            # 2. Идеи отдельным файлом
+            z.writestr("ideas.json", json.dumps(data.get("ideas", []), ensure_ascii=False, indent=2).encode("utf-8"))
+
+            # 3. Для каждой команды — готовая к запуску папка
+            for team in data.get("teams", []):
+                t_name = re.sub(r"[^\w\-]", "_", team.get("team_name") or f"Команда_{team['team_id']}")
+                b_name = re.sub(r"[^\w\-]", "_", team.get("bot_name") or "Бот")
+                folder = f"{t_name}_{b_name}"
+
+                # команда.json
+                card = {
+                    "team": team.get("team_name"),
+                    "bot_name": team.get("bot_name"),
+                    "topic": team.get("topic"),
+                    "persona": team.get("persona"),
+                    "members": [m["name"] for m in team.get("members", [])],
+                }
+                z.writestr(f"{folder}/команда.json", json.dumps(card, ensure_ascii=False, indent=2).encode("utf-8"))
+
+                # Вспомогательные модули для автономного запуска бота
+                for mod in ("ai.py", "agent.py", "Наш_бот.py"):
+                    mod_path = os.path.join(code_dir, mod)
+                    if os.path.isfile(mod_path):
+                        with open(mod_path, "rb") as fh:
+                            z.writestr(f"{folder}/{mod}", fh.read())
+
+                # Файлы участников
+                for m in team.get("members", []):
+                    m_name = re.sub(r"[^\w\-]", "_", m["name"])
+                    code = m.get("code") or "# Ученик пока не сохранил файл\n"
+                    z.writestr(f"{folder}/{m_name}_Мои_инструменты.py", code.encode("utf-8"))
+                    z.writestr(f"{folder}/Команда/{m_name}.py", code.encode("utf-8"))
+
+                    # Дополнительные файлы ученика (например память_бота.json)
+                    for sf in m.get("files", []):
+                        fname = os.path.basename(sf.get("path", ""))
+                        if fname and fname not in ("Мои_инструменты.py", f"{m_name}.py"):
+                            z.writestr(f"{folder}/{fname}", (sf.get("content") or "").encode("utf-8"))
+
+        zip_bytes = buf.getvalue()
+
+        # Сохраняем копию архива на диск учительского ПК
+        try:
+            proj_dir = os.path.join(self.s.data_dir, "projects")
+            os.makedirs(proj_dir, exist_ok=True)
+            zip_save_path = os.path.join(proj_dir, f"projects_{safe_grp}.zip")
+            with open(zip_save_path, "wb") as fh:
+                fh.write(zip_bytes)
+        except Exception as e:
+            print("Auto-save projects zip error:", e)
+
+        return zip_bytes
 
 
 def _day_start() -> float:
@@ -1608,6 +1760,18 @@ class Handler(BaseHTTPRequestHandler):
             body = k.export_csv().encode("utf-8")
             return self.send_bytes(body, "text/csv; charset=utf-8", 200,
                                    {"Content-Disposition": 'attachment; filename="results.csv"'})
+        elif method == "GET" and name in ("export_projects.json", "projects.json"):
+            data = k.export_projects_data()
+            body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
+            return self.send_bytes(body, "application/json; charset=utf-8", 200,
+                                   {"Content-Disposition": f'attachment; filename="projects_{safe_name}.json"'})
+        elif method == "GET" and name in ("export_projects.zip", "projects.zip"):
+            body = k.export_projects_zip()
+            data = k.export_projects_data()
+            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
+            return self.send_bytes(body, "application/zip", 200,
+                                   {"Content-Disposition": f'attachment; filename="projects_{safe_name}.zip"'})
         elif method == "POST":
             b = self.body_json()
             out = {"ok": True}

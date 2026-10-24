@@ -292,6 +292,8 @@ function renderTop() {
     item("🔄", "Перезапустить VS Code у всех", () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); }),
     item("⏻", "Закрыть VS Code у всех", () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); }),
     st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
+    item("📦", "Скачать проекты команд (ZIP)", () => { location.href = "/tapi/export_projects.zip"; }, "Все боты, код и команда.json"),
+    item("📄", "Скачать проекты команд (JSON)", () => { location.href = "/tapi/export_projects.json"; }, "Машиночитаемый JSON для парсинга"),
     item(sound ? "🔔" : "🔕", sound ? "Звук сигналов: включён" : "Звук сигналов: выключен", () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); }),
     h("hr", {}),
     item("🚪", "Выйти из пульта", async () => { await api("POST", "/tapi/logout", {}); boot(); }));
@@ -681,6 +683,15 @@ function projectTab() {
   const create = () => act("teams/create", { count: Number(count.value || 0), names: names.value.split("\n").map((x) => x.trim()).filter(Boolean) });
   const seg = (open, label, hint) => h("button", { class: "seg" + (!!cfg.open === open ? " on" : ""), title: hint, onclick: () => act("teams/config", { open }) }, label);
 
+  const exportCard = h("section", { class: "card", style: "border-left:4px solid var(--ok, #10b981)" },
+    h("h2", {}, "💾 Экспорт проектов"),
+    h("p", { class: "muted small" }, "Выгрузить карточки команд, код участников и файл Наш_бот.py:"),
+    h("div", { class: "row", style: "gap:8px;margin-top:8px" },
+      h("a", { href: "/tapi/export_projects.zip", download: `projects_${(data && data.group) || "class"}.zip` },
+        h("button", { class: "ok small" }, "📦 Скачать все (ZIP)")),
+      h("a", { href: "/tapi/export_projects.json", download: `projects_${(data && data.group) || "class"}.json` },
+        h("button", { class: "ghost small" }, "📄 Данные (JSON)"))));
+
   const manage = h("section", { class: "card" }, h("h2", {}, "👥 Команды"),
     !teams.team_lesson ? h("p", { class: "muted small" }, "Ученики выбирают команду на занятии-проекте (Занятие 6). Создать команды можно и заранее.") : null,
     h("div", { class: "row", style: "align-items:flex-end;gap:10px" },
@@ -757,7 +768,7 @@ function projectTab() {
     }
     grid.append(card);
   }
-  return [h("div", { class: "grid" }, h("div", { class: "side" }, manage, free, ideasCard), h("div", {}, grid))];
+  return [h("div", { class: "grid" }, h("div", { class: "side" }, exportCard, manage, free, ideasCard), h("div", {}, grid))];
 }
 
 // ---------- нейросеть ----------
