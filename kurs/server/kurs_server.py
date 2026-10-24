@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
 import hmac
@@ -378,6 +379,167 @@ class ApiError(Exception):
         self.status = status
         self.message = message
         self.extra = extra or {}
+
+
+def parse_student_tools(code: str) -> dict:
+    """Глубокий парсинг файла «Мои_инструменты.py» ученика (функции, параметры, docstring, make_tool)."""
+    has_blanks = bool(re.search(r"\b___\b|[\"']___[\"']", code or ""))
+    result = {
+        "has_placeholders": has_blanks,
+        "functions": [],
+        "tools": [],
+        "tool_names": [],
+        "syntax_ok": True,
+        "syntax_error": None,
+    }
+    if not code or not code.strip():
+        return result
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        result["syntax_ok"] = False
+        result["syntax_error"] = f"Строка {e.lineno}: {e.msg}"
+        raw = [n for n in re.findall(r"make_tool\(\s*[\"']([^\"']+)[\"']", code) if "___" not in n]
+        result["tool_names"] = raw
+        result["tools"] = [{"name": n, "description": ""} for n in raw]
+        return result
+
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            doc = ast.get_docstring(node) or ""
+            args = [a.arg for a in node.args.args if a.arg != "self"]
+            result["functions"].append({
+                "name": node.name,
+                "args": args,
+                "doc": doc.strip()
+            })
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func_name = getattr(node.func, "id", None)
+            if func_name == "make_tool" and node.args:
+                first = node.args[0]
+                t_name = getattr(first, "value", None) if isinstance(first, ast.Constant) else None
+                t_desc = ""
+                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                    t_desc = str(node.args[1].value or "")
+                if t_name and "___" not in str(t_name):
+                    t_name_str = str(t_name)
+                    if t_name_str not in result["tool_names"]:
+                        result["tool_names"].append(t_name_str)
+                        result["tools"].append({
+                            "name": t_name_str,
+                            "description": t_desc
+                        })
+
+    return result
+
+
+def make_summary_txt(data: dict) -> str:
+    """Формирует понятный текстовый отчет со всеми командами, участниками и инструментами."""
+    lines = [
+        "=" * 78,
+        "  КУРС «СОЗДАНИЕ ЧАТ-БОТОВ И ИИ-АГЕНТОВ» — ПРОЕКТЫ 6 ЗАНЯТИЯ",
+        f"  Группа: {data.get('group_name', 'Группа')}",
+        f"  Дата экспорта: {data.get('exported_at_iso')}",
+        f"  Команд: {len(data.get('teams', []))} | Учеников в командах: {data.get('students_in_teams_count', 0)}",
+        "=" * 78,
+        "",
+    ]
+    for t in data.get("teams", []):
+        lines.append(f"[{t['team_index']}] КОМАНДА: «{t['team_name']}»")
+        lines.append(f"  • Бот:        «{t['bot_name'] or 'Без имени'}»")
+        lines.append(f"  • Тема:       {t['topic'] or 'Не указана'}")
+        lines.append(f"  • Характер:   {t['persona'] or 'Не указан'}")
+        lines.append(f"  • Участники ({len(t.get('members', []))}):")
+        for m in t.get("members", []):
+            st = "✓ сдал" if m.get("status") == "passed" else (m.get("status") or "в процессе")
+            tools = ", ".join(m.get("tool_names", [])) or "нет инструментов"
+            lines.append(f"    - {m['name']} [{st}]")
+            if m.get("plan"):
+                lines.append(f"      Роль в проекте: {m['plan']}")
+            lines.append(f"      Инструменты: {tools}")
+            for tool in m.get("tools", []):
+                if tool.get("description"):
+                    lines.append(f"        * {tool['name']}: {tool['description']}")
+            if m.get("has_placeholders"):
+                lines.append("      ⚠ Внимание: в коде есть незаполненные пропуски ___")
+            if not m.get("syntax_ok"):
+                lines.append(f"      ❌ Ошибка Python: {m.get('syntax_error')}")
+        lines.append("-" * 78)
+        lines.append("")
+
+    free = data.get("students_without_team", [])
+    if free:
+        lines.append("[УЧЕНИКИ БЕЗ КОМАНДЫ С КОДОМ ДЛЯ 6 ЗАНЯТИЯ]")
+        for s in free:
+            tools = ", ".join(s.get("tool_names", [])) or "нет инструментов"
+            lines.append(f"  • {s['name']}: {tools}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+PARSE_PROJECTS_SCRIPT = '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Быстрый просмотрщик и парсер проектов 6 занятия.
+Запуск:
+    python3 parse_projects.py
+"""
+import json
+import os
+import sys
+
+def main():
+    json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "projects.json")
+    if not os.path.isfile(json_path):
+        print(f"Ошибка: не найден файл {json_path}")
+        sys.exit(1)
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    print("=" * 70)
+    print(f"  ПРОЕКТЫ 6 ЗАНЯТИЯ: {data.get('group_name', 'Группа')}")
+    print(f"  Выгружено: {data.get('exported_at_iso')}")
+    print(f"  Команд: {len(data.get('teams', []))} | Учеников: {data.get('students_in_teams_count', 0)}")
+    print("=" * 70)
+
+    for t in data.get("teams", []):
+        print(f"\\n🤖 [Команда {t['team_index']}] «{t['team_name']}» — Бот: «{t['bot_name'] or 'Без имени'}»")
+        if t.get("topic"):
+            print(f"   Тема:     {t['topic']}")
+        if t.get("persona"):
+            print(f"   Характер: {t['persona']}")
+        print(f"   Участники ({len(t.get('members', []))}):")
+
+        for m in t.get("members", []):
+            st = "✓ сдал" if m.get("status") == "passed" else (m.get("status") or "в процессе")
+            tools = ", ".join(m.get("tool_names", [])) or "нет инструментов"
+            print(f"     • {m['name']} [{st}]: {tools}")
+            if m.get("plan"):
+                print(f"       Роль: {m['plan']}")
+            if m.get("tools"):
+                for tool in m["tools"]:
+                    desc = f" — {tool['description']}" if tool.get("description") else ""
+                    print(f"         🔧 {tool['name']}{desc}")
+            if m.get("has_placeholders"):
+                print("       ⚠ В коде остались незаполненные пропуски ___")
+            if not m.get("syntax_ok"):
+                print(f"       ❌ Ошибка синтаксиса: {m.get('syntax_error')}")
+
+    free = data.get("students_without_team", [])
+    if free:
+        print(f"\\n📋 Без команды, но с кодом ({len(free)}):")
+        for s in free:
+            tools = ", ".join(s.get("tool_names", [])) or "нет инструментов"
+            print(f"   • {s['name']}: {tools}")
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 class Kurs:
@@ -1270,82 +1432,121 @@ class Kurs:
             w.writerow(row)
         return "﻿" + buf.getvalue()
 
-    def export_projects_data(self) -> dict:
-        """Полная структурированная выгрузка проектов команд и идей в JSON для анализа и парсинга."""
-        gid = self.s.get("group_id")
+    def student_lesson6_code(self, sid: int) -> tuple[str, float | None]:
+        """Возвращает (код_файла, время_обновления) строго для Занятия 6 («Мои_инструменты.py»)."""
+        # 1. Точный путь занятия 6
+        r = self.s.one("SELECT content, updated FROM files WHERE student_id=? AND path='Занятие_6/Мои_инструменты.py'", (sid,))
+        if r and r["content"]:
+            return (r["content"], r["updated"])
+        # 2. Любой путь Мои_инструменты.py
+        r = self.s.one("SELECT content, updated FROM files WHERE student_id=? AND path LIKE '%Мои_инструменты.py' ORDER BY updated DESC LIMIT 1", (sid,))
+        if r and r["content"]:
+            return (r["content"], r["updated"])
+        # 3. Сохраненный код в результатах задания team-01
+        r = self.s.one("SELECT code, updated FROM results WHERE student_id=? AND task_id='team-01' AND code IS NOT NULL AND code!=''", (sid,))
+        if r and r["code"]:
+            return (r["code"], r["updated"])
+        return ("", None)
+
+    def export_projects_data(self, gid: int | None = None) -> dict:
+        """Полная структурированная выгрузка СТРОГО проектов 6 занятия для анализа и парсинга."""
+        if gid is None:
+            gid = self.s.get("group_id")
+        if not gid:
+            r = self.s.one("SELECT group_id FROM teams ORDER BY id DESC LIMIT 1")
+            if r:
+                gid = r["group_id"]
+            else:
+                r2 = self.s.one("SELECT id FROM groups ORDER BY id DESC LIMIT 1")
+                if r2:
+                    gid = r2["id"]
+
         group_row = self.s.one("SELECT name FROM groups WHERE id=?", (gid,)) if gid else None
-        group_name = group_row["name"] if group_row else "Общая группа"
-        st = self.s.state()
+        group_name = group_row["name"] if group_row else "Группа проектов"
         now = time.time()
 
         teams_list = []
-        for t in self.team_rows() if gid else []:
+        assigned_student_ids = set()
+
+        team_rows = self.s.q("SELECT * FROM teams WHERE group_id=? ORDER BY id", (gid,)) if gid else []
+        for idx, t in enumerate(team_rows, start=1):
             members = []
             for m in self.team_members(t["id"]):
-                f = self.team_file(m["id"])
-                if not f:
-                    r = self.s.one(
-                        "SELECT content, updated FROM files WHERE student_id=? AND path LIKE '%Мои_инструменты.py' ORDER BY updated DESC LIMIT 1",
-                        (m["id"],)
-                    )
-                    if r:
-                        f = (r["content"], r["updated"])
-                code_content = f[0] if f else ""
-                student_files = [
-                    {"path": r["path"], "content": r["content"], "updated": r["updated"]}
-                    for r in self.s.q("SELECT path, content, updated FROM files WHERE student_id=?", (m["id"],))
-                ]
+                assigned_student_ids.add(m["id"])
+                code, updated = self.student_lesson6_code(m["id"])
+                parsed = parse_student_tools(code)
+
+                res_row = self.s.one("SELECT status, attempts FROM results WHERE student_id=? AND task_id='team-01'", (m["id"],))
+                status = res_row["status"] if res_row else "not_started"
+
                 members.append({
                     "student_id": m["id"],
                     "name": m["name"],
-                    "plan": m["plan"],
-                    "status": self._task_status(m["id"]),
-                    "tools": self.tool_names(code_content) if code_content else [],
-                    "code": code_content,
-                    "updated": f[1] if f else None,
-                    "files": student_files,
+                    "plan": m["plan"] or "",
+                    "status": status,
+                    "attempts": res_row["attempts"] if res_row else 0,
+                    "tools": parsed["tools"],
+                    "tool_names": parsed["tool_names"],
+                    "functions": parsed["functions"],
+                    "has_placeholders": parsed["has_placeholders"],
+                    "syntax_ok": parsed["syntax_ok"],
+                    "syntax_error": parsed["syntax_error"],
+                    "code": code,
+                    "updated": updated,
                 })
-            banned = json.loads(t["banned"] or "[]")
+
             teams_list.append({
+                "team_index": idx,
                 "team_id": t["id"],
                 "team_name": t["name"],
-                "topic": t["topic"],
-                "bot_name": t["bot_name"],
-                "persona": t["persona"],
-                "edited_by": t["edited_by"],
+                "topic": t["topic"] or "",
+                "bot_name": t["bot_name"] or "",
+                "persona": t["persona"] or "",
+                "edited_by": t["edited_by"] or "",
                 "created": t["created"],
                 "updated": t["updated"],
+                "members_count": len(members),
                 "members": members,
-                "banned": [{"id": b, "name": self.name(b)} for b in banned],
             })
 
-        ideas_list = []
-        students = self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (gid,)) if gid else []
-        for s in students:
-            idea = self.idea_of(s["id"])
-            if idea:
-                ideas_list.append({
-                    "student_id": s["id"],
-                    "name": s["name"],
-                    "title": idea.get("title", ""),
-                    "about": idea.get("about", ""),
-                    "tools": idea.get("tools", ""),
-                    "updated": idea.get("updated"),
-                })
+        # Ученики группы, не вступившие в команду, но имеющие код Занятия 6
+        unassigned_list = []
+        all_students = self.s.q("SELECT id, name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (gid,)) if gid else []
+        for s in all_students:
+            if s["id"] not in assigned_student_ids:
+                code, updated = self.student_lesson6_code(s["id"])
+                if code.strip():
+                    parsed = parse_student_tools(code)
+                    res_row = self.s.one("SELECT status, attempts FROM results WHERE student_id=? AND task_id='team-01'", (s["id"],))
+                    unassigned_list.append({
+                        "student_id": s["id"],
+                        "name": s["name"],
+                        "status": res_row["status"] if res_row else "not_started",
+                        "tools": parsed["tools"],
+                        "tool_names": parsed["tool_names"],
+                        "functions": parsed["functions"],
+                        "has_placeholders": parsed["has_placeholders"],
+                        "syntax_ok": parsed["syntax_ok"],
+                        "syntax_error": parsed["syntax_error"],
+                        "code": code,
+                        "updated": updated,
+                    })
 
         out = {
-            "version": "1.0",
+            "version": "2.0",
+            "lesson": 6,
+            "lesson_title": "Проект в командах «Наш ИИ-агент»",
+            "group_id": gid,
+            "group_name": group_name,
             "exported_at": now,
             "exported_at_iso": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
-            "group": group_name,
-            "group_id": gid,
-            "lesson": st.get("lesson", 6),
             "teams_count": len(teams_list),
+            "students_in_teams_count": sum(len(t["members"]) for t in teams_list),
             "teams": teams_list,
-            "ideas": ideas_list,
+            "students_without_team": unassigned_list,
         }
 
-        # Автоматическое резервное сохранение на диск учительского ПК
+        # Автоматическое сохранение на диск учительского ПК
         try:
             proj_dir = os.path.join(self.s.data_dir, "projects")
             os.makedirs(proj_dir, exist_ok=True)
@@ -1358,29 +1559,39 @@ class Kurs:
 
         return out
 
-    def export_projects_zip(self) -> bytes:
-        """Собирает ZIP-архив со всеми проектами: JSON, папки команд, файлы участников и Наш_бот.py."""
-        data = self.export_projects_data()
-        group_name = data.get("group", "class")
+    def export_projects_zip(self, gid: int | None = None) -> bytes:
+        """Собирает чистый ZIP-архив строго с проектами 6 занятия: JSON, сводка, готовые папки ботов и код."""
+        data = self.export_projects_data(gid)
+        group_name = data.get("group_name", "class")
         safe_grp = re.sub(r"[^\w\-]", "_", group_name)
 
-        code_dir = os.path.join(REPO, "Код")
+        code_candidates = [
+            os.path.join(REPO, "Код"),
+            os.path.join(KURS, "Код"),
+            os.path.join(HERE, "Код"),
+            os.path.join(os.getcwd(), "Код"),
+        ]
+        code_dir = next((p for p in code_candidates if os.path.isdir(p)), "")
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            # 1. Главный машиночитаемый JSON
+            # 1. Главный машиночитаемый JSON со всеми данными проектов
             z.writestr("projects.json", json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
 
-            # 2. Идеи отдельным файлом
-            z.writestr("ideas.json", json.dumps(data.get("ideas", []), ensure_ascii=False, indent=2).encode("utf-8"))
+            # 2. Человекочитаемая текстовая сводка по всем командам и участникам
+            z.writestr("СВОДКА_ПРОЕКТОВ.txt", make_summary_txt(data).encode("utf-8"))
 
-            # 3. Для каждой команды — готовая к запуску папка
+            # 3. Готовый скрипт для быстрого парсинга и вывода проектов
+            z.writestr("parse_projects.py", PARSE_PROJECTS_SCRIPT.encode("utf-8"))
+
+            # 4. Папки проектов каждой команды
             for team in data.get("teams", []):
-                t_name = re.sub(r"[^\w\-]", "_", team.get("team_name") or f"Команда_{team['team_id']}")
+                t_idx = team.get("team_index", 1)
+                t_name = re.sub(r"[^\w\-]", "_", team.get("team_name") or f"Команда_{t_idx}")
                 b_name = re.sub(r"[^\w\-]", "_", team.get("bot_name") or "Бот")
-                folder = f"{t_name}_{b_name}"
+                folder = f"Команда_{t_idx}_{t_name}_{b_name}".strip("_")
 
-                # команда.json
+                # команда.json (требуется для Наш_бот.py)
                 card = {
                     "team": team.get("team_name"),
                     "bot_name": team.get("bot_name"),
@@ -1390,25 +1601,48 @@ class Kurs:
                 }
                 z.writestr(f"{folder}/команда.json", json.dumps(card, ensure_ascii=False, indent=2).encode("utf-8"))
 
-                # Вспомогательные модули для автономного запуска бота
-                for mod in ("ai.py", "agent.py", "Наш_бот.py"):
-                    mod_path = os.path.join(code_dir, mod)
-                    if os.path.isfile(mod_path):
-                        with open(mod_path, "rb") as fh:
-                            z.writestr(f"{folder}/{mod}", fh.read())
-
-                # Файлы участников
+                # README команды
+                readme_lines = [
+                    f"Команда: {team.get('team_name')}",
+                    f"Имя бота: {team.get('bot_name') or 'Без имени'}",
+                    f"Тема: {team.get('topic') or 'Не указана'}",
+                    f"Характер: {team.get('persona') or 'Не указан'}",
+                    "",
+                    "Участники:",
+                ]
                 for m in team.get("members", []):
-                    m_name = re.sub(r"[^\w\-]", "_", m["name"])
-                    code = m.get("code") or "# Ученик пока не сохранил файл\n"
-                    z.writestr(f"{folder}/{m_name}_Мои_инструменты.py", code.encode("utf-8"))
-                    z.writestr(f"{folder}/Команда/{m_name}.py", code.encode("utf-8"))
+                    t_str = ", ".join(m.get("tool_names", [])) or "нет инструментов"
+                    readme_lines.append(f"  • {m['name']} (роль: {m.get('plan') or 'не указана'}): {t_str}")
+                readme_lines.extend([
+                    "",
+                    "Запуск бота команды:",
+                    "  python3 Наш_бот.py",
+                ])
+                z.writestr(f"{folder}/README.txt", "\n".join(readme_lines).encode("utf-8"))
 
-                    # Дополнительные файлы ученика (например память_бота.json)
-                    for sf in m.get("files", []):
-                        fname = os.path.basename(sf.get("path", ""))
-                        if fname and fname not in ("Мои_инструменты.py", f"{m_name}.py"):
-                            z.writestr(f"{folder}/{fname}", (sf.get("content") or "").encode("utf-8"))
+                # Вспомогательные модули для автономного запуска бота
+                if code_dir:
+                    for mod in ("ai.py", "agent.py", "Наш_бот.py"):
+                        mod_path = os.path.join(code_dir, mod)
+                        if os.path.isfile(mod_path):
+                            with open(mod_path, "rb") as fh:
+                                z.writestr(f"{folder}/{mod}", fh.read())
+
+                # Код участников (в корне папки и внутри Команда/ для автоимпорта в Наш_бот.py)
+                for m in team.get("members", []):
+                    m_clean = re.sub(r"[^\w\-]", "_", m["name"]) or f"ученик_{m['student_id']}"
+                    code = m.get("code") or "# Ученик пока не сохранил файл Мои_инструменты.py\n"
+                    code_bytes = code.encode("utf-8")
+                    z.writestr(f"{folder}/{m_clean}.py", code_bytes)
+                    z.writestr(f"{folder}/Команда/{m_clean}.py", code_bytes)
+
+            # 5. Ученики без команды, написавшие код
+            if data.get("students_without_team"):
+                for s in data["students_without_team"]:
+                    s_clean = re.sub(r"[^\w\-]", "_", s["name"]) or f"ученик_{s['student_id']}"
+                    code = s.get("code") or ""
+                    if code:
+                        z.writestr(f"_Без_команды/{s_clean}.py", code.encode("utf-8"))
 
         zip_bytes = buf.getvalue()
 
