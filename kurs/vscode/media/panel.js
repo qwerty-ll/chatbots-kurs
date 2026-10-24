@@ -89,6 +89,16 @@
       ui.chatHistory.push({ role: "error", content: m.error || "Ошибка нейросети", ts: Date.now() });
       save();
       render();
+    } else if (m.type === "toolGenerated") {
+      ui.toolGenerating = false;
+      toast(m.message || "Инструмент успешно создан!");
+      save();
+      render();
+    } else if (m.type === "toolGenerateError") {
+      ui.toolGenerating = false;
+      toast("Ошибка: " + (m.error || "не удалось сгенерировать инструмент"));
+      save();
+      render();
     } else if (m.type === "toast") toast(m.text);
     else if (m.type === "select") go({ tab: "tasks", task: m.task });
   });
@@ -528,7 +538,10 @@
       h("div", { class: "steps" },
         h("div", { class: "step now" }, h("span", { class: "n" }, "1"), h("div", { class: "body" }, h("b", {}, "Мои_инструменты.py — пишешь только ты"),
           h("span", { class: "muted small-text" }, "Сохранил (Ctrl+S) — через несколько секунд файл у товарищей."),
-          task ? h("div", { style: "margin-top:4px" }, h("button", { class: "small", onclick: () => openTask(task) }, view.files[task.id] ? "Открыть задание" : "Начать задание")) : null)),
+          task ? h("div", { class: "row", style: "margin-top:4px;gap:6px" },
+            h("button", { class: "small", onclick: () => openTask(task) }, view.files[task.id] ? "Открыть задание" : "Начать задание"),
+            h("button", { class: "ghost small", disabled: ui.toolGenerating, onclick: () => { ui.toolGenerating = true; render(); send("generateFirstTool", { taskId: task.id }); } },
+              ui.toolGenerating ? "⏳ ИИ пишет…" : "✨ 1-й инструмент от ИИ")) : null)),
         h("div", { class: "step now" }, h("span", { class: "n" }, "2"), h("div", { class: "body" }, h("b", {}, "Папка «Команда» — файлы товарищей"),
           h("span", { class: "muted small-text" }, "Их можно читать и запускать, но не менять."),
           t.files.length ? h("div", { class: "row", style: "margin-top:4px" }, t.files.map((f) =>
@@ -578,6 +591,21 @@
     out.push(h("div", { class: "card" }, h("h2", {}, "Что должен уметь бот"), h("div", { class: "statement" }, t.statement)));
     if (t.dialog && t.dialog.length) {
       out.push(h("div", { class: "card" }, h("h2", {}, "Пример разговора с ботом"), chat(t.dialog)));
+    }
+    if (t.id === "team-01" || t.file === "Мои_инструменты.py") {
+      out.push(h("div", { class: "card", style: "border-left:4px solid var(--brand, #3b82f6); background:rgba(59, 130, 246, 0.06);" },
+        h("h2", {}, "✨ Помощь ИИ: создать первый инструмент"),
+        h("p", { class: "small-text muted" }, "Нейросеть придумает и аккуратно вставит в твой файл 1-й инструмент (без параметров) по теме бота команды. Второй инструмент (с параметром) напиши сам!"),
+        h("div", { style: "margin-top:8px" },
+          h("button", {
+            class: "ok small",
+            disabled: ui.toolGenerating,
+            onclick: () => {
+              ui.toolGenerating = true;
+              render();
+              send("generateFirstTool", { taskId: t.id });
+            }
+          }, ui.toolGenerating ? "⏳ ИИ придумывает инструмент…" : "✨ Создать 1-й инструмент от ИИ"))));
     }
     if (t.bonus && passed) out.push(h("div", { class: "card" }, h("b", {}, "⭐ Бонус: "), t.bonus));
 

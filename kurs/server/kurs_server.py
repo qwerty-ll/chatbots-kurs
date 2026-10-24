@@ -408,7 +408,8 @@ class Kurs:
         today = self.s.one("SELECT COUNT(*) AS n FROM ai_log WHERE student_id=? AND ts>=?", (sess["student_id"], _day_start()))["n"]
         try:
             t = self.ai.ask(sess["student_id"], self.name(sess["student_id"]), sess["pc"], body.get("messages"),
-                            body.get("temperature", 0.7), body.get("max_tokens", 1500), body.get("tools"), today)
+                            body.get("temperature", 0.7), body.get("max_tokens", 1500), body.get("tools"), today,
+                            allow_code=bool(body.get("allow_code")))
         except kurs_ai.AIError as e:
             raise ApiError(429, str(e), {"retry_after": e.retry_after} if e.retry_after else None) from None
         return {"ticket": t.id}

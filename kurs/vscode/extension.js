@@ -760,6 +760,7 @@ class Kurs {
       case "teamNoticeOk": return this.teamAct("notice_ok", {});
       case "runTeamBot": return this.runPath(path.join(this.workDir(), "Наш_бот.py"));
       case "openTeamFile": return this.openTeamFile(m.name);
+      case "generateFirstTool": return this.handleGenerateFirstTool(m);
       default: return undefined;
     }
   }
@@ -842,6 +843,186 @@ class Kurs {
       this.panel.webview.postMessage({ type: "aiChatError", error: "Нейросеть отвечает дольше обычного. Попробуй ещё раз." });
     } catch (e) {
       this.panel.webview.postMessage({ type: "aiChatError", error: e.message });
+    }
+  }
+
+  // ---------------------------------------------------------------- генерация первого инструмента от ИИ
+  async handleGenerateFirstTool(m) {
+    if (!this.panel) return;
+    try {
+      const taskId = (m && m.taskId) || "team-01";
+      const t = this.taskById(taskId) || { id: "team-01", file: "Мои_инструменты.py", num: 1, title: "Мои инструменты" };
+      const file = this.taskFile(t);
+
+      // 1. Создаём файл задания, если его ещё нет
+      if (!fs.existsSync(file)) {
+        const starter = await this.getTask(taskId);
+        const code = (starter && starter.start) || "";
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, code, "utf-8");
+        this.trust(file, code);
+        this.guard.snapshot(file, code);
+      }
+
+      let content = fs.readFileSync(file, "utf-8");
+
+      // 2. Контекст команды и темы бота
+      const team = (this.teamData && this.teamData.team) || {};
+      const topic = team.topic || (this.v.idea && this.v.idea.about) || "Универсальный помощник";
+      const botName = team.bot_name || (this.v.idea && this.v.idea.title) || "Бот команды";
+      const persona = team.persona || "Дружелюбный, отвечает коротко и по делу.";
+      const usedNames = (team.members || []).flatMap((mem) => mem.tools || []);
+
+      // 3. Запрос к ИИ
+      const systemPrompt =
+        "Ты — генератор инструментов для учебного курса Python «Чат-боты и ИИ-агенты».\n" +
+        "Твоя задача — сгенерировать ПЕРВЫЙ учебный инструмент (функцию Python БЕЗ параметров) для файла «Мои_инструменты.py».\n" +
+        `Контекст команды:\n- Тема: ${topic}\n- Имя бота: ${botName}\n- Характер: ${persona}\n` +
+        (usedNames.length ? `- Занятые имена инструментов у товарищей (НЕ используй их): ${usedNames.join(", ")}\n` : "") +
+        "\nТребования к инструменту:\n" +
+        "1. Функция Python строго БЕЗ параметров: def имя_функции():\n" +
+        "2. Внутри функции должен быть список tips из 3-4 фраз (советы, факты, цитаты или варианты) строго по теме бота, и возврат: return random.choice(tips)\n" +
+        "3. Имя функции должно быть на английском языке в snake_case (например: tip_of_day, random_fact, secret_recipe, daily_quote, magic_trick), не совпадающее с занятыми именами!\n" +
+        "4. Описание функции для нейросети (make_tool) — на русском языке, понятное, максимум 1 предложение.\n\n" +
+        "Ответь СТРОГО в формате JSON без какого-либо дополнительного текста, markdown-кавычек и пояснений:\n" +
+        "{\n" +
+        '  "name": "имя_функции",\n' +
+        '  "description": "Описание на русском для make_tool",\n' +
+        '  "code": "def имя_функции():\\n    tips = [\\n        \\\"вариант 1\\\",\\n        \\\"вариант 2\\\",\\n        \\\"вариант 3\\\"\\n    ]\\n    return random.choice(tips)"\n' +
+        "}";
+
+      const payloadMessages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Сгенерируй первый инструмент (функцию без параметров) для бота «${botName}» (тема: ${topic}).` }
+      ];
+
+      const res = await this.api("POST", "/api/ai/ask", {
+        messages: payloadMessages,
+        temperature: 0.8,
+        max_tokens: 800,
+        allow_code: true
+      });
+
+      const tid = res.ticket;
+      if (!tid) throw new Error("Сервер не вернул номер тикета ИИ");
+
+      let replyText = "";
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 600));
+        const ticket = await this.api("GET", `/api/ai/ticket?id=${tid}`);
+        if (ticket.status === "done") {
+          if (typeof ticket.message === "string") replyText = ticket.message;
+          else if (ticket.message && typeof ticket.message === "object") replyText = ticket.message.content || "";
+          break;
+        } else if (ticket.status === "error") {
+          throw new Error(ticket.error || "Ошибка нейросети");
+        }
+      }
+
+      if (!replyText) throw new Error("Нейросеть отвечает дольше обычного. Попробуйте ещё раз.");
+
+      let parsed = null;
+      const jsonMatch = replyText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (!parsed || !parsed.name || !parsed.code) {
+        parsed = {
+          name: "tip_of_day",
+          description: "Дать полезный совет дня.",
+          code: "def tip_of_day():\n    tips = [\n        \"Всегда пробуй что-то новое!\",\n        \"Делай перерывы и пей воду.\",\n        \"Кодить вместе с командой — продуктивнее и веселее!\"\n    ]\n    return random.choice(tips)"
+        };
+      }
+
+      parsed.name = String(parsed.name).trim().replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+      parsed.description = String(parsed.description || "Совет дня").trim().replace(/["\n\r]/g, " ");
+
+      let newContent = content;
+
+      // 5.1 Замена первой функции
+      if (newContent.includes("def ___():\n    return ___")) {
+        newContent = newContent.replace("def ___():\n    return ___", parsed.code.trim());
+      } else {
+        const firstBlockRe = /(# ТВОЁ: первый инструмент[^\n]*\n)([\s\S]*?)(?=\n+# ТВОЁ: второй инструмент)/;
+        if (firstBlockRe.test(newContent)) {
+          newContent = newContent.replace(firstBlockRe, `$1${parsed.code.trim()}\n`);
+        } else {
+          const secondCommentRe = /(# ТВОЁ: второй инструмент)/;
+          if (secondCommentRe.test(newContent)) {
+            newContent = newContent.replace(secondCommentRe, `${parsed.code.trim()}\n\n\n$1`);
+          }
+        }
+      }
+
+      // 5.2 Замена в TOOLS
+      if (newContent.includes('make_tool("___", "___")')) {
+        newContent = newContent.replace('make_tool("___", "___")', `make_tool("${parsed.name}", "${parsed.description}")`);
+      } else {
+        const toolsRe = /(TOOLS\s*=\s*\[\s*)(make_tool\([^)]+\))/;
+        if (toolsRe.test(newContent)) {
+          newContent = newContent.replace(toolsRe, `$1make_tool("${parsed.name}", "${parsed.description}")`);
+        }
+      }
+
+      // 5.3 Замена в FUNCTIONS
+      if (newContent.includes('"___": lambda args: ___(),')) {
+        newContent = newContent.replace('"___": lambda args: ___(),', `"${parsed.name}": lambda args: ${parsed.name}(),`);
+      } else {
+        const funcRe = /(FUNCTIONS\s*=\s*\{\s*)(["'][^"']+["']\s*:\s*lambda\s+args\s*:\s*[^,]+,)/;
+        if (funcRe.test(newContent)) {
+          newContent = newContent.replace(funcRe, `$1"${parsed.name}": lambda args: ${parsed.name}(),`);
+        }
+      }
+
+      // 6. Разрешаем код в защите Guard
+      this.guard.allow(parsed.code);
+      this.guard.allow(`make_tool("${parsed.name}", "${parsed.description}")`);
+      this.guard.allow(`"${parsed.name}": lambda args: ${parsed.name}(),`);
+      this.guard.allow(newContent);
+
+      fs.writeFileSync(file, newContent, "utf-8");
+      this.trust(file, newContent);
+      this.guard.snapshot(file, newContent);
+
+      // 7. Обновляем документ в редакторе VS Code
+      const doc = vscode.workspace.textDocuments.find((d) => path.resolve(d.uri.fsPath) === path.resolve(file));
+      if (doc) {
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), newContent);
+        await vscode.workspace.applyEdit(edit);
+        await doc.save();
+      } else {
+        const newDoc = await vscode.workspace.openTextDocument(file);
+        await vscode.window.showTextDocument(newDoc, vscode.ViewColumn.One);
+      }
+
+      // 8. Обновляем план в карточке команды
+      try {
+        const currentPlan = (this.teamData && this.teamData.team && (this.teamData.team.members || []).find((mem) => mem.me)?.plan) || "";
+        if (!currentPlan.includes(parsed.name)) {
+          const newPlan = currentPlan ? `${parsed.name} — ${parsed.description}, ${currentPlan}` : `${parsed.name} — ${parsed.description}`;
+          await this.teamAct("plan", { plan: newPlan });
+        }
+      } catch (e) {
+        // план не критичен
+      }
+
+      this.panel.webview.postMessage({
+        type: "toolGenerated",
+        message: `✨ Инструмент «${parsed.name}» создан и вставлен в файл! Второй инструмент напиши сам.`
+      });
+      this.toast(`✨ Создан инструмент ${parsed.name}!`);
+    } catch (e) {
+      this.panel.webview.postMessage({
+        type: "toolGenerateError",
+        error: e.message || "Не удалось сгенерировать инструмент"
+      });
+      this.toast("Ошибка: " + e.message);
     }
   }
 

@@ -428,7 +428,7 @@ class Gateway:
         return out
 
     # --- ученик ---
-    def ask(self, student_id, name: str, pc: str, messages: list, temperature, max_tokens, tools, today_count: int) -> Ticket:
+    def ask(self, student_id, name: str, pc: str, messages: list, temperature, max_tokens, tools, today_count: int, allow_code: bool = False) -> Ticket:
         cfg = self.cfg
         if cfg["mode"] == "pause":
             raise AIError("Учитель поставил нейросеть на паузу. Подожди немного.")
@@ -459,7 +459,9 @@ class Gateway:
             max_tokens = min(int(cfg["max_tokens"]), max(16, int(max_tokens)))
         except (TypeError, ValueError):
             max_tokens = int(cfg["max_tokens"])
-        hint = " ".join(h for h, on in ((SHORT_HINT, cfg["short_hint"]), (NO_CODE_HINT, cfg.get("no_code", True))) if on)
+        hint = ""
+        if not allow_code:
+            hint = " ".join(h for h, on in ((SHORT_HINT, cfg["short_hint"]), (NO_CODE_HINT, cfg.get("no_code", True))) if on)
         if hint:
             if clean[0]["role"] == "system":
                 clean[0]["content"] = (clean[0]["content"] + " " + hint).strip()
