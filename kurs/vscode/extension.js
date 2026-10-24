@@ -773,7 +773,8 @@ class Kurs {
       if (m.taskId) {
         const t = this.taskById(m.taskId);
         if (t) {
-          taskTitle = `${t.num}. ${t.title}`;
+          const taskTitle = `${t.num}. ${t.title}`;
+          let currentCode = "";
           const file = this.taskFile(t);
           if (fs.existsSync(file)) {
             currentCode = fs.readFileSync(file, "utf-8").slice(0, 3500);
