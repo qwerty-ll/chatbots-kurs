@@ -1,10 +1,10 @@
 {
   "enabled": true,
   "provider": "openai",
-  "openai_base_url": "https://api.trycloudflare.com/v1",
+  "openai_base_url": "https://mhgrm-193-178-226-195.run.pinggy-free.link/v1",
   "openai_key": "sk-1c068d87327e4c01b1711b3a0d2b189d",
   "openai_models": "gemini-3.8-flash,gemini-3.x-flash",
-  "updated_at": 1792853086,
-  "tunnel_url": "https://api.trycloudflare.com",
+  "updated_at": 1792853136,
+  "tunnel_url": "https://mhgrm-193-178-226-195.run.pinggy-free.link",
   "hostname": "Mac"
 }
