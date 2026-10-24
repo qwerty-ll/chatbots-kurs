@@ -63,7 +63,10 @@ class Kurs {
     this.v = {
       screen: "loading", message: "", server: "", pc: "", students: [], here: null, me: null, lesson: null,
       state: null, offline: false, files: {}, checks: {}, hints: {}, solutions: {}, busy: null, waitingName: "",
+      idea: null, team: null,
     };
+    this.teamData = null;  // последний ответ /api/team: команды и файлы товарищей
+    this.teamV = null;     // его версия: заново спрашиваем, только когда на сервере что-то изменилось
     this.token = null;
     this.request = null;   // {id, secret} — ждём подтверждения учителя
     this.tasks = {};       // id → задание с заготовкой (с сервера)
@@ -313,6 +316,15 @@ class Kurs {
         this.v.lesson = await this.api("GET", "/api/lesson");
         this.writeLessonFiles();
         this.allowLessonTexts();
+        this.teamV = null;
+        this.teamData = null;
+        this.v.team = null;
+        this.v.idea = this.v.lesson.project_idea ? (await this.api("GET", "/api/idea")).idea : null;
+        this.applyReadonly();
+      }
+      if (this.v.lesson.teams && st.team_v !== this.teamV) {
+        this.setTeam(await this.api("GET", "/api/team"));
+        this.teamV = st.team_v;
       }
       // подсказки и образцы, полученные раньше, восстанавливаем из ответов сервера при необходимости
       if (this.v.screen !== "in") this.v.screen = "in";
@@ -340,6 +352,10 @@ class Kurs {
     this.v.lesson = null;
     this.v.state = null;
     this.v.me = null;
+    this.v.team = null;
+    this.v.idea = null;
+    this.teamData = null;
+    this.teamV = null;
     if (this.runner) this.runner.dispose();
     this.diag.clear();
     this.runBtn.hide();
@@ -429,22 +445,31 @@ class Kurs {
   /** Заблокирован учителем (вставил чужой код): файлы курса только для чтения, пока учитель не разблокирует.
    *  Блокировка хранится на сервере, поэтому перезапуск VS Code её не снимает. */
   async applyLock(on) {
-    if (on === this.lockApplied) return;
-    this.lockApplied = on;
+    this.locked = on;
+    return this.applyReadonly();
+  }
+
+  /** Что в папке курса только для чтения: всё — при блокировке; всегда — файлы товарищей и бот команды
+   *  (их приносит панель, а меняет каждый только свой файл). */
+  async applyReadonly() {
+    const want = { [F.WORK + "/**"]: !!this.locked, [`${F.WORK}/**/${F.TEAM_DIR}/**`]: true, [`${F.WORK}/**/Наш_бот.py`]: true };
+    const key = JSON.stringify(want);
+    if (key === this.readonlyApplied) return;
+    this.readonlyApplied = key;
     try {
       const files = vscode.workspace.getConfiguration("files");
       const ro = Object.assign({}, files.get("readonlyInclude") || {});
-      if (on) ro[F.WORK + "/**"] = true; else delete ro[F.WORK + "/**"];
+      for (const [glob, on] of Object.entries(want)) { if (on) ro[glob] = true; else delete ro[glob]; }
       await files.update("readonlyInclude", Object.keys(ro).length ? ro : undefined, vscode.ConfigurationTarget.Workspace);
-    } catch (e) { console.error("kurs: lock", e); }
+    } catch (e) { console.error("kurs: readonly", e); }
   }
 
   // ---------------------------------------------------------------- «пиши сам»
   /** Файл, который ученик пишет сам: .py в Мои_работы, кроме общих модулей класса. */
   isGuarded(file) {
-    const base = path.basename(file);
-    return file.endsWith(".py") && base !== "ai.py" && base !== "agent.py" &&
-      F.isInside(file, path.join(this.root(), F.WORK));
+    const work = path.join(this.root(), F.WORK);
+    return file.endsWith(".py") && !F.SHARED.has(path.basename(file)) && F.isInside(file, work) &&
+      !path.relative(work, file).split(path.sep).includes(F.TEAM_DIR);   // файлы товарищей приносит панель
   }
   trustedAll() {
     return this.ctx.globalState.get("kurs.trusted") || {};
@@ -527,9 +552,21 @@ class Kurs {
     }
     await vscode.workspace.applyEdit(edit);
     const blockedText = res.blocked.join("\n");
+    if (this.fromTeammate(blockedText)) {
+      const msg = "Это код товарища по команде 🙂 Каждый пишет свои инструменты — так вы не мешаете друг другу.";
+      vscode.window.showWarningMessage(msg);
+      return this.toast(msg);
+    }
     const isAi = isAiGenerated(blockedText);
     const kind = isAi ? "ai_paste_blocked" : "paste_blocked";
     this.blockedNotice(kind, file, blockedText);
+  }
+
+  /** Вставку взяли из файла товарища по команде? */
+  fromTeammate(text) {
+    const s = squash(text);
+    const files = (this.teamData && this.teamData.team && this.teamData.team.files) || [];
+    return s.length > 0 && files.some((f) => squash(f.content).includes(s));
   }
 
   /** Вставку взяли из подсказки или образца решения? */
@@ -715,6 +752,14 @@ class Kurs {
       case "playCancel": return this.playAct("cancel", { id: m.id });
       case "playLeave": return this.playAct("leave", {});
       case "aiChat": return this.handleAiChat(m);
+      case "ideaSave": return this.saveIdea(m.idea);
+      case "teamJoin": return this.teamAct("join", { team_id: m.team }, "Ты в команде! Открой задание «Мои инструменты».");
+      case "teamLeave": return this.teamAct("leave", {}, "Ты вышел из команды.");
+      case "teamCard": return this.teamAct("card", m.card, "Карточка команды сохранена — товарищи увидят её через пару секунд.");
+      case "teamPlan": return this.teamAct("plan", { plan: m.plan }, "Записал, что ты делаешь.");
+      case "teamNoticeOk": return this.teamAct("notice_ok", {});
+      case "runTeamBot": return this.runPath(path.join(this.workDir(), "Наш_бот.py"));
+      case "openTeamFile": return this.openTeamFile(m.name);
       default: return undefined;
     }
   }
@@ -724,8 +769,7 @@ class Kurs {
     if (!this.panel) return;
     try {
       const messages = Array.isArray(m.messages) ? m.messages : [];
-      let currentCode = "";
-      let taskTitle = "";
+      let taskContext = "";
       if (m.taskId) {
         const t = this.taskById(m.taskId);
         if (t) {
@@ -734,12 +778,37 @@ class Kurs {
           if (fs.existsSync(file)) {
             currentCode = fs.readFileSync(file, "utf-8").slice(0, 3500);
           }
+          const parts = [`[Текущее задание: ${taskTitle}]`];
+          if (t.statement) {
+            parts.push(`Условие задания:\n${t.statement}`);
+          }
+          if (Array.isArray(t.topics) && t.topics.length) {
+            parts.push(`Изучаемые темы в этом шаге: ${t.topics.join(", ")}`);
+          }
+          if (Array.isArray(t.structure) && t.structure.length) {
+            const reqs = t.structure.map((s) => s.title || s.msg || s.need).filter(Boolean);
+            if (reqs.length) parts.push(`Что должно быть в коде:\n- ${reqs.join("\n- ")}`);
+          }
+          if (Array.isArray(t.hints) && t.hints.length) {
+            parts.push(`Ориентир простоты решения (не выдавай ученику готовый код, используй для понимания уровня задания):\n${t.hints[0]}`);
+          }
+          if (currentCode) {
+            parts.push(`Текущий код в файле ученика:\n\`\`\`python\n${currentCode}\n\`\`\``);
+          }
+          taskContext = "\n\n" + parts.join("\n\n");
         }
       }
-      const systemPrompt = "Ты — дружелюбный школьный ИИ-наставник по Python курса «Чат-боты». Твоя задача — помочь ученику самостоятельно разобраться и решить задачу. Объясняй простыми словами на понятных примерах для начинающих. Если ученик спрашивает, где ошибка — укажи на опечатку или неверную команду, но не пиши готовое решение задания целиком. Подсказывай наводящими вопросами и показывай короткие примеры из 1-2 строк.";
+      const systemPrompt = "Ты — дружелюбный школьный ИИ-наставник по Python курса «Чат-боты». " +
+        "Твоя задача — помочь ученику самостоятельно разобраться и решить задачу. " +
+        "Объясняй простыми словами на понятных примерах для начинающих. " +
+        "ОБЯЗАТЕЛЬНО соблюдай правила:\n" +
+        "1. Сверяй код ученика с УСЛОВИЕМ текущего задания. Если ученик написал лишний код из других или будущих тем (например, агенты, списки TOOLS или вызовы make_tool там, где требуется простая функция) — прямо, спокойно и понятно скажи ему убрать лишние строки и решать только то, о чём просит условие.\n" +
+        "2. Не предлагай сложных конструкций и функций, которых ещё нет в теме этого задания.\n" +
+        "3. Если ученик спрашивает, где ошибка — укажи на опечатку, лишнюю или неверную команду, но не пиши готовое решение целиком.\n" +
+        "4. Подсказывай наводящими вопросами и показывай короткие примеры из 1-2 строк.";
 
       const payloadMessages = [
-        { role: "system", content: systemPrompt + (currentCode ? `\n\n[Текущий файл задания ${taskTitle}]:\n\`\`\`python\n${currentCode}\n\`\`\`` : "") },
+        { role: "system", content: systemPrompt + taskContext },
         ...messages
       ];
 
@@ -773,6 +842,62 @@ class Kurs {
     } catch (e) {
       this.panel.webview.postMessage({ type: "aiChatError", error: e.message });
     }
+  }
+
+  // ---------------------------------------------------------------- проект: идея и команда
+  async saveIdea(idea) {
+    try {
+      const r = await this.api("POST", "/api/idea", idea || {});
+      this.v.idea = r.idea;
+      this.render();
+      this.toast("Идея сохранена — учитель её видит 💡");
+    } catch (e) { this.toast(e.message); }
+  }
+
+  async teamAct(action, body, okText) {
+    try {
+      this.setTeam(await this.api("POST", "/api/team/" + action, body || {}));
+      if (okText) this.toast(okText);
+    } catch (e) { this.toast(e.message); }
+  }
+
+  /** Новый ответ /api/team: файлы товарищей — в папку «Команда», карточка — в команда.json (их читает Наш_бот.py). */
+  setTeam(data) {
+    this.teamData = data;
+    // в панель — без текстов файлов: ей хватает имён
+    const team = data && data.team ? Object.assign({}, data.team, { files: data.team.files.map((f) => ({ name: f.name, author: f.author })) }) : null;
+    this.v.team = data ? Object.assign({}, data, { team }) : null;
+    try { this.writeTeamFiles(); } catch (e) { console.error("kurs: team files", e); }
+    this.render();
+  }
+
+  writeTeamFiles() {
+    if (!this.v.lesson || !this.v.lesson.teams) return;
+    const dir = path.join(this.workDir(), F.TEAM_DIR);
+    const team = this.teamData && this.teamData.team;
+    const keep = new Set();
+    for (const f of (team && team.files) || []) {
+      if (!/^[^\\/]+\.py$/.test(f.name) || f.name.startsWith(".")) continue;
+      keep.add(f.name);
+      const file = path.join(dir, f.name);
+      let old = null;
+      try { old = fs.readFileSync(file, "utf8"); } catch (e) { /* файла ещё нет */ }
+      if (old !== f.content) F.writeFile(file, f.content);
+    }
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (e) { /* папки ещё нет */ }
+    for (const name of names) if (name.endsWith(".py") && !keep.has(name)) fs.rmSync(path.join(dir, name), { force: true });
+    const card = path.join(this.workDir(), F.TEAM_CARD);
+    if (team) {
+      F.writeFile(card, JSON.stringify({ team: team.name, topic: team.topic, bot_name: team.bot_name, persona: team.persona,
+        members: team.members.map((m) => m.name) }, null, 2));
+    } else fs.rmSync(card, { force: true });
+  }
+
+  async openTeamFile(name) {
+    const file = path.join(this.workDir(), F.TEAM_DIR, path.basename(String(name || "")));
+    if (!fs.existsSync(file)) return this.toast("Товарищ ещё не сохранил свой файл.");
+    await this.openPath(file);
   }
 
   // ---------------------------------------------------------------- игры по сети класса

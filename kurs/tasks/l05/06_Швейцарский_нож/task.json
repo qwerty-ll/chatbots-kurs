@@ -1,0 +1,130 @@
+{
+  "id": "tools-06",
+  "lesson": 5,
+  "num": 6,
+  "title": "Агент «Швейцарский нож»",
+  "level": 3,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "несколько инструментов",
+    "цикл"
+  ],
+  "file": "06_Швейцарский_нож.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент с тремя инструментами:\n• coin_flip() — «Орёл» или «Решка»;\n• roll_dice(sides) — кубик с sides гранями (по умолчанию 6);\n• calculate(a, op, b) — точный счёт (+ - * /), без eval.\nАгент работает в цикле: «Ты: », «/exit» — конец; история разговора хранится в messages.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Сколько будет 17 * 23?"
+    ],
+    [
+      "bot",
+      "  🔧 calculate({'a': 17, 'op': '*', 'b': 23}) -> 391\nАгент: Получается 391."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "монет",
+      "tool": "coin_flip"
+    },
+    {
+      "if": "кубик",
+      "tool": "roll_dice",
+      "arguments": {
+        "sides": 6
+      }
+    },
+    {
+      "if": "сколько будет",
+      "tool": "calculate",
+      "arguments": {
+        "a": 17,
+        "op": "*",
+        "b": 23
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Сколько будет 17 * 23?",
+        "/exit"
+      ],
+      "expect": [
+        "391"
+      ],
+      "ai": {
+        "tools_has": [
+          "coin_flip",
+          "roll_dice",
+          "calculate"
+        ],
+        "tool_result_has": [
+          "391"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Подбрось монетку",
+        "Брось кубик",
+        "/exit"
+      ],
+      "choice": [
+        1
+      ],
+      "randint": [
+        4
+      ],
+      "expect": [
+        "Решка",
+        "4"
+      ],
+      "ai": {
+        "min_calls": 4,
+        "tool_result_has": [
+          "Решка",
+          "4"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструменты через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True."
+    },
+    {
+      "forbid": "call:eval",
+      "title": "нет eval()",
+      "msg": "eval() выполняет любой код — давать его агенту нельзя."
+    }
+  ],
+  "hints": [
+    "Каждому инструменту — три вещи: функция, make_tool(...) в TOOLS и строчка в FUNCTIONS. Имена везде одинаковые.",
+    "calculate описывается с тремя параметрами: a и b — \"number\", op — \"string\".",
+    "FUNCTIONS = {\n    \"coin_flip\": lambda args: coin_flip(),\n    \"roll_dice\": lambda args: roll_dice(args.get(\"sides\", 6)),\n    \"calculate\": lambda args: calculate(args[\"a\"], args[\"op\"], args[\"b\"]),\n}"
+  ],
+  "starter": "empty"
+}

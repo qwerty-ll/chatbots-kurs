@@ -5,14 +5,15 @@
   const vscode = acquireVsCodeApi();
   const root = document.getElementById("root");
   const toastEl = document.getElementById("toast");
-  const ui = Object.assign({ tab: "tasks", task: null, helpText: "", server: "", toured: {}, chatHistory: [], chatDraft: "", chatLoading: false }, vscode.getState() || {});
+  const ui = Object.assign({ tab: "tasks", task: null, helpText: "", server: "", toured: {}, chatHistory: [], chatDraft: "", chatLoading: false,
+    ideaDraft: {}, teamDraft: {}, planDraft: null }, vscode.getState() || {});
   let view = null;
   let toastTimer = null;
   let clockTimer = null;
   let lastKey = "";
   let lastCheckKey = "";
   const askedSolution = new Set();
-  const openDetails = new Set();   // раскрытые блоки не закрываются, когда панель обновляется
+  const openDetails = new Set(["team-rules"]);   // раскрытые блоки не закрываются, когда панель обновляется; правила команды сразу видны
 
   function details(key, summary, ...body) {
     const d = h("details", {}, h("summary", {}, summary), ...body);
@@ -170,10 +171,18 @@
   function render() {
     if (!view) return;
     const y = window.scrollY;
-    const focused = document.activeElement && document.activeElement.id;
+    const active = document.activeElement;
+    const focused = active && active.id;
+    const caret = active && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
     root.replaceChildren(...screen().flat(Infinity).filter((x) => x));   // пустые части экрана (null) не выводим
     window.scrollTo(0, y);
-    if (focused) { const el = document.getElementById(focused); if (el) el.focus(); }
+    if (focused) {
+      const el = document.getElementById(focused);
+      if (el) {
+        el.focus();
+        if (caret && el.setSelectionRange) try { el.setSelectionRange(caret[0], caret[1]); } catch (e) { /* не поле ввода */ }
+      }
+    }
     clearInterval(clockTimer);
     if (view.state && view.state.timer_end) clockTimer = setInterval(tickTimer, 1000);
     // новый результат проверки — сразу показываем его
@@ -280,8 +289,10 @@
         st.timer_end ? h("span", { class: "pill", id: "timer", title: st.timer_label || "Таймер" }, timerText()) : null),
       h("div", { class: "dots", title: "Твой прогресс на уроке" }, tasks.map((t) => h("i", { class: statusOf(t.id) || "" })))));
     const tabs = [["tasks", "📋", "Задания"], ["chat", "🤖", "Помощник"], ["theory", "📖", "Учебник"], ["cheat", "🔑", "Шпаргалка"], ["help", "🙋", "Помощь"]];
-    if (playOn()) tabs.splice(4, 0, ["games", "🎮", "Игры"]);
-    else if (ui.tab === "games") ui.tab = "tasks";
+    if (view.lesson.teams) tabs.splice(1, 0, ["team", "👥", "Команда"]);
+    else if (view.lesson.project_idea) tabs.splice(1, 0, ["idea", "💡", "Проект"]);
+    if (playOn()) tabs.splice(tabs.length - 1, 0, ["games", "🎮", "Игры"]);
+    if (!tabs.some((t) => t[0] === ui.tab)) ui.tab = "tasks";
     out.push(h("div", { class: "tabs" }, tabs.map(([id, ic, title]) =>
       h("button", { class: ui.tab === id ? "on" : "", onclick: () => go({ tab: id, task: id === "tasks" ? null : ui.task }) }, h("span", { class: "ic" }, ic), title))));
     const inv = st.play && st.play.invite;
@@ -294,6 +305,8 @@
     else if (ui.tab === "theory") page.append(...theory());
     else if (ui.tab === "cheat") page.append(...cheat());
     else if (ui.tab === "games") page.append(...games());
+    else if (ui.tab === "idea") page.append(h("h1", {}, "💡 Мой проект"), ideaCard(false));
+    else if (ui.tab === "team") page.append(...teamView());
     else page.append(...help());
     out.push(page);
     if (ui.tab === "tasks" && ui.task) out.push(actionBar(ui.task));
@@ -334,7 +347,9 @@
         view.lesson.steps.map((s) => h("div", { class: "stage" }, h("span", { class: "n" }, s.n), h("span", {}, s.title)))];
     }
     const out = [h("h1", {}, view.lesson.title),
-      h("p", { class: "muted" }, `Выполнено ${done} из ${tasks.length}. Главные — задания 1–6, остальные для тех, кто успевает.`)];
+      h("p", { class: "muted" }, view.lesson.teams ? "Проект команды: каждый пишет свои инструменты, бот команды собирает их вместе."
+        : `Выполнено ${done} из ${tasks.length}. Главные — задания 1–6, остальные для тех, кто успевает.`)];
+    if (view.lesson.teams) out.push(teamBrief());
     if (next) {
       out.push(h("button", { class: "big wide", style: "margin:10px 0 4px", onclick: () => openTask(next) }, `Продолжить: задание ${next.num} →`));
     } else if (!view.state.open_tasks.length) {
@@ -353,12 +368,193 @@
         h("span", { class: "t" }, h("b", {}, `${t.num}. ${t.title}`), h("small", {}, open ? t.statement.split("\n")[0] : "Учитель откроет это задание позже")),
         h("span", { class: "row", style: "flex-direction:column;align-items:flex-end;gap:4px" }, h("span", { class: "status " + cls }, label), stars(t.level))));
     }
+    if (view.lesson.project_idea && !view.lesson.teams) {
+      out.push(h("div", { class: "card", style: "margin-top:12px;border-left:4px solid var(--brand)" },
+        h("h2", {}, view.idea ? "💡 Твоя идея проекта: " + (view.idea.title || "без названия") : "💡 Придумай свой проект"),
+        h("p", { class: "muted small-text" }, "На следующем занятии — проект в командах. Запиши идею: кто бот, что делает и какие у него инструменты."),
+        h("button", { class: view.idea ? "secondary small" : "small", onclick: () => go({ tab: "idea" }) }, view.idea ? "Изменить идею" : "Записать идею")));
+    }
     return out;
   }
 
   function openTask(t) {
     go({ task: t.id, tab: "tasks" });
     if (view.files[t.id]) send("openFile", { task: t.id });
+  }
+
+  // ---------- проект: идея и команда
+  function field(id, label, value, onInput, opts) {
+    opts = opts || {};
+    const el = h(opts.multi ? "textarea" : "input", { id, placeholder: opts.placeholder || "", maxlength: opts.max || null, rows: opts.multi ? 3 : null });
+    el.value = value || "";
+    el.addEventListener("input", () => { onInput(el.value); save(); });
+    return h("label", { class: "field" }, h("b", {}, label), opts.hint ? h("small", { class: "muted" }, opts.hint) : null, el);
+  }
+
+  function ideaCard(compact) {
+    const saved = view.idea || {};
+    ui.ideaDraft = ui.ideaDraft || {};
+    const val = (k) => (ui.ideaDraft[k] !== undefined ? ui.ideaDraft[k] : saved[k] || "");
+    const dirty = ["title", "about", "tools"].some((k) => val(k) !== (saved[k] || ""));
+    const set = (k) => (v) => { ui.ideaDraft[k] = v; };
+    const body = [
+      compact ? null : h("p", { class: "muted" }, "На следующем занятии вы соберёте бота-агента командой. Запиши идею — учитель увидит идеи всех, а команда выберет одну."),
+      field("idea-title", "Кто твой бот", val("title"), set("title"), { placeholder: "Шеф Бонапетти — весёлый бот-кулинар", max: 80 }),
+      field("idea-about", "Что он делает для человека", val("about"), set("about"), { multi: true, max: 400, placeholder: "Подбирает рецепт по продуктам, шутит про еду, подсказывает, как готовить." }),
+      field("idea-tools", "Инструменты (2–3): что точно сделает программа", val("tools"), set("tools"), { multi: true, max: 400,
+        placeholder: "find_recipe(product) — блюдо по продукту\nconvert(grams) — граммы в стаканы\ntip_of_day() — совет дня",
+        hint: "Инструмент — то, что программа сделает точнее нейросети: посчитает, выберет случайно, найдёт в своём списке." }),
+      h("div", { class: "row", style: "margin-top:8px" },
+        h("button", { onclick: () => { send("ideaSave", { idea: { title: val("title"), about: val("about"), tools: val("tools") } }); ui.ideaDraft = {}; save(); } },
+          saved.updated && !dirty ? "Сохранено ✓" : "💾 Сохранить идею"),
+        dirty && saved.updated ? h("button", { class: "secondary small", onclick: () => { ui.ideaDraft = {}; save(); render(); } }, "Отменить правки") : null)];
+    if (compact) return h("div", { class: "card" }, details("idea-mine", saved.title ? `💡 Моя идея: ${saved.title}` : "💡 Моя идея проекта", ...body));
+    return h("div", { class: "card" }, ...body);
+  }
+
+  function teamTask() {
+    return view.lesson.tasks.find((t) => t.id === view.lesson.team_task) || view.lesson.tasks[0] || null;
+  }
+
+  // в списке заданий: в какой ты команде и что делать дальше
+  function teamBrief() {
+    const d = view.team;
+    if (!d) return null;
+    if (!d.team) {
+      return h("div", { class: "card", style: "border-left:4px solid var(--brand)" }, h("h2", {}, "👥 Сначала вступи в команду"),
+        h("p", { class: "muted small-text" }, d.teams.length ? "Выбери команду на вкладке «Команда»." : "Учитель скоро создаст команды."),
+        h("button", { onclick: () => go({ tab: "team" }) }, "Выбрать команду →"));
+    }
+    const t = d.team;
+    return h("div", { class: "card", style: "border-left:4px solid var(--brand)" },
+      h("h2", {}, `👥 ${t.name}` + (t.bot_name ? ` · бот «${t.bot_name}»` : "")),
+      h("p", { class: "muted small-text" }, t.members.map((m) => m.name).join(", ")),
+      h("div", { class: "row" }, h("button", { class: "secondary small", onclick: () => go({ tab: "team" }) }, "Команда и план"),
+        h("button", { class: "small", onclick: () => send("runTeamBot") }, "▶ Запустить бота команды")));
+  }
+
+  const TASK_MARK = { passed: ["✓ инструменты работают", "passed"], failed: ["✗ есть ошибки", "failed"], started: ["… пишет", "started"] };
+
+  function teamView() {
+    const d = view.team;
+    const out = [h("h1", {}, "👥 Команда")];
+    if (!d) return out.concat(h("p", { class: "muted" }, "Загружаю команды…"));
+    if (d.notice) {
+      out.push(h("div", { class: "card fix" }, h("b", {}, d.notice),
+        h("div", { style: "margin-top:6px" }, h("button", { class: "secondary small", onclick: () => send("teamNoticeOk") }, "Понятно"))));
+    }
+    return out.concat(d.team ? myTeam(d) : teamPicker(d));
+  }
+
+  function teamPicker(d) {
+    const cfg = d.cfg;
+    const out = [h("p", {}, `Выбери команду и нажми «Вступить». В команде минимум ${cfg.min} ${plural(cfg.min, "человек", "человека", "человек")}` +
+      (cfg.max ? `, максимум ${cfg.max}.` : "."))];
+    if (!cfg.open) out.push(h("div", { class: "card" }, "🔒 Запись в команды закрыта. Остался без команды — позови учителя."));
+    if (!d.teams.length) out.push(h("div", { class: "card" }, h("div", { class: "big-ic" }, "⏳"), h("p", {}, "Учитель ещё не создал команды. Пока перечитай свою идею ниже.")));
+    for (const t of d.teams) {
+      const n = t.members.length;
+      const need = Math.max(0, cfg.min - n);
+      out.push(h("div", { class: "card team-card" },
+        h("div", { class: "row" }, h("h2", { style: "margin:0" }, t.name), h("span", { class: "spacer" }),
+          h("span", { class: "pill" }, `${n}${cfg.max ? " / " + cfg.max : ""} 👤`)),
+        t.topic || t.bot_name ? h("p", { class: "muted small-text" }, [t.bot_name ? `Бот «${t.bot_name}»` : "", t.topic].filter(Boolean).join(" · ")) : null,
+        h("p", {}, n ? t.members.join(", ") : h("span", { class: "muted" }, "Пока никого — будь первым!")),
+        need && n ? h("p", { class: "muted small-text" }, `Нужен ещё ${need} ${plural(need, "человек", "человека", "человек")}`) : null,
+        t.banned ? h("p", { class: "muted small-text" }, "Учитель убрал тебя из этой команды.")
+          : h("button", { disabled: !cfg.open || t.full, onclick: () => send("teamJoin", { team: t.id }) }, t.full ? "Мест нет" : "Вступить")));
+    }
+    out.push(ideaCard(true));
+    return out;
+  }
+
+  function myTeam(d) {
+    const t = d.team;
+    const cfg = d.cfg;
+    const out = [];
+    const me = t.members.find((m) => m.me) || {};
+    const owners = {};
+    for (const m of t.members) for (const x of m.tools || []) (owners[x] = owners[x] || []).push(m.name);
+    const dups = new Set(Object.keys(owners).filter((x) => owners[x].length > 1));
+
+    out.push(h("div", { class: "card" },
+      h("div", { class: "row" }, h("h2", { style: "margin:0" }, t.name), h("span", { class: "spacer" }),
+        cfg.open ? h("button", { class: "link small", onclick: () => send("teamLeave") }, "Выйти из команды") : null),
+      h("div", { class: "row", style: "margin-top:6px" }, t.members.map((m) =>
+        h("span", { class: "chip", title: m.online ? "на связи" : "не на связи" }, (m.online ? "🟢 " : "⚪ ") + m.name + (m.me ? " (ты)" : "")))),
+      t.members.length < cfg.min ? h("p", { class: "muted small-text" }, `⚠ В команде должно быть минимум ${cfg.min}. Позовите кого-нибудь или попросите учителя.`) : null));
+
+    // общая карточка бота: меняют все, сохраняется кнопкой
+    const drafts = (ui.teamDraft = ui.teamDraft || {});
+    const dkey = (k) => t.id + ":" + k;
+    const val = (k) => (drafts[dkey(k)] !== undefined ? drafts[dkey(k)] : t[k] || "");
+    const set = (k) => (v) => { drafts[dkey(k)] = v; };
+    const dirty = ["topic", "bot_name", "persona"].some((k) => val(k) !== (t[k] || ""));
+    out.push(h("div", { class: "card" }, h("h2", {}, "🤖 Наш бот"),
+      !t.bot_name ? h("p", { class: "muted small-text" }, "Договоритесь, чью идею берёте, и впишите имя и характер бота. Печатает кто-то один.") : null,
+      field("team-topic", "Тема проекта", val("topic"), set("topic"), { placeholder: "Бот-кулинар: рецепты по продуктам", max: 120 }),
+      field("team-bot", "Имя бота", val("bot_name"), set("bot_name"), { placeholder: "Шеф Бонапетти", max: 40 }),
+      field("team-persona", "Характер: как бот говорит", val("persona"), set("persona"), { multi: true, max: 400, placeholder: "Весёлый повар, отвечает коротко и с шутками про еду." }),
+      h("div", { class: "row", style: "margin-top:8px" },
+        // кнопка всегда активна: пока ученик печатает, панель не перерисовывается
+        h("button", { onclick: () => {
+          send("teamCard", { card: { topic: val("topic"), bot_name: val("bot_name"), persona: val("persona") } });
+          for (const k of ["topic", "bot_name", "persona"]) delete drafts[dkey(k)];
+          save();
+        } }, "💾 Сохранить для всей команды"),
+        dirty ? h("span", { class: "muted small-text" }, "есть несохранённые правки")
+          : t.edited_by ? h("span", { class: "muted small-text" }, `✓ сохранено · последним менял(а): ${t.edited_by}`) : null)));
+
+    // кто что делает: каждый пишет только свою строку
+    const plan = ui.planDraft !== null && ui.planDraft !== undefined ? ui.planDraft : me.plan || "";
+    const rows = t.members.map((m) => {
+      const mark = TASK_MARK[m.status] || [m.tools && m.tools.length ? "файл сохранён" : "ещё нет файла", ""];
+      return h("div", { class: "player", style: "align-items:flex-start" },
+        h("div", { class: "grow" }, h("b", {}, m.name + (m.me ? " (ты)" : "")),
+          h("div", { class: "small-text" }, m.me ? null : (m.plan || h("span", { class: "muted" }, "ещё не написал(а), что делает"))),
+          m.tools && m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (dups.has(x) ? " bad" : ""), title: dups.has(x) ? "Такое имя уже есть у товарища — переименуйте" : "" }, "🔧 " + x))) : null),
+        h("span", { class: "status " + mark[1] }, mark[0]));
+    });
+    out.push(h("div", { class: "card" }, h("h2", {}, "📝 Кто что делает"),
+      field("team-plan", "Мои инструменты (имена и что делают)", plan, (v) => { ui.planDraft = v; }, { max: 200, placeholder: "find_recipe — блюдо по продукту, tip_of_day — совет дня" }),
+      h("div", { class: "row", style: "margin:6px 0 10px" },
+        h("button", { class: "secondary small", onclick: () => { send("teamPlan", { plan: ui.planDraft !== null && ui.planDraft !== undefined ? ui.planDraft : me.plan || "" }); ui.planDraft = null; save(); } }, "Записать")),
+      rows,
+      dups.size ? h("p", { class: "muted small-text" }, `⚠ Одинаковые имена инструментов: ${[...dups].join(", ")}. Бот команды возьмёт только один — договоритесь и переименуйте.`) : null));
+
+    // файлы
+    const task = teamTask();
+    out.push(h("div", { class: "card" }, h("h2", {}, "📂 Файлы команды"),
+      h("div", { class: "steps" },
+        h("div", { class: "step now" }, h("span", { class: "n" }, "1"), h("div", { class: "body" }, h("b", {}, "Мои_инструменты.py — пишешь только ты"),
+          h("span", { class: "muted small-text" }, "Сохранил (Ctrl+S) — через несколько секунд файл у товарищей."),
+          task ? h("div", { style: "margin-top:4px" }, h("button", { class: "small", onclick: () => openTask(task) }, view.files[task.id] ? "Открыть задание" : "Начать задание")) : null)),
+        h("div", { class: "step now" }, h("span", { class: "n" }, "2"), h("div", { class: "body" }, h("b", {}, "Папка «Команда» — файлы товарищей"),
+          h("span", { class: "muted small-text" }, "Их можно читать и запускать, но не менять."),
+          t.files.length ? h("div", { class: "row", style: "margin-top:4px" }, t.files.map((f) =>
+            h("button", { class: "secondary small", onclick: () => send("openTeamFile", { name: f.name }) }, "📄 " + f.author)))
+            : h("div", { class: "muted small-text" }, "Пока никто из товарищей не сохранил свой файл."))),
+        h("div", { class: "step now" }, h("span", { class: "n" }, "3"), h("div", { class: "body" }, h("b", {}, "Наш_бот.py — бот всей команды"),
+          h("span", { class: "muted small-text" }, "Сам собирает инструменты всех. Ошибка у кого-то — его инструменты выключатся, остальные работают."),
+          h("div", { style: "margin-top:4px" }, h("button", { class: "ok small", onclick: () => send("runTeamBot") }, "▶ Запустить бота команды")))))));
+
+    out.push(h("div", { class: "card" }, details("team-rules", "🤝 Как не мешать друг другу",
+      h("ol", {},
+        h("li", {}, "Каждый пишет только свой файл Мои_инструменты.py. Чужие файлы — только для чтения."),
+        h("li", {}, "Сначала запиши в «Кто что делает» имена своих инструментов: одинаковых имён в команде быть не должно."),
+        h("li", {}, "Имя и характер бота — общие. Договоритесь, кто их печатает, и сохраните один раз."),
+        h("li", {}, "Своё проверяй сам: ▶ свой файл — агент только с твоими инструментами, ✓ «Проверить» — всё ли работает."),
+        h("li", {}, "Вместе проверяйте Наш_бот.py: задайте вопрос для инструмента товарища и найдите строку 🔧.")))));
+
+    const ideas = t.members.filter((m) => m.idea && (m.idea.title || m.idea.about));
+    if (ideas.length) {
+      out.push(h("div", { class: "card" }, details("team-ideas", `💡 Идеи участников (${ideas.length})`,
+        ideas.map((m) => h("div", { class: "hint" }, h("b", {}, `${m.name}: ${m.idea.title || ""}`),
+          m.idea.about ? h("div", { class: "small-text" }, m.idea.about) : null,
+          m.idea.tools ? h("div", { class: "small-text muted", style: "white-space:pre-wrap" }, "🔧 " + m.idea.tools) : null)))));
+    }
+    out.push(ideaCard(true));
+    return out;
   }
 
   // ---------- задание
@@ -585,7 +781,11 @@
 
   function askAiAboutError(t, check) {
     go({ tab: "chat", task: t.id });
-    let prompt = `Я решаю задание «${t.num}. ${t.title}». При проверке возникла ошибка. `;
+    let prompt = `Я решаю задание «${t.num}. ${t.title}».`;
+    if (t.statement) {
+      prompt += ` Условие: ${t.statement.replace(/\n+/g, " ")}.`;
+    }
+    prompt += ` При проверке возникла ошибка. `;
     if (check.error && check.error.text) {
       prompt += `Ошибка: ${check.error.text}`;
       if (check.error.code_line) prompt += ` в строке: ${check.error.code_line.trim()}`;

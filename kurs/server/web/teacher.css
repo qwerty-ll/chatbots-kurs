@@ -237,3 +237,15 @@ details summary { cursor: pointer; color: var(--blue); font-weight: 600; font-si
 .side .step b { grid-column: 1; }
 .side .step .tasks { grid-column: 1; }
 .side .step button { grid-column: 2; grid-row: 1 / span 3; }
+
+/* вкладка «Проекты»: команды карточками */
+.team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+.team-grid .card { margin: 0; }
+.card.team h2 { margin: 0; }
+.card.team select.small, .list-item select.small { font-size: 12px; padding: 3px 6px; max-width: 140px; }
+.member { padding: 9px 0; border-top: 1px solid var(--line); }
+.member .row { gap: 6px; }
+.member .name-link { white-space: nowrap; }
+.member .actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.member .chip { white-space: nowrap; }
+.member > div + div { margin: 4px 0 0 15px; }

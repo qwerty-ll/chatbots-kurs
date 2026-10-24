@@ -216,3 +216,16 @@ table.cheat td:first-child { font-family: var(--mono); white-space: nowrap; font
 .chat-typing::before { content: "●"; animation: blink 1s infinite alternate; }
 @keyframes blink { 0% { opacity: 0.2; } 100% { opacity: 1; } }
 
+
+/* проект: идея и команда */
+textarea { font: inherit; color: var(--ink); background: var(--card); border: 1.5px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; resize: vertical; }
+textarea:focus { outline: 2px solid var(--sky); border-color: var(--brand); }
+.field { display: block; margin: 10px 0 0; }
+.field > b { display: block; margin-bottom: 4px; }
+.field > small { display: block; margin: -2px 0 6px; }
+.grow { flex: 1; min-width: 0; }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.card .pill { background: var(--brand-soft); color: var(--brand); }
+.team-card h2 { font-size: 17px; }
+.card ol { margin: 8px 0 0; padding-left: 20px; }
+.card ol li { margin: 4px 0; }
