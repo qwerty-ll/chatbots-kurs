@@ -31,7 +31,7 @@ import time
 import zipfile
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import kurs_ai
 import kurs_play
@@ -1283,6 +1283,13 @@ class Kurs:
             members = []
             for m in self.team_members(t["id"]):
                 f = self.team_file(m["id"])
+                if not f:
+                    r = self.s.one(
+                        "SELECT content, updated FROM files WHERE student_id=? AND path LIKE '%Мои_инструменты.py' ORDER BY updated DESC LIMIT 1",
+                        (m["id"],)
+                    )
+                    if r:
+                        f = (r["content"], r["updated"])
                 code_content = f[0] if f else ""
                 student_files = [
                     {"path": r["path"], "content": r["content"], "updated": r["updated"]}
@@ -1454,6 +1461,18 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
                 ".svg": "image/svg+xml", ".png": "image/png"}
 
 
+def content_disposition(filename: str) -> str:
+    """Формирует безопасный заголовок Content-Disposition по стандарту RFC 5987 / RFC 6266.
+
+    ASCII fallback для старых клиентов и UTF-8 кодирование для современных браузеров.
+    Предотвращает UnicodeEncodeError в http.server при наличии кириллицы в названии файла.
+    """
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    ascii_fallback = f"projects.{ext}" if ext else "download.bin"
+    utf8_quoted = quote(filename, encoding="utf-8")
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{utf8_quoted}'
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "KursServer/" + VERSION
     kurs: Kurs = None  # type: ignore[assignment]
@@ -1485,7 +1504,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (headers or {}).items():
-            self.send_header(k, v)
+            val = str(v)
+            try:
+                val.encode("latin-1")
+                self.send_header(k, val)
+            except UnicodeEncodeError:
+                self.send_header(k, quote(val, safe=";= \"'*-"))
         self.end_headers()
         self.wfile.write(body)
 
@@ -1765,13 +1789,13 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
             safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
             return self.send_bytes(body, "application/json; charset=utf-8", 200,
-                                   {"Content-Disposition": f'attachment; filename="projects_{safe_name}.json"'})
+                                   {"Content-Disposition": content_disposition(f"projects_{safe_name}.json")})
         elif method == "GET" and name in ("export_projects.zip", "projects.zip"):
             body = k.export_projects_zip()
             data = k.export_projects_data()
             safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
             return self.send_bytes(body, "application/zip", 200,
-                                   {"Content-Disposition": f'attachment; filename="projects_{safe_name}.zip"'})
+                                   {"Content-Disposition": content_disposition(f"projects_{safe_name}.zip")})
         elif method == "POST":
             b = self.body_json()
             out = {"ok": True}

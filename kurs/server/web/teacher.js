@@ -687,10 +687,8 @@ function projectTab() {
     h("h2", {}, "💾 Экспорт проектов"),
     h("p", { class: "muted small" }, "Выгрузить карточки команд, код участников и файл Наш_бот.py:"),
     h("div", { class: "row", style: "gap:8px;margin-top:8px" },
-      h("a", { href: "/tapi/export_projects.zip", download: `projects_${(data && data.group) || "class"}.zip` },
-        h("button", { class: "ok small" }, "📦 Скачать все (ZIP)")),
-      h("a", { href: "/tapi/export_projects.json", download: `projects_${(data && data.group) || "class"}.json` },
-        h("button", { class: "ghost small" }, "📄 Данные (JSON)"))));
+      h("button", { class: "ok small", onclick: () => { location.href = "/tapi/export_projects.zip"; } }, "📦 Скачать все (ZIP)"),
+      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export_projects.json"; } }, "📄 Данные (JSON)")));
 
   const manage = h("section", { class: "card" }, h("h2", {}, "👥 Команды"),
     !teams.team_lesson ? h("p", { class: "muted small" }, "Ученики выбирают команду на занятии-проекте (Занятие 6). Создать команды можно и заранее.") : null,
