@@ -1,0 +1,130 @@
+{
+  "id": "l12-05",
+  "lesson": 12,
+  "num": 5,
+  "title": "Агент-планировщик",
+  "level": 3,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "sorted",
+    "файл JSON",
+    "два инструмента"
+  ],
+  "file": "05_Планировщик.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Задачи хранятся в tasks.json — список словарей {\"text\", \"priority\"} (1 — самое важное).\n• add_task(text, priority) — добавляет задачу, сохраняет файл и возвращает «Добавил: <text>»;\n• list_tasks() — задачи по возрастанию priority строками «1) <text>», «2) <text>» или «Задач нет».\nАгент в цикле: «Ты: », «/exit» — конец.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Что у меня по плану?"
+    ],
+    [
+      "bot",
+      "  🔧 list_tasks({}) -> 1) тренировка 2) уроки\nАгент: Сначала тренировка, потом уроки."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "план",
+      "tool": "list_tasks"
+    },
+    {
+      "if": "добавь",
+      "tool": "add_task",
+      "arguments": {
+        "text": "купить подарок",
+        "priority": 1
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Что у меня по плану?",
+        "/exit"
+      ],
+      "files": {
+        "tasks.json": [
+          {
+            "text": "уроки",
+            "priority": 2
+          },
+          {
+            "text": "тренировка",
+            "priority": 1
+          }
+        ]
+      },
+      "expect": [
+        "1) тренировка",
+        "2) уроки"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "1) тренировка"
+        ]
+      },
+      "fail": "Сортируй по приоритету: sorted(TASKS, key=lambda t: t[\"priority\"])."
+    },
+    {
+      "input": [
+        "Добавь задачу купить подарок",
+        "/exit"
+      ],
+      "expect": [
+        "Добавил: купить подарок"
+      ],
+      "file_has": {
+        "tasks.json": [
+          "купить подарок"
+        ]
+      },
+      "fail": "add_task сохраняет список в tasks.json через json.dump."
+    },
+    {
+      "input": [
+        "Что у меня по плану?",
+        "/exit"
+      ],
+      "expect": [
+        "Задач нет"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": [
+        "call:sorted",
+        "method:sort"
+      ],
+      "title": "есть сортировка",
+      "msg": "Отсортируй задачи: sorted(TASKS, key=lambda t: t[\"priority\"])."
+    },
+    {
+      "need": "method:dump",
+      "msg": "Сохраняй задачи в tasks.json через json.dump."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "Чтение файла — как в занятии 9: try / with open(\"tasks.json\") / json.load / except FileNotFoundError: TASKS = [].",
+    "list_tasks: lines = [f\"{i}) {t['text']}\" for i, t in enumerate(sorted(TASKS, key=lambda t: t[\"priority\"]), 1)]; return \" \".join(lines).",
+    "import json\n\nfrom agent import agent_answer, make_tool\n\ntry:\n    with open(\"tasks.json\", encoding=\"utf-8\") as f:\n        TASKS = json.load(f)\nexcept FileNotFoundError:\n    TASKS = []\n\n\ndef add_task(text, priority):\n    TASKS.append({\"text\": text, \"priority\": priority})\n    with open(\"tasks.json\", \"w\", encoding=\"utf-8\") as f:\n        json.dump(TASKS, f, ensure_ascii=False)\n    return f\"Добавил: {text}\"\n\n\ndef list_tasks():\n    if not TASKS:\n        return \"Задач нет\"\n    lines = []\n    for i, task in enumerate(sorted(TASKS, key=lambda t: t[\"priority\"]), 1):\n        lines.append(f\"{i}) {task['text']}\")\n    return \" \".join(lines)\n\n\nTOOLS = [make_tool(\"add_task\", \"Добавить задачу в план.\",\n                   {\"text\": {\"type\": \"string\", \"description\": \"Что сделать\"},\n                    \"priority\": {\"type\": \"integer\", \"description\": \"Важность: 1 — самое важное\"}}, [\"text\", \"priority\"]),\n         make_tool(\"list_tasks\", \"Показать план: сначала самое важное.\")]\nFUNCTIONS = {\"add_task\": lambda args: add_task(args[\"text\"], args[\"priority\"]), \"list_tasks\": lambda args: list_tasks()}\nSYSTEM = \"Ты планировщик. Задачи добавляй и показывай только инструментами.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

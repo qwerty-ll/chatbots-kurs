@@ -1,0 +1,114 @@
+{
+  "id": "l10-03",
+  "lesson": 10,
+  "num": 3,
+  "title": "Агент с тремя инструментами",
+  "level": 2,
+  "step": 3,
+  "minutes": 15,
+  "topics": [
+    "несколько инструментов"
+  ],
+  "file": "03_Три_инструмента.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент с тремя инструментами:\n• coin_flip() — «Орёл» или «Решка»;\n• get_joke() — случайная шутка из списка;\n• get_fact() — случайный факт из списка.\nАгент в цикле: «Ты: », «/exit» — конец. Описания пиши так, чтобы было ясно, когда какой звать.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Расскажи шутку"
+    ],
+    [
+      "bot",
+      "  🔧 get_joke({}) -> …\nАгент: Вот шутка: …"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "монет",
+      "tool": "coin_flip"
+    },
+    {
+      "if": "шутк",
+      "tool": "get_joke"
+    },
+    {
+      "if": "факт",
+      "tool": "get_fact"
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Подбрось монетку",
+        "/exit"
+      ],
+      "choice": [
+        1
+      ],
+      "expect": [
+        "Решка"
+      ],
+      "ai": {
+        "tools_has": [
+          "coin_flip",
+          "get_joke",
+          "get_fact"
+        ],
+        "tool_result_has": [
+          "Решка"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Расскажи шутку",
+        "Скажи факт",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "min_calls": 4,
+        "tool_ok": true
+      }
+    },
+    {
+      "input": [
+        "Привет",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    },
+    {
+      "need": "method:choice",
+      "msg": "Случайный выбор: random.choice(список)."
+    }
+  ],
+  "hints": [
+    "Все три функции похожи: return random.choice([...]). Шутки и факты — свои.",
+    "Три make_tool в списке TOOLS и три строки в FUNCTIONS: имена должны совпадать.",
+    "import random\n\nfrom agent import agent_answer, make_tool\n\n\ndef coin_flip():\n    return random.choice([\"Орёл\", \"Решка\"])\n\n\ndef get_joke():\n    return random.choice([\"Кот учит Python, потому что любит ловить баги.\",\n                          \"Программист ушёл в магазин и не вернулся: на полке было написано «бесконечный цикл скидок».\"])\n\n\ndef get_fact():\n    return random.choice([\"У осьминога три сердца.\", \"Мёд не портится тысячи лет.\", \"Улитка может спать три года.\"])\n\n\nTOOLS = [make_tool(\"coin_flip\", \"Подбросить монетку, когда просят орёл или решку.\"),\n         make_tool(\"get_joke\", \"Рассказать шутку, когда просят посмешить.\"),\n         make_tool(\"get_fact\", \"Сказать интересный факт, когда просят факт.\")]\nFUNCTIONS = {\"coin_flip\": lambda args: coin_flip(), \"get_joke\": lambda args: get_joke(), \"get_fact\": lambda args: get_fact()}\nSYSTEM = \"Ты весёлый помощник. Монетку, шутки и факты бери только из инструментов.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

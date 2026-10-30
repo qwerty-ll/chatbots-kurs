@@ -1,0 +1,88 @@
+{
+  "id": "l12-02",
+  "lesson": 12,
+  "num": 2,
+  "title": "Агент по карточке",
+  "level": 2,
+  "step": 2,
+  "minutes": 10,
+  "topics": [
+    "роль system",
+    "карточка"
+  ],
+  "file": "02_Агент_по_карточке.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Карточка AGENT: имя «Робин», роль «помощник библиотеки», правила «отвечай коротко» и «не выдумывай книги».\nРоль system собери функцией make_system из задания 1. Агент в цикле: «Ты: », «/exit» — конец. Инструменты пока не нужны: agent_answer(messages, [], {}).",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Привет! Кто ты?"
+    ],
+    [
+      "bot",
+      "Агент: Я Робин, помогаю в библиотеке."
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "Привет! Кто ты?",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true,
+        "system_has": [
+          "Робин",
+          "помощник библиотеки",
+          "отвечай коротко"
+        ]
+      },
+      "fail": "Первая реплика messages — {\"role\": \"system\", \"content\": make_system(AGENT)}."
+    },
+    {
+      "input": [
+        "Что почитать?",
+        "А ещё?",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "min_calls": 2,
+        "system_always": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "def:make_system",
+      "title": "есть функция make_system",
+      "msg": "Собери роль функцией make_system(agent)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "AGENT = {\"name\": \"Робин\", \"role\": \"помощник библиотеки\", \"rules\": [\"отвечай коротко\", \"не выдумывай книги\"]}",
+    "messages = [{\"role\": \"system\", \"content\": make_system(AGENT)}] — дальше обычный цикл агента.",
+    "from agent import agent_answer, make_tool\n\nAGENT = {\"name\": \"Робин\", \"role\": \"помощник библиотеки\", \"rules\": [\"отвечай коротко\", \"не выдумывай книги\"]}\n\n\ndef make_system(agent):\n    return f\"Ты {agent['name']}, {agent['role']}. Правила: \" + \"; \".join(agent[\"rules\"]) + \".\"\n\n\nmessages = [{\"role\": \"system\", \"content\": make_system(AGENT)}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, [], {})\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

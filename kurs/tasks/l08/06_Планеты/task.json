@@ -1,0 +1,112 @@
+{
+  "id": "l08-06",
+  "lesson": 8,
+  "num": 6,
+  "title": "Агент-справочник о планетах",
+  "level": 3,
+  "step": 5,
+  "minutes": 15,
+  "topics": [
+    "словарь словарей",
+    "JSON"
+  ],
+  "file": "06_Планеты.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Справочник PLANETS — словарь словарей: «Марс» → радиус 3390 км и 2 спутника, «Земля» → 6371 и 1, «Юпитер» → 69911 и 95.\nИнструмент planet_info(name) возвращает JSON с полями name, radius_km, moons, а если планеты нет — «Нет такой планеты».\nАгент в цикле: «Ты: », «/exit» — конец.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Расскажи про Марс"
+    ],
+    [
+      "bot",
+      "  🔧 planet_info({'name': 'Марс'}) -> {\"name\": \"Марс\", \"radius_km\": 3390, \"moons\": 2}\nАгент: Радиус Марса 3390 км, у него 2 спутника."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "марс",
+      "tool": "planet_info",
+      "arguments": {
+        "name": "Марс"
+      }
+    },
+    {
+      "if": "плутон",
+      "tool": "planet_info",
+      "arguments": {
+        "name": "Плутон"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Расскажи про Марс",
+        "/exit"
+      ],
+      "expect": [
+        "3390"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "3390"
+        ]
+      }
+    },
+    {
+      "input": [
+        "А что с Плутоном?",
+        "/exit"
+      ],
+      "expect": [
+        "Нет такой планеты"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Нет такой планеты"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:dumps",
+      "title": "есть json.dumps()",
+      "msg": "Отдавай данные планеты через json.dumps(..., ensure_ascii=False)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "PLANETS = {\"Марс\": {\"radius_km\": 3390, \"moons\": 2}, ...}. Проверка: if name not in PLANETS.",
+    "data = {\"name\": name, \"radius_km\": PLANETS[name][\"radius_km\"], \"moons\": PLANETS[name][\"moons\"]}; return json.dumps(data, ensure_ascii=False).",
+    "import json\n\nfrom agent import agent_answer, make_tool\n\nPLANETS = {\n    \"Марс\": {\"radius_km\": 3390, \"moons\": 2},\n    \"Земля\": {\"radius_km\": 6371, \"moons\": 1},\n    \"Юпитер\": {\"radius_km\": 69911, \"moons\": 95},\n}\n\n\ndef planet_info(name):\n    if name not in PLANETS:\n        return \"Нет такой планеты\"\n    data = {\"name\": name, \"radius_km\": PLANETS[name][\"radius_km\"], \"moons\": PLANETS[name][\"moons\"]}\n    return json.dumps(data, ensure_ascii=False)\n\n\nTOOLS = [make_tool(\"planet_info\", \"Справка о планете: радиус и число спутников.\",\n                   {\"name\": {\"type\": \"string\", \"description\": \"Планета по-русски: Марс, Земля, Юпитер\"}}, [\"name\"])]\nFUNCTIONS = {\"planet_info\": lambda args: planet_info(args[\"name\"])}\nSYSTEM = \"Ты астроном. Факты о планетах бери только из инструмента planet_info.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

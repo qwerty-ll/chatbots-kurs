@@ -1,0 +1,73 @@
+{
+  "id": "l08-03",
+  "lesson": 8,
+  "num": 3,
+  "title": "Читаем JSON",
+  "level": 2,
+  "step": 3,
+  "minutes": 10,
+  "topics": [
+    "json.loads",
+    "try / except"
+  ],
+  "file": "03_Читаем_JSON.py",
+  "statement": "Программа просит «JSON: » — строку вида {\"name\": \"Миша\", \"age\": 13} — и печатает «Миша, 13 лет».\nЕсли ввели не JSON, программа не падает, а пишет «Это не JSON».",
+  "dialog": [
+    [
+      "bot",
+      "JSON:"
+    ],
+    [
+      "you",
+      "{\"name\": \"Миша\", \"age\": 13}"
+    ],
+    [
+      "bot",
+      "Миша, 13 лет"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "{\"name\": \"Миша\", \"age\": 13}"
+      ],
+      "expect": [
+        "Миша, 13 лет"
+      ]
+    },
+    {
+      "input": [
+        "{\"name\": \"Оля\", \"age\": 11}"
+      ],
+      "expect": [
+        "Оля, 11 лет"
+      ]
+    },
+    {
+      "input": [
+        "привет"
+      ],
+      "expect": [
+        "Это не JSON"
+      ],
+      "fail": "json.loads положи в try, а в except json.JSONDecodeError напечатай «Это не JSON»."
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:loads",
+      "title": "есть json.loads()",
+      "msg": "Разбери текст: data = json.loads(text)."
+    },
+    {
+      "need": "try",
+      "msg": "Нужна страховка: try / except json.JSONDecodeError."
+    }
+  ],
+  "hints": [
+    "data = json.loads(text) — получится словарь; data[\"name\"] и data[\"age\"].",
+    "Ошибка неверного JSON называется json.JSONDecodeError: except json.JSONDecodeError:",
+    "import json\n\ntext = input(\"JSON: \")\ntry:\n    data = json.loads(text)\n    print(f\"{data['name']}, {data['age']} лет\")\nexcept json.JSONDecodeError:\n    print(\"Это не JSON\")"
+  ],
+  "starter": "empty"
+}

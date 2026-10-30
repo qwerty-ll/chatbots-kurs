@@ -280,6 +280,30 @@ def training_template(lesson: dict) -> str:
             "",
             "# Весь бот команды — файл Наш_бот.py: он сам соберёт инструменты всех участников.",
         ]
+    elif 7 <= n <= 12:
+        body = [
+            "# Агент-песочница: пробуй свои инструменты, не трогая файлы заданий.",
+            'from agent import agent_answer, make_tool',
+            "",
+            "",
+            'def calc(a, op, b):',
+            '    if op == "+":',
+            '        return a + b',
+            '    if op == "*":',
+            '        return a * b',
+            '    return "Неизвестная операция"',
+            "",
+            "",
+            'TOOLS = [make_tool("calc", "Точно посчитать a op b.",',
+            '                   {"a": {"type": "number", "description": "Первое число"},',
+            '                    "op": {"type": "string", "description": "Операция: + или *"},',
+            '                    "b": {"type": "number", "description": "Второе число"}},',
+            '                   ["a", "op", "b"])]',
+            'FUNCTIONS = {"calc": lambda args: calc(args["a"], args["op"], args["b"])}',
+            "",
+            'messages = [{"role": "user", "content": input("Ты: ")}]',
+            'print("Агент:", agent_answer(messages, TOOLS, FUNCTIONS))',
+        ]
     else:
         body = [
             "# Итоговый проект:",

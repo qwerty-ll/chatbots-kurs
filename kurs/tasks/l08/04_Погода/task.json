@@ -1,0 +1,112 @@
+{
+  "id": "l08-04",
+  "lesson": 8,
+  "num": 4,
+  "title": "Погода в JSON",
+  "level": 2,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "инструмент",
+    "json.dumps"
+  ],
+  "file": "04_Погода.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Словарь WEATHER: «Москва» → температура 3 и «облачно», «Сочи» → 15 и «солнечно».\nИнструмент weather(city) возвращает JSON-строку вида {\"city\": \"Москва\", \"temp\": 3, \"sky\": \"облачно\"}, а для неизвестного города — {\"error\": \"Нет данных\"}.\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Какая погода в Москве?"
+    ],
+    [
+      "bot",
+      "  🔧 weather({'city': 'Москва'}) -> {\"city\": \"Москва\", \"temp\": 3, \"sky\": \"облачно\"}\nАгент: В Москве +3, облачно."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "погод",
+      "tool": "weather",
+      "arguments": {
+        "city": "Москва"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Какая погода в Москве?"
+      ],
+      "expect": [
+        "\"sky\": \"облачно\""
+      ],
+      "ai": {
+        "tool_result_has": [
+          "облачно"
+        ]
+      },
+      "fail": "Верни json.dumps(..., ensure_ascii=False) со словарём city, temp, sky."
+    },
+    {
+      "input": [
+        "Какая погода на Марсе?"
+      ],
+      "ai_answers": [
+        {
+          "if": "погод",
+          "tool": "weather",
+          "arguments": {
+            "city": "Марс"
+          }
+        }
+      ],
+      "expect": [
+        "Нет данных"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Нет данных"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:dumps",
+      "title": "есть json.dumps()",
+      "msg": "Инструмент возвращает JSON: json.dumps(..., ensure_ascii=False)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "WEATHER = {\"Москва\": {\"temp\": 3, \"sky\": \"облачно\"}, \"Сочи\": {\"temp\": 15, \"sky\": \"солнечно\"}}",
+    "Для известного города: data = {\"city\": city, \"temp\": WEATHER[city][\"temp\"], \"sky\": WEATHER[city][\"sky\"]}; return json.dumps(data, ensure_ascii=False).",
+    "import json\n\nfrom agent import agent_answer, make_tool\n\nWEATHER = {\"Москва\": {\"temp\": 3, \"sky\": \"облачно\"}, \"Сочи\": {\"temp\": 15, \"sky\": \"солнечно\"}}\n\n\ndef weather(city):\n    if city not in WEATHER:\n        return json.dumps({\"error\": \"Нет данных\"}, ensure_ascii=False)\n    data = {\"city\": city, \"temp\": WEATHER[city][\"temp\"], \"sky\": WEATHER[city][\"sky\"]}\n    return json.dumps(data, ensure_ascii=False)\n\n\nTOOLS = [make_tool(\"weather\", \"Узнать погоду в городе.\",\n                   {\"city\": {\"type\": \"string\", \"description\": \"Город, например Москва\"}}, [\"city\"])]\nFUNCTIONS = {\"weather\": lambda args: weather(args[\"city\"])}\nSYSTEM = \"Ты синоптик. Погоду узнавай только инструментом weather.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

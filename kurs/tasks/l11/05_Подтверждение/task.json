@@ -1,0 +1,100 @@
+{
+  "id": "l11-05",
+  "lesson": 11,
+  "num": 5,
+  "title": "Спроси человека",
+  "level": 3,
+  "step": 4,
+  "minutes": 12,
+  "topics": [
+    "подтверждение",
+    "input в инструменте"
+  ],
+  "file": "05_Подтверждение.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент order_pizza(size) НЕ заказывает сам: он спрашивает «Подтвердить заказ? (да/нет) ».\n«да» — возвращает «Заказ оформлен: пицца <size>», любой другой ответ — «Заказ отменён».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Закажи большую пиццу"
+    ],
+    [
+      "bot",
+      "Подтвердить заказ? (да/нет)"
+    ],
+    [
+      "you",
+      "да"
+    ],
+    [
+      "bot",
+      "  🔧 order_pizza({'size': 'большая'}) -> Заказ оформлен: пицца большая"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "пицц",
+      "tool": "order_pizza",
+      "arguments": {
+        "size": "большая"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Закажи большую пиццу",
+        "да"
+      ],
+      "expect": [
+        "Заказ оформлен: пицца большая"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Заказ оформлен"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Закажи большую пиццу",
+        "нет"
+      ],
+      "expect": [
+        "Заказ отменён"
+      ],
+      "reject": [
+        "Заказ оформлен"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Заказ отменён"
+        ]
+      },
+      "fail": "Без «да» заказ не оформляется."
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "Внутри order_pizza: answer = input(\"Подтвердить заказ? (да/нет) \").strip().lower().",
+    "if answer == \"да\": return f\"Заказ оформлен: пицца {size}\" — иначе return \"Заказ отменён\".",
+    "from agent import agent_answer, make_tool\n\n\ndef order_pizza(size):\n    answer = input(\"Подтвердить заказ? (да/нет) \").strip().lower()\n    if answer == \"да\":\n        return f\"Заказ оформлен: пицца {size}\"\n    return \"Заказ отменён\"\n\n\nTOOLS = [make_tool(\"order_pizza\", \"Заказать пиццу (человек подтвердит заказ).\",\n                   {\"size\": {\"type\": \"string\", \"description\": \"Размер: маленькая, средняя, большая\"}}, [\"size\"])]\nFUNCTIONS = {\"order_pizza\": lambda args: order_pizza(args[\"size\"])}\nSYSTEM = \"Ты помощник пиццерии. Заказы оформляй только инструментом order_pizza.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

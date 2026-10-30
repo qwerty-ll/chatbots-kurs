@@ -1,0 +1,117 @@
+{
+  "id": "l10-04",
+  "lesson": 10,
+  "num": 4,
+  "title": "Кубик с необязательными гранями",
+  "level": 2,
+  "step": 4,
+  "minutes": 12,
+  "topics": [
+    "args.get",
+    "необязательный параметр"
+  ],
+  "file": "04_Кубик.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент roll_dice(sides) — кубик с sides гранями. Параметр sides НЕобязательный: если нейросеть его не передала — кубик на 6.\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Брось кубик на 20"
+    ],
+    [
+      "bot",
+      "  🔧 roll_dice({'sides': 20}) -> 17\nАгент: Выпало 17!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "кубик",
+      "tool": "roll_dice",
+      "arguments": {}
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Брось кубик"
+      ],
+      "randint": [
+        5
+      ],
+      "expect": [
+        "5"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "5"
+        ]
+      },
+      "fail": "Без sides бери 6: args.get(\"sides\", 6)."
+    },
+    {
+      "input": [
+        "Брось кубик на 20"
+      ],
+      "ai_answers": [
+        {
+          "if": "кубик",
+          "tool": "roll_dice",
+          "arguments": {
+            "sides": 20
+          }
+        }
+      ],
+      "randint": [
+        17
+      ],
+      "expect": [
+        "17"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "17"
+        ]
+      },
+      "fail": "Передай sides в random.randint(1, sides)."
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:get",
+      "title": "есть args.get()",
+      "msg": "Необязательный параметр: args.get(\"sides\", 6)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "В make_tool не добавляй \"sides\" в список обязательных — четвёртый аргумент можно вообще не писать.",
+    "FUNCTIONS = {\"roll_dice\": lambda args: roll_dice(args.get(\"sides\", 6))}",
+    "import random\n\nfrom agent import agent_answer, make_tool\n\n\ndef roll_dice(sides):\n    return random.randint(1, sides)\n\n\nTOOLS = [make_tool(\"roll_dice\", \"Бросить кубик. Если число граней не сказали — обычный на 6.\",\n                   {\"sides\": {\"type\": \"integer\", \"description\": \"Число граней\"}})]\nFUNCTIONS = {\"roll_dice\": lambda args: roll_dice(args.get(\"sides\", 6))}\nSYSTEM = \"Ты ведущий настольной игры. Кубики бросай только инструментом roll_dice.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

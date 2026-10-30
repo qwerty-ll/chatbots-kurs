@@ -1,0 +1,80 @@
+{
+  "id": "l08-05",
+  "lesson": 8,
+  "num": 5,
+  "title": "Вызов инструмента вручную",
+  "level": 3,
+  "step": 5,
+  "minutes": 12,
+  "topics": [
+    "json.loads",
+    "словарь функций"
+  ],
+  "file": "05_Вызов_вручную.py",
+  "statement": "Так работает агент изнутри. Словарь FUNCTIONS: «add» → сумма args[\"a\"] и args[\"b\"], «hello» → «Привет, <args[\"name\"]>!».\nПрограмма просит «Вызов: » — JSON вида {\"name\": \"add\", \"args\": {\"a\": 2, \"b\": 3}} — и печатает «Результат: 5».\nЕсли такого имени нет в словаре — «Нет инструмента <имя>».",
+  "dialog": [
+    [
+      "bot",
+      "Вызов:"
+    ],
+    [
+      "you",
+      "{\"name\": \"add\", \"args\": {\"a\": 2, \"b\": 3}}"
+    ],
+    [
+      "bot",
+      "Результат: 5"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "{\"name\": \"add\", \"args\": {\"a\": 2, \"b\": 3}}"
+      ],
+      "expect": [
+        "Результат: 5"
+      ]
+    },
+    {
+      "input": [
+        "{\"name\": \"hello\", \"args\": {\"name\": \"Оля\"}}"
+      ],
+      "expect": [
+        "Результат: Привет, Оля!"
+      ]
+    },
+    {
+      "input": [
+        "{\"name\": \"fly\", \"args\": {}}"
+      ],
+      "expect": [
+        "Нет инструмента fly"
+      ],
+      "reject": [
+        "Результат"
+      ],
+      "fail": "Перед вызовом проверь: if call[\"name\"] in FUNCTIONS."
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:loads",
+      "title": "есть json.loads()",
+      "msg": "Разбери вызов: call = json.loads(text)."
+    },
+    {
+      "need": "dict",
+      "msg": "Функции храни в словаре FUNCTIONS = {...}."
+    },
+    {
+      "need": "in",
+      "msg": "Проверь имя: if name in FUNCTIONS."
+    }
+  ],
+  "hints": [
+    "FUNCTIONS = {\"add\": lambda args: args[\"a\"] + args[\"b\"], \"hello\": lambda args: f\"Привет, {args['name']}!\"}",
+    "call = json.loads(input(\"Вызов: \")); name = call[\"name\"]; если name in FUNCTIONS — print(\"Результат:\", FUNCTIONS[name](call[\"args\"])).",
+    "import json\n\nFUNCTIONS = {\n    \"add\": lambda args: args[\"a\"] + args[\"b\"],\n    \"hello\": lambda args: f\"Привет, {args['name']}!\",\n}\n\ncall = json.loads(input(\"Вызов: \"))\nname = call[\"name\"]\nif name in FUNCTIONS:\n    print(\"Результат:\", FUNCTIONS[name](call[\"args\"]))\nelse:\n    print(\"Нет инструмента\", name)"
+  ],
+  "starter": "empty"
+}

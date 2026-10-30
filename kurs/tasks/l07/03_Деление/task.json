@@ -1,0 +1,85 @@
+{
+  "id": "l07-03",
+  "lesson": 7,
+  "num": 3,
+  "title": "Деление без аварий",
+  "level": 2,
+  "step": 3,
+  "minutes": 8,
+  "topics": [
+    "try / except",
+    "ZeroDivisionError"
+  ],
+  "file": "03_Деление.py",
+  "statement": "Функция divide(a, b) возвращает a / b. Если b равно нулю, функция НЕ падает, а возвращает «На ноль делить нельзя».\nПрограмма спрашивает «Делимое: » и «Делитель: » и печатает «Результат: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Делимое:"
+    ],
+    [
+      "you",
+      "5"
+    ],
+    [
+      "bot",
+      "Делитель:"
+    ],
+    [
+      "you",
+      "0"
+    ],
+    [
+      "bot",
+      "Результат: На ноль делить нельзя"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "10",
+        "4"
+      ],
+      "expect": [
+        "Результат: 2.5"
+      ]
+    },
+    {
+      "input": [
+        "5",
+        "0"
+      ],
+      "expect": [
+        "На ноль делить нельзя"
+      ],
+      "fail": "Оберни a / b в try, а в except ZeroDivisionError верни текст."
+    },
+    {
+      "input": [
+        "0",
+        "5"
+      ],
+      "expect": [
+        "Результат: 0"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "def:divide",
+      "title": "есть функция divide",
+      "msg": "Создай функцию: def divide(a, b):"
+    },
+    {
+      "need": "except:ZeroDivisionError",
+      "title": "ловится ZeroDivisionError",
+      "msg": "Нужно: except ZeroDivisionError:"
+    }
+  ],
+  "hints": [
+    "Деление на ноль вызывает ошибку ZeroDivisionError. Опасную строку return a / b положи внутрь try:.",
+    "except ZeroDivisionError: return \"На ноль делить нельзя\" — функция вернёт текст вместо аварии.",
+    "def divide(a, b):\n    try:\n        return a / b\n    except ZeroDivisionError:\n        return \"На ноль делить нельзя\"\n\n\na = int(input(\"Делимое: \"))\nb = int(input(\"Делитель: \"))\nprint(\"Результат:\", divide(a, b))"
+  ],
+  "starter": "empty"
+}

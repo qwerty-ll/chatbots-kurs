@@ -1,0 +1,87 @@
+{
+  "id": "l09-01",
+  "lesson": 9,
+  "num": 1,
+  "title": "Записная книжка",
+  "level": 1,
+  "step": 2,
+  "minutes": 8,
+  "topics": [
+    "список",
+    "append",
+    "for"
+  ],
+  "file": "01_Записная_книжка.py",
+  "statement": "Программа в цикле спрашивает «Ты: ».\n• «/list» — печатает все заметки с номерами: «1. купить хлеб»;\n• «/exit» — конец;\n• любой другой текст — добавляет заметку и отвечает «Записал!».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "купить хлеб"
+    ],
+    [
+      "bot",
+      "Записал!\nТы:"
+    ],
+    [
+      "you",
+      "/list"
+    ],
+    [
+      "bot",
+      "1. купить хлеб\nТы:"
+    ],
+    [
+      "you",
+      "/exit"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "купить хлеб",
+        "позвонить бабушке",
+        "/list",
+        "/exit"
+      ],
+      "expect": [
+        "Записал!",
+        "1. купить хлеб",
+        "2. позвонить бабушке"
+      ]
+    },
+    {
+      "input": [
+        "/list",
+        "/exit"
+      ],
+      "expect": [],
+      "reject": [
+        "1."
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:append",
+      "msg": "Добавляй заметки: notes.append(text)."
+    },
+    {
+      "need": "for",
+      "msg": "Перебери заметки циклом for."
+    },
+    {
+      "need": "while",
+      "msg": "Нужен цикл while True."
+    }
+  ],
+  "hints": [
+    "До цикла: notes = []. В цикле: if text == \"/exit\": break, elif text == \"/list\": ..., else: notes.append(text).",
+    "for i, note in enumerate(notes, 1): print(f\"{i}. {note}\") — номера с единицы.",
+    "notes = []\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    elif text == \"/list\":\n        for i, note in enumerate(notes, 1):\n            print(f\"{i}. {note}\")\n    else:\n        notes.append(text)\n        print(\"Записал!\")"
+  ],
+  "starter": "empty"
+}

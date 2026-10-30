@@ -1,0 +1,83 @@
+{
+  "id": "l09-02",
+  "lesson": 9,
+  "num": 2,
+  "title": "Короткая память",
+  "level": 2,
+  "step": 2,
+  "minutes": 8,
+  "topics": [
+    "срез списка"
+  ],
+  "file": "02_Короткая_память.py",
+  "statement": "Как в задании 1, но книжка помнит только ТРИ последние заметки: старые забываются.\n«/list» печатает их с номерами 1, 2, 3.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "яблоко"
+    ],
+    [
+      "bot",
+      "Записал!"
+    ],
+    [
+      "you",
+      "…ещё три заметки…"
+    ],
+    [
+      "you",
+      "/list"
+    ],
+    [
+      "bot",
+      "1. груша\n2. слива\n3. вишня"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "яблоко",
+        "груша",
+        "слива",
+        "вишня",
+        "/list",
+        "/exit"
+      ],
+      "expect": [
+        "1. груша",
+        "2. слива",
+        "3. вишня"
+      ],
+      "reject": [
+        "яблоко"
+      ],
+      "fail": "После добавления оставь последние три: notes = notes[-3:]."
+    },
+    {
+      "input": [
+        "кот",
+        "/list",
+        "/exit"
+      ],
+      "expect": [
+        "1. кот"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:append",
+      "msg": "Добавляй заметки: notes.append(text)."
+    }
+  ],
+  "hints": [
+    "Срез notes[-3:] — это три последних элемента списка.",
+    "Сразу после notes.append(text) напиши notes = notes[-3:].",
+    "notes = []\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    elif text == \"/list\":\n        for i, note in enumerate(notes, 1):\n            print(f\"{i}. {note}\")\n    else:\n        notes.append(text)\n        notes = notes[-3:]\n        print(\"Записал!\")"
+  ],
+  "starter": "empty"
+}

@@ -1,0 +1,101 @@
+{
+  "id": "l11-02",
+  "lesson": 11,
+  "num": 2,
+  "title": "Магазин без аварий",
+  "level": 2,
+  "step": 3,
+  "minutes": 12,
+  "topics": [
+    "IndexError",
+    "инструмент"
+  ],
+  "file": "02_Магазин.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Список SHOP = [«мяч», «кубик», «книга»]. Инструмент get_item(index) возвращает товар по номеру (с нуля), а для неверного номера НЕ падает — возвращает «Ошибка: нет товара с таким номером».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Что лежит под номером 10?"
+    ],
+    [
+      "bot",
+      "  🔧 get_item({'index': 10}) -> Ошибка: нет товара с таким номером\nАгент: Такого товара нет."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "номер",
+      "tool": "get_item",
+      "arguments": {
+        "index": 1
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Что лежит под номером 1?"
+      ],
+      "expect": [
+        "кубик"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "кубик"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Что лежит под номером 10?"
+      ],
+      "ai_answers": [
+        {
+          "if": "номер",
+          "tool": "get_item",
+          "arguments": {
+            "index": 10
+          }
+        }
+      ],
+      "expect": [
+        "нет товара с таким номером"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "нет товара"
+        ]
+      },
+      "fail": "SHOP[index] положи в try, а в except IndexError верни текст ошибки."
+    }
+  ],
+  "structure": [
+    {
+      "need": "except:IndexError",
+      "title": "ловится IndexError",
+      "msg": "Нужно: except IndexError:"
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "Неверный номер списка вызывает IndexError.",
+    "def get_item(index): try: return SHOP[index] except IndexError: return \"Ошибка: нет товара с таким номером\"",
+    "from agent import agent_answer, make_tool\n\nSHOP = [\"мяч\", \"кубик\", \"книга\"]\n\n\ndef get_item(index):\n    try:\n        return SHOP[index]\n    except IndexError:\n        return \"Ошибка: нет товара с таким номером\"\n\n\nTOOLS = [make_tool(\"get_item\", \"Узнать товар по номеру на полке (нумерация с нуля).\",\n                   {\"index\": {\"type\": \"integer\", \"description\": \"Номер товара\"}}, [\"index\"])]\nFUNCTIONS = {\"get_item\": lambda args: get_item(args[\"index\"])}\nSYSTEM = \"Ты продавец. Товары узнавай только инструментом get_item.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

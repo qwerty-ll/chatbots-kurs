@@ -1,0 +1,100 @@
+{
+  "id": "l09-06",
+  "lesson": 9,
+  "num": 6,
+  "title": "Память разговора: только последнее",
+  "level": 3,
+  "step": 5,
+  "minutes": 15,
+  "topics": [
+    "история messages",
+    "срез"
+  ],
+  "file": "06_Память_разговора.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент-собеседник в цикле («Ты: », «/exit»). История messages растёт, поэтому перед каждым вопросом оставляй в ней роль system (первую реплику) и только 4 последние реплики.\nИнструменты не нужны: agent_answer(messages, [], {}).",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Меня зовут Аня"
+    ],
+    [
+      "bot",
+      "Агент: Приятно познакомиться, Аня!"
+    ],
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "…ещё 4 сообщения…"
+    ],
+    [
+      "bot",
+      "Агент: (старые реплики уже забыты)"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "Меня зовут Аня",
+        "Мне 12 лет",
+        "Я люблю котов",
+        "Какая сегодня погода?",
+        "Как дела?",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "min_calls": 5,
+        "max_messages": 5,
+        "system_always": true,
+        "history_has": [
+          "Аня"
+        ],
+        "last_lacks": [
+          "Аня"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true,
+        "system_always": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "После messages.append(вопрос) обрежь историю: messages = [messages[0]] + messages[1:][-4:].",
+    "messages[0] — это system. Без [1:] в начале system попадёт в историю дважды.",
+    "from agent import agent_answer, make_tool\n\nSYSTEM = \"Ты дружелюбный собеседник. Отвечай коротко.\"\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    messages = [messages[0]] + messages[1:][-4:]\n    answer = agent_answer(messages, [], {})\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

@@ -1,0 +1,135 @@
+{
+  "id": "l11-04",
+  "lesson": 11,
+  "num": 4,
+  "title": "Только разрешённые файлы",
+  "level": 3,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "белый список",
+    "файлы"
+  ],
+  "file": "04_Белый_список.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент read_file(name) читает текстовый файл, но только из белого списка ALLOWED = [«правила.txt», «меню.txt»].\nДля любого другого файла — «Нет доступа к этому файлу», а если разрешённого файла нет — «Файл не найден».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Прочитай секрет.txt"
+    ],
+    [
+      "bot",
+      "  🔧 read_file({'name': 'секрет.txt'}) -> Нет доступа к этому файлу\nАгент: Этот файл мне читать нельзя."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "прочитай",
+      "tool": "read_file",
+      "arguments": {
+        "name": "правила.txt"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Прочитай правила"
+      ],
+      "files": {
+        "правила.txt": "Правило 1: не бегать в коридоре"
+      },
+      "expect": [
+        "не бегать в коридоре"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "не бегать"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Прочитай секрет.txt"
+      ],
+      "files": {
+        "секрет.txt": "пароль 1234"
+      },
+      "ai_answers": [
+        {
+          "if": "прочитай",
+          "tool": "read_file",
+          "arguments": {
+            "name": "секрет.txt"
+          }
+        }
+      ],
+      "expect": [
+        "Нет доступа к этому файлу"
+      ],
+      "reject": [
+        "1234"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Нет доступа"
+        ]
+      },
+      "fail": "Сначала проверь имя: if name not in ALLOWED: return \"Нет доступа к этому файлу\"."
+    },
+    {
+      "input": [
+        "Прочитай меню"
+      ],
+      "ai_answers": [
+        {
+          "if": "прочитай",
+          "tool": "read_file",
+          "arguments": {
+            "name": "меню.txt"
+          }
+        }
+      ],
+      "expect": [
+        "Файл не найден"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Файл не найден"
+        ]
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": [
+        "not in",
+        "in"
+      ],
+      "title": "есть проверка in",
+      "msg": "Проверь имя по белому списку: if name not in ALLOWED."
+    },
+    {
+      "need": "with",
+      "msg": "Открой файл через with open(name, encoding=\"utf-8\") as f:."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    }
+  ],
+  "hints": [
+    "Порядок важен: сначала белый список, потом try: with open(...) as f: return f.read().",
+    "except FileNotFoundError: return \"Файл не найден\" — если разрешённого файла нет в папке.",
+    "from agent import agent_answer, make_tool\n\nALLOWED = [\"правила.txt\", \"меню.txt\"]\n\n\ndef read_file(name):\n    if name not in ALLOWED:\n        return \"Нет доступа к этому файлу\"\n    try:\n        with open(name, encoding=\"utf-8\") as f:\n            return f.read()\n    except FileNotFoundError:\n        return \"Файл не найден\"\n\n\nTOOLS = [make_tool(\"read_file\", \"Прочитать файл школы: правила.txt или меню.txt.\",\n                   {\"name\": {\"type\": \"string\", \"description\": \"Имя файла\"}}, [\"name\"])]\nFUNCTIONS = {\"read_file\": lambda args: read_file(args[\"name\"])}\nSYSTEM = \"Ты школьный помощник. Читай только разрешённые файлы инструментом read_file.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

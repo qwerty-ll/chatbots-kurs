@@ -1,0 +1,119 @@
+{
+  "id": "l09-05",
+  "lesson": 9,
+  "num": 5,
+  "title": "Блокнот, который не забывает",
+  "level": 3,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "инструмент",
+    "файл JSON"
+  ],
+  "file": "05_Блокнот_в_файле.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент-блокнот из задания 4, но заметки хранятся в notes.json: при запуске читаются из файла, add_note после добавления сохраняет файл.\nТак агент помнит заметки даже после перезапуска.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Запомни: полить цветы"
+    ],
+    [
+      "bot",
+      "  🔧 add_note({'text': 'полить цветы'}) -> Запомнил: полить цветы"
+    ],
+    [
+      "bot",
+      "— запуск ещё раз —\nТы:"
+    ],
+    [
+      "you",
+      "Что в заметках?"
+    ],
+    [
+      "bot",
+      "  🔧 list_notes({}) -> полить цветы"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "что в заметках",
+      "tool": "list_notes"
+    },
+    {
+      "if": "запомни",
+      "tool": "add_note",
+      "arguments": {
+        "text": "полить цветы"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Запомни: полить цветы",
+        "/exit"
+      ],
+      "expect": [
+        "полить цветы"
+      ],
+      "file_has": {
+        "notes.json": [
+          "полить цветы"
+        ]
+      },
+      "fail": "add_note после добавления сохраняет список: json.dump(NOTES, f, ensure_ascii=False)."
+    },
+    {
+      "input": [
+        "Что в заметках?",
+        "/exit"
+      ],
+      "files": {
+        "notes.json": [
+          "купить молоко"
+        ]
+      },
+      "expect": [
+        "купить молоко"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "купить молоко"
+        ]
+      },
+      "fail": "При запуске прочитай заметки из notes.json через json.load."
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:dump",
+      "msg": "Сохраняй заметки в файл через json.dump."
+    },
+    {
+      "need": "method:load",
+      "msg": "При запуске читай заметки через json.load."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "Чтение — как в задании 3: try / with open / json.load / except FileNotFoundError: NOTES = [].",
+    "В add_note после NOTES.append(text) — with open(\"notes.json\", \"w\", encoding=\"utf-8\") as f: json.dump(NOTES, f, ensure_ascii=False).",
+    "import json\n\nfrom agent import agent_answer, make_tool\n\ntry:\n    with open(\"notes.json\", encoding=\"utf-8\") as f:\n        NOTES = json.load(f)\nexcept FileNotFoundError:\n    NOTES = []\n\n\ndef add_note(text):\n    NOTES.append(text)\n    with open(\"notes.json\", \"w\", encoding=\"utf-8\") as f:\n        json.dump(NOTES, f, ensure_ascii=False)\n    return f\"Запомнил: {text}\"\n\n\ndef list_notes():\n    if not NOTES:\n        return \"Заметок нет\"\n    return \"; \".join(NOTES)\n\n\nTOOLS = [make_tool(\"add_note\", \"Запомнить заметку.\", {\"text\": {\"type\": \"string\", \"description\": \"Текст заметки\"}}, [\"text\"]),\n         make_tool(\"list_notes\", \"Показать все заметки.\")]\nFUNCTIONS = {\"add_note\": lambda args: add_note(args[\"text\"]), \"list_notes\": lambda args: list_notes()}\nSYSTEM = \"Ты помощник с блокнотом. Заметки сохраняй и показывай только инструментами.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

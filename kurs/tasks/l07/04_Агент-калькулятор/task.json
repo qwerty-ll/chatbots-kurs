@@ -1,0 +1,119 @@
+{
+  "id": "l07-04",
+  "lesson": 7,
+  "num": 4,
+  "title": "Агент-калькулятор",
+  "level": 2,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "make_tool",
+    "параметры инструмента"
+  ],
+  "file": "04_Агент-калькулятор.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Дай агенту инструмент calculate(a, op, b): + - * /, а на ноль — «На ноль делить нельзя».\nВ make_tool опиши три параметра: a и b — числа (\"number\"), op — строка (\"string\"); все обязательные.\nПрограмма спрашивает «Ты: » и печатает «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Сколько будет 12 * 5?"
+    ],
+    [
+      "bot",
+      "  🔧 calculate({'a': 12, 'op': '*', 'b': 5}) -> 60\nАгент: Получается 60."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "сколько",
+      "tool": "calculate",
+      "arguments": {
+        "a": 12,
+        "op": "*",
+        "b": 5
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Сколько будет 12 * 5?"
+      ],
+      "expect": [
+        "60"
+      ],
+      "ai": {
+        "tools_has": [
+          "calculate"
+        ],
+        "tool_result_has": [
+          "60"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Сколько будет 7 / 0?"
+      ],
+      "ai_answers": [
+        {
+          "if": "сколько",
+          "tool": "calculate",
+          "arguments": {
+            "a": 7,
+            "op": "/",
+            "b": 0
+          }
+        }
+      ],
+      "expect": [
+        "нельзя"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "нельзя"
+        ]
+      },
+      "fail": "На ноль инструмент возвращает «На ноль делить нельзя»."
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    },
+    {
+      "forbid": "call:eval",
+      "title": "нет eval()",
+      "msg": "eval() выполняет любой код — давать его агенту нельзя."
+    }
+  ],
+  "hints": [
+    "Сначала функция calc(a, op, b) — как в задании 2, но с try для деления.",
+    "make_tool(\"calculate\", \"описание\", {\"a\": {\"type\": \"number\", \"description\": \"...\"}, ...}, [\"a\", \"op\", \"b\"]); в FUNCTIONS: lambda args: calc(args[\"a\"], args[\"op\"], args[\"b\"]).",
+    "from agent import agent_answer, make_tool\n\n\ndef calc(a, op, b):\n    if op == \"+\":\n        return a + b\n    elif op == \"-\":\n        return a - b\n    elif op == \"*\":\n        return a * b\n    elif op == \"/\":\n        try:\n            return a / b\n        except ZeroDivisionError:\n            return \"На ноль делить нельзя\"\n    return \"Неизвестная операция\"\n\n\nTOOLS = [make_tool(\"calculate\", \"Точно посчитать выражение a op b.\",\n                   {\"a\": {\"type\": \"number\", \"description\": \"Первое число\"},\n                    \"op\": {\"type\": \"string\", \"description\": \"Операция: + - * /\"},\n                    \"b\": {\"type\": \"number\", \"description\": \"Второе число\"}},\n                   [\"a\", \"op\", \"b\"])]\nFUNCTIONS = {\"calculate\": lambda args: calc(args[\"a\"], args[\"op\"], args[\"b\"])}\nSYSTEM = \"Ты помощник по математике. Для любых вычислений используй инструмент calculate.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

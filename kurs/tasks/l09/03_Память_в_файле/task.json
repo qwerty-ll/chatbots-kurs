@@ -1,0 +1,105 @@
+{
+  "id": "l09-03",
+  "lesson": 9,
+  "num": 3,
+  "title": "Память в файле",
+  "level": 2,
+  "step": 3,
+  "minutes": 15,
+  "topics": [
+    "json.dump",
+    "json.load",
+    "with"
+  ],
+  "file": "03_Память_в_файле.py",
+  "statement": "Записная книжка из задания 1, которая помнит заметки МЕЖДУ запусками: они хранятся в файле notes.json.\nПри запуске заметки читаются из файла (если файла ещё нет — список пустой), после каждой новой заметки файл перезаписывается.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "купить хлеб"
+    ],
+    [
+      "bot",
+      "Записал!"
+    ],
+    [
+      "you",
+      "/exit"
+    ],
+    [
+      "bot",
+      "— запуск ещё раз —\nТы:"
+    ],
+    [
+      "you",
+      "/list"
+    ],
+    [
+      "bot",
+      "1. купить хлеб"
+    ]
+  ],
+  "tests": [
+    {
+      "runs": [
+        [
+          "купить хлеб",
+          "/exit"
+        ],
+        [
+          "/list",
+          "/exit"
+        ]
+      ],
+      "expect": [
+        "1. купить хлеб"
+      ],
+      "file_has": {
+        "notes.json": [
+          "купить хлеб"
+        ]
+      },
+      "fail": "При запуске прочитай notes.json через json.load, после добавления — сохрани через json.dump."
+    },
+    {
+      "input": [
+        "/list",
+        "/exit"
+      ],
+      "files": {
+        "notes.json": [
+          "полить цветы",
+          "сделать уроки"
+        ]
+      },
+      "expect": [
+        "1. полить цветы",
+        "2. сделать уроки"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:dump",
+      "msg": "Сохраняй список: json.dump(notes, f, ensure_ascii=False)."
+    },
+    {
+      "need": "method:load",
+      "msg": "Читай список при запуске: notes = json.load(f)."
+    },
+    {
+      "need": "with",
+      "msg": "Открывай файл через with open(...) as f:."
+    }
+  ],
+  "hints": [
+    "В начале: try: with open(\"notes.json\", encoding=\"utf-8\") as f: notes = json.load(f) — except FileNotFoundError: notes = [].",
+    "После notes.append(text): with open(\"notes.json\", \"w\", encoding=\"utf-8\") as f: json.dump(notes, f, ensure_ascii=False).",
+    "import json\n\ntry:\n    with open(\"notes.json\", encoding=\"utf-8\") as f:\n        notes = json.load(f)\nexcept FileNotFoundError:\n    notes = []\n\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    elif text == \"/list\":\n        for i, note in enumerate(notes, 1):\n            print(f\"{i}. {note}\")\n    else:\n        notes.append(text)\n        with open(\"notes.json\", \"w\", encoding=\"utf-8\") as f:\n            json.dump(notes, f, ensure_ascii=False)\n        print(\"Записал!\")"
+  ],
+  "starter": "empty"
+}

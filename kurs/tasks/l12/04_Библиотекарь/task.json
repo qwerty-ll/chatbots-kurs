@@ -1,0 +1,121 @@
+{
+  "id": "l12-04",
+  "lesson": 12,
+  "num": 4,
+  "title": "Агент-библиотекарь",
+  "level": 3,
+  "step": 3,
+  "minutes": 15,
+  "topics": [
+    "список словарей",
+    "поиск",
+    "lower"
+  ],
+  "file": "04_Библиотекарь.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "BOOKS — список словарей с полями title и author: «Капитанская дочка» и «Евгений Онегин» (Пушкин), «Муму» (Тургенев), «Каштанка» (Чехов).\nИнструмент find_books(author) ищет книги автора без учёта больших и маленьких букв и возвращает JSON-список названий, а если ничего нет — «Ничего не нашёл».\nАгент в цикле: «Ты: », «/exit» — конец.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Какие книги есть у Пушкина?"
+    ],
+    [
+      "bot",
+      "  🔧 find_books({'author': 'пушкин'}) -> [\"Капитанская дочка\", \"Евгений Онегин\"]\nАгент: У Пушкина есть «Капитанская дочка» и «Евгений Онегин»."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "пушкин",
+      "tool": "find_books",
+      "arguments": {
+        "author": "пушкин"
+      }
+    },
+    {
+      "if": "толст",
+      "tool": "find_books",
+      "arguments": {
+        "author": "Толстой"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Какие книги есть у Пушкина?",
+        "/exit"
+      ],
+      "expect": [
+        "Капитанская дочка",
+        "Евгений Онегин"
+      ],
+      "reject": [
+        "Муму"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Капитанская дочка"
+        ]
+      },
+      "fail": "Сравнивай без учёта регистра: author.lower() in book[\"author\"].lower()."
+    },
+    {
+      "input": [
+        "А у Толстого?",
+        "/exit"
+      ],
+      "expect": [
+        "Ничего не нашёл"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Ничего не нашёл"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет",
+        "/exit"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "for",
+      "msg": "Перебери книги циклом for."
+    },
+    {
+      "need": "method:lower",
+      "msg": "Сравнивай без регистра через lower()."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "found = [] — потом for book in BOOKS: if author.lower() in book[\"author\"].lower(): found.append(book[\"title\"]).",
+    "if not found: return \"Ничего не нашёл\"; return json.dumps(found, ensure_ascii=False).",
+    "import json\n\nfrom agent import agent_answer, make_tool\n\nBOOKS = [\n    {\"title\": \"Капитанская дочка\", \"author\": \"Пушкин\"},\n    {\"title\": \"Евгений Онегин\", \"author\": \"Пушкин\"},\n    {\"title\": \"Муму\", \"author\": \"Тургенев\"},\n    {\"title\": \"Каштанка\", \"author\": \"Чехов\"},\n]\n\n\ndef find_books(author):\n    found = []\n    for book in BOOKS:\n        if author.lower() in book[\"author\"].lower():\n            found.append(book[\"title\"])\n    if not found:\n        return \"Ничего не нашёл\"\n    return json.dumps(found, ensure_ascii=False)\n\n\nTOOLS = [make_tool(\"find_books\", \"Найти книги автора в библиотеке.\",\n                   {\"author\": {\"type\": \"string\", \"description\": \"Фамилия автора\"}}, [\"author\"])]\nFUNCTIONS = {\"find_books\": lambda args: find_books(args[\"author\"])}\nSYSTEM = \"Ты библиотекарь. Книги ищи только инструментом find_books, не выдумывай.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

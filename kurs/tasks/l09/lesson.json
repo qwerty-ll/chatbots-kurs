@@ -1,0 +1,92 @@
+{
+  "lesson": 9,
+  "title": "Память агента",
+  "uses_ai": true,
+  "project_idea": false,
+  "steps": [
+    {
+      "n": 1,
+      "title": "Разминка: почему агент всё забывает",
+      "minutes": 5,
+      "tasks": []
+    },
+    {
+      "n": 2,
+      "title": "Список заметок",
+      "minutes": 15,
+      "tasks": [
+        1,
+        2
+      ]
+    },
+    {
+      "n": 3,
+      "title": "Память в файле",
+      "minutes": 20,
+      "tasks": [
+        3
+      ]
+    },
+    {
+      "n": 4,
+      "title": "Агент с блокнотом",
+      "minutes": 25,
+      "tasks": [
+        4,
+        5
+      ]
+    },
+    {
+      "n": 5,
+      "title": "Память разговора: не больше нужного",
+      "minutes": 15,
+      "tasks": [
+        6
+      ]
+    },
+    {
+      "n": 6,
+      "title": "Итоги",
+      "minutes": 10,
+      "tasks": []
+    }
+  ],
+  "theory": [
+    {
+      "id": "list_memory",
+      "step": 2,
+      "title": "Память в списке",
+      "text": "Список — самая простая память: `notes.append(текст)` добавляет запись, `for` перебирает все.\n\n`enumerate(notes, 1)` даёт номер и запись — удобно для списка «1. … 2. …».",
+      "code": "notes = []\nnotes.append(\"купить хлеб\")\nnotes.append(\"позвонить бабушке\")\nfor i, note in enumerate(notes, 1):\n    print(f\"{i}. {note}\")\n",
+      "try": "Добавь третью заметку и выведи список снова."
+    },
+    {
+      "id": "slice",
+      "step": 2,
+      "title": "Срез: оставить только последние",
+      "text": "Память не бывает бесконечной. Срез `notes[-3:]` — **последние три** элемента списка.\n\nТак же агент хранит только последние реплики разговора.",
+      "code": "notes = [\"а\", \"б\", \"в\", \"г\", \"д\"]\nprint(notes[-3:])\n",
+      "try": "Что вернёт notes[-1:]? А notes[:2]?"
+    },
+    {
+      "id": "file",
+      "step": 3,
+      "title": "Память в файле: json.dump и json.load",
+      "text": "Список в переменной исчезает, когда программа закрывается. Чтобы помнить между запусками — **сохраняем в файл**:\n\n`json.dump(notes, f, ensure_ascii=False)` — записать, `json.load(f)` — прочитать. Файл открываем через `with open(...)`.\n\nПри первом запуске файла ещё нет — ловим `FileNotFoundError`.",
+      "code": "import json\n\ntry:\n    with open(\"notes.json\", encoding=\"utf-8\") as f:\n        notes = json.load(f)\nexcept FileNotFoundError:\n    notes = []\n\nnotes.append(\"новая заметка\")\nwith open(\"notes.json\", \"w\", encoding=\"utf-8\") as f:\n    json.dump(notes, f, ensure_ascii=False)\nprint(notes)\n",
+      "try": "Запусти программу три раза подряд. Сколько заметок в файле?"
+    },
+    {
+      "id": "history",
+      "step": 5,
+      "title": "История разговора: system + последние реплики",
+      "text": "Агент помнит разговор, потому что мы каждый раз отправляем **всю историю** `messages`. Но длинная история — это медленно и дорого.\n\nОставляем **первую реплику** (роль `system`) и **последние несколько**: `messages = [messages[0]] + messages[1:][-4:]`.",
+      "code": "messages = [{\"role\": \"system\", \"content\": \"Ты помощник.\"}]\nfor i in range(10):\n    messages.append({\"role\": \"user\", \"content\": f\"сообщение {i}\"})\n    messages = [messages[0]] + messages[1:][-4:]\nprint(len(messages), messages[1][\"content\"])\n",
+      "try": "Почему messages[1:][-4:], а не просто messages[-4:]?"
+    }
+  ],
+  "files": {
+    "ai.py": "Код/ai.py",
+    "agent.py": "Код/agent.py"
+  }
+}

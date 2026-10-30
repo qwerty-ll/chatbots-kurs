@@ -1,0 +1,117 @@
+{
+  "id": "l11-06",
+  "lesson": 11,
+  "num": 6,
+  "title": "Журнал действий",
+  "level": 3,
+  "step": 5,
+  "minutes": 15,
+  "topics": [
+    "журнал",
+    "список"
+  ],
+  "file": "06_Журнал.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Агент с двумя инструментами — coin_flip() и roll_dice() (кубик на 6). Каждый инструмент записывает в список LOG строку «<имя> -> <результат>».\nАгент в цикле: «/log» печатает «Журнал:» и все записи, «/exit» — конец, остальное — вопрос агенту.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Подбрось монетку"
+    ],
+    [
+      "bot",
+      "  🔧 coin_flip({}) -> Орёл\nАгент: Орёл!\nТы:"
+    ],
+    [
+      "you",
+      "/log"
+    ],
+    [
+      "bot",
+      "Журнал:\ncoin_flip -> Орёл"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "монет",
+      "tool": "coin_flip"
+    },
+    {
+      "if": "кубик",
+      "tool": "roll_dice"
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Подбрось монетку",
+        "/log",
+        "/exit"
+      ],
+      "choice": [
+        0
+      ],
+      "expect": [
+        "Журнал:",
+        "coin_flip -> Орёл"
+      ]
+    },
+    {
+      "input": [
+        "Подбрось монетку",
+        "Брось кубик",
+        "/log",
+        "/exit"
+      ],
+      "choice": [
+        1
+      ],
+      "randint": [
+        4
+      ],
+      "expect": [
+        "coin_flip -> Решка",
+        "roll_dice -> 4"
+      ]
+    },
+    {
+      "input": [
+        "/log",
+        "/exit"
+      ],
+      "expect": [
+        "Журнал:"
+      ],
+      "reject": [
+        "->"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:append",
+      "msg": "Записывай в журнал: LOG.append(...)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "В каждой функции: result = ...; LOG.append(f\"coin_flip -> {result}\"); return result.",
+    "В цикле до вопроса агенту: if text == \"/log\": print(\"Журнал:\"), for row in LOG: print(row), continue.",
+    "import random\n\nfrom agent import agent_answer, make_tool\n\nLOG = []\n\n\ndef coin_flip():\n    result = random.choice([\"Орёл\", \"Решка\"])\n    LOG.append(f\"coin_flip -> {result}\")\n    return result\n\n\ndef roll_dice():\n    result = random.randint(1, 6)\n    LOG.append(f\"roll_dice -> {result}\")\n    return result\n\n\nTOOLS = [make_tool(\"coin_flip\", \"Подбросить монетку.\"), make_tool(\"roll_dice\", \"Бросить кубик на 6 граней.\")]\nFUNCTIONS = {\"coin_flip\": lambda args: coin_flip(), \"roll_dice\": lambda args: roll_dice()}\nSYSTEM = \"Ты ведущий игры. Монетку и кубик бросай только инструментами.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    if text == \"/log\":\n        print(\"Журнал:\")\n        for row in LOG:\n            print(row)\n        continue\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

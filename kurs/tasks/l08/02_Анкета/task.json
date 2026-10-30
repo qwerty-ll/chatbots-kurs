@@ -1,0 +1,76 @@
+{
+  "id": "l08-02",
+  "lesson": 8,
+  "num": 2,
+  "title": "Анкета в JSON",
+  "level": 1,
+  "step": 3,
+  "minutes": 8,
+  "topics": [
+    "json.dumps"
+  ],
+  "file": "02_Анкета.py",
+  "statement": "Программа спрашивает «Имя: » и «Возраст: » (целое число), собирает словарь {\"name\": имя, \"age\": возраст} и печатает его в формате JSON через json.dumps(..., ensure_ascii=False).",
+  "dialog": [
+    [
+      "bot",
+      "Имя:"
+    ],
+    [
+      "you",
+      "Аня"
+    ],
+    [
+      "bot",
+      "Возраст:"
+    ],
+    [
+      "you",
+      "12"
+    ],
+    [
+      "bot",
+      "{\"name\": \"Аня\", \"age\": 12}"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "Аня",
+        "12"
+      ],
+      "expect": [
+        "\"name\": \"Аня\"",
+        "\"age\": 12"
+      ]
+    },
+    {
+      "input": [
+        "Лев",
+        "13"
+      ],
+      "expect": [
+        "\"name\": \"Лев\"",
+        "\"age\": 13"
+      ],
+      "fail": "Возраст — число: int(input(...)). И не забудь ensure_ascii=False."
+    }
+  ],
+  "structure": [
+    {
+      "need": "import:json",
+      "msg": "Подключи модуль: import json"
+    },
+    {
+      "need": "method:dumps",
+      "title": "есть json.dumps()",
+      "msg": "Преврати словарь в текст: json.dumps(data, ensure_ascii=False)."
+    }
+  ],
+  "hints": [
+    "data = {\"name\": name, \"age\": age} — ключи в кавычках, значения из переменных.",
+    "print(json.dumps(data, ensure_ascii=False)) — без ensure_ascii русские буквы превратятся в коды.",
+    "import json\n\nname = input(\"Имя: \").strip()\nage = int(input(\"Возраст: \"))\ndata = {\"name\": name, \"age\": age}\nprint(json.dumps(data, ensure_ascii=False))"
+  ],
+  "starter": "empty"
+}

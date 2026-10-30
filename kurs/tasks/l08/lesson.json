@@ -1,0 +1,92 @@
+{
+  "lesson": 8,
+  "title": "Данные для агента: словари и JSON",
+  "uses_ai": true,
+  "project_idea": false,
+  "steps": [
+    {
+      "n": 1,
+      "title": "Разминка: как агент передаёт данные",
+      "minutes": 5,
+      "tasks": []
+    },
+    {
+      "n": 2,
+      "title": "Словари: ключ → значение",
+      "minutes": 15,
+      "tasks": [
+        1
+      ]
+    },
+    {
+      "n": 3,
+      "title": "JSON: данные в виде текста",
+      "minutes": 25,
+      "tasks": [
+        2,
+        3
+      ]
+    },
+    {
+      "n": 4,
+      "title": "Инструмент отвечает данными",
+      "minutes": 20,
+      "tasks": [
+        4
+      ]
+    },
+    {
+      "n": 5,
+      "title": "Заглянем внутрь агента",
+      "minutes": 20,
+      "tasks": [
+        5,
+        6
+      ]
+    },
+    {
+      "n": 6,
+      "title": "Итоги",
+      "minutes": 5,
+      "tasks": []
+    }
+  ],
+  "theory": [
+    {
+      "id": "dict",
+      "step": 2,
+      "title": "Словарь: ключ → значение",
+      "text": "Словарь хранит пары **ключ: значение** в фигурных скобках. Значение достают по ключу: `card[\"класс\"]`.\n\nЕсли ключа может не быть — `card.get(ключ, запасное)`: вместо ошибки вернёт запасное значение.",
+      "code": "card = {\"имя\": \"Аня\", \"класс\": \"7Б\"}\nprint(card[\"имя\"])\nprint(card.get(\"рост\", \"Нет такого поля\"))\n",
+      "try": "Добавь в карточку ключ «город» и выведи его."
+    },
+    {
+      "id": "json_dumps",
+      "step": 3,
+      "title": "json.dumps: словарь → текст",
+      "text": "Агенты и сервисы обмениваются данными в формате **JSON** — это словарь, записанный текстом.\n\n`json.dumps(данные, ensure_ascii=False)` превращает словарь в строку. `ensure_ascii=False` — чтобы русские буквы остались буквами.",
+      "code": "import json\n\ndata = {\"name\": \"Аня\", \"age\": 12}\ntext = json.dumps(data, ensure_ascii=False)\nprint(text)\n",
+      "try": "Убери ensure_ascii=False и посмотри, что станет с буквами."
+    },
+    {
+      "id": "json_loads",
+      "step": 3,
+      "title": "json.loads: текст → словарь",
+      "text": "Обратно — `json.loads(текст)`. Если текст не JSON, будет ошибка `json.JSONDecodeError` — её ловят через `try / except`.",
+      "code": "import json\n\ntry:\n    data = json.loads('{\"name\": \"Миша\", \"age\": 13}')\n    print(data[\"name\"], data[\"age\"])\nexcept json.JSONDecodeError:\n    print(\"Это не JSON\")\n",
+      "try": "Попробуй разобрать строку «привет» — что напечатает программа?"
+    },
+    {
+      "id": "inside",
+      "step": 5,
+      "title": "Что происходит внутри агента",
+      "text": "Нейросеть просит инструмент **текстом в формате JSON**: имя и аргументы.\n\nПрограмма разбирает этот текст, находит функцию **в словаре** `FUNCTIONS` и запускает её. Именно это делает `agent.py` — и это можно написать самому!",
+      "code": "import json\n\nFUNCTIONS = {\"add\": lambda args: args[\"a\"] + args[\"b\"]}\ncall = json.loads('{\"name\": \"add\", \"args\": {\"a\": 2, \"b\": 3}}')\nprint(FUNCTIONS[call[\"name\"]](call[\"args\"]))\n",
+      "try": "Добавь в FUNCTIONS инструмент mul и вызови его через JSON."
+    }
+  ],
+  "files": {
+    "ai.py": "Код/ai.py",
+    "agent.py": "Код/agent.py"
+  }
+}

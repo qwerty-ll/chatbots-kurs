@@ -1,0 +1,116 @@
+{
+  "id": "l09-04",
+  "lesson": 9,
+  "num": 4,
+  "title": "Агент-блокнот",
+  "level": 2,
+  "step": 4,
+  "minutes": 15,
+  "topics": [
+    "два инструмента",
+    "список"
+  ],
+  "file": "04_Агент-блокнот.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Два инструмента над общим списком NOTES:\n• add_note(text) — добавляет заметку и возвращает «Запомнил: <text>»;\n• list_notes() — возвращает заметки через «; » или «Заметок нет».\nАгент в цикле: «Ты: », «/exit» — конец.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Запомни: купить хлеб"
+    ],
+    [
+      "bot",
+      "  🔧 add_note({'text': 'купить хлеб'}) -> Запомнил: купить хлеб\nАгент: Записал!"
+    ],
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Что в заметках?"
+    ],
+    [
+      "bot",
+      "  🔧 list_notes({}) -> купить хлеб\nАгент: У тебя одна заметка: купить хлеб."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "что в заметках",
+      "tool": "list_notes"
+    },
+    {
+      "if": "запомни",
+      "tool": "add_note",
+      "arguments": {
+        "text": "купить хлеб"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Запомни: купить хлеб",
+        "Что в заметках?",
+        "/exit"
+      ],
+      "expect": [
+        "Запомнил: купить хлеб"
+      ],
+      "ai": {
+        "min_calls": 4,
+        "tools_has": [
+          "add_note",
+          "list_notes"
+        ],
+        "tool_result_has": [
+          "Запомнил",
+          "купить хлеб"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Что в заметках?",
+        "/exit"
+      ],
+      "expect": [
+        "Заметок нет"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Заметок нет"
+        ]
+      },
+      "fail": "Если список пуст, list_notes возвращает «Заметок нет»."
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:append",
+      "msg": "add_note добавляет в список: NOTES.append(text)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "NOTES = [] — до функций. add_note: NOTES.append(text); return f\"Запомнил: {text}\".",
+    "list_notes: if not NOTES: return \"Заметок нет\"; иначе return \"; \".join(NOTES). Описания: add_note с параметром text, list_notes — без параметров.",
+    "from agent import agent_answer, make_tool\n\nNOTES = []\n\n\ndef add_note(text):\n    NOTES.append(text)\n    return f\"Запомнил: {text}\"\n\n\ndef list_notes():\n    if not NOTES:\n        return \"Заметок нет\"\n    return \"; \".join(NOTES)\n\n\nTOOLS = [make_tool(\"add_note\", \"Запомнить заметку.\", {\"text\": {\"type\": \"string\", \"description\": \"Текст заметки\"}}, [\"text\"]),\n         make_tool(\"list_notes\", \"Показать все заметки.\")]\nFUNCTIONS = {\"add_note\": lambda args: add_note(args[\"text\"]), \"list_notes\": lambda args: list_notes()}\nSYSTEM = \"Ты помощник с блокнотом. Заметки сохраняй и показывай только инструментами.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

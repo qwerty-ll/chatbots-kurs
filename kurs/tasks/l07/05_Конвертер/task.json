@@ -1,0 +1,112 @@
+{
+  "id": "l07-05",
+  "lesson": 7,
+  "num": 5,
+  "title": "Конвертер расстояний",
+  "level": 2,
+  "step": 4,
+  "minutes": 12,
+  "topics": [
+    "словарь",
+    "параметры инструмента"
+  ],
+  "file": "05_Конвертер.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент to_meters(value, unit) переводит расстояние в метры. Единицы — в словаре: «км» = 1000, «м» = 1, «см» = 0.01.\nВозвращает строку «<value> <unit> = <ответ> м», а для незнакомой единицы — «Не знаю такую единицу».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Сколько метров в 3 км?"
+    ],
+    [
+      "bot",
+      "  🔧 to_meters({'value': 3, 'unit': 'км'}) -> 3 км = 3000 м\nАгент: В 3 км — 3000 метров."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "метр",
+      "tool": "to_meters",
+      "arguments": {
+        "value": 3,
+        "unit": "км"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Сколько метров в 3 км?"
+      ],
+      "expect": [
+        "3 км = 3000 м"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "3000"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Сколько метров в 5 милях?"
+      ],
+      "ai_answers": [
+        {
+          "if": "метр",
+          "tool": "to_meters",
+          "arguments": {
+            "value": 5,
+            "unit": "миля"
+          }
+        }
+      ],
+      "expect": [
+        "Не знаю такую единицу"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Не знаю"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "dict",
+      "msg": "Множители единиц храни в словаре: UNITS = {\"км\": 1000, ...}."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "UNITS = {\"км\": 1000, \"м\": 1, \"см\": 0.01}. Проверка: if unit not in UNITS: return \"Не знаю такую единицу\".",
+    "return f\"{value} {unit} = {value * UNITS[unit]} м\". В make_tool: value — \"number\", unit — \"string\".",
+    "from agent import agent_answer, make_tool\n\nUNITS = {\"км\": 1000, \"м\": 1, \"см\": 0.01}\n\n\ndef to_meters(value, unit):\n    if unit not in UNITS:\n        return \"Не знаю такую единицу\"\n    return f\"{value} {unit} = {value * UNITS[unit]} м\"\n\n\nTOOLS = [make_tool(\"to_meters\", \"Перевести расстояние в метры.\",\n                   {\"value\": {\"type\": \"number\", \"description\": \"Число\"},\n                    \"unit\": {\"type\": \"string\", \"description\": \"Единица: км, м или см\"}},\n                   [\"value\", \"unit\"])]\nFUNCTIONS = {\"to_meters\": lambda args: to_meters(args[\"value\"], args[\"unit\"])}\nSYSTEM = \"Ты помощник по физике. Для перевода расстояний используй инструмент to_meters.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

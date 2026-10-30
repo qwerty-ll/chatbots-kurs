@@ -1,0 +1,76 @@
+{
+  "id": "l11-01",
+  "lesson": 11,
+  "num": 1,
+  "title": "Безопасное число",
+  "level": 1,
+  "step": 2,
+  "minutes": 8,
+  "topics": [
+    "try / except",
+    "None"
+  ],
+  "file": "01_Безопасное_число.py",
+  "statement": "Функция safe_int(text) возвращает целое число или None, если текст — не число (не падает).\nПрограмма спрашивает «Сколько тебе лет? » и печатает «Через год тебе будет N», а если ввели не число — «Нужно число».",
+  "dialog": [
+    [
+      "bot",
+      "Сколько тебе лет?"
+    ],
+    [
+      "you",
+      "двенадцать"
+    ],
+    [
+      "bot",
+      "Нужно число"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "12"
+      ],
+      "expect": [
+        "Через год тебе будет 13"
+      ]
+    },
+    {
+      "input": [
+        "двенадцать"
+      ],
+      "expect": [
+        "Нужно число"
+      ],
+      "reject": [
+        "Через год"
+      ],
+      "fail": "Если safe_int вернул None — печатай «Нужно число»."
+    },
+    {
+      "input": [
+        " 9 "
+      ],
+      "expect": [
+        "Через год тебе будет 10"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "def:safe_int",
+      "title": "есть функция safe_int",
+      "msg": "Создай функцию def safe_int(text):"
+    },
+    {
+      "need": "except:ValueError",
+      "msg": "Внутри safe_int: except ValueError: return None."
+    }
+  ],
+  "hints": [
+    "def safe_int(text): try: return int(text) except ValueError: return None",
+    "age = safe_int(input(...)); if age is None: print(\"Нужно число\") else: print(f\"Через год тебе будет {age + 1}\").",
+    "def safe_int(text):\n    try:\n        return int(text)\n    except ValueError:\n        return None\n\n\nage = safe_int(input(\"Сколько тебе лет? \"))\nif age is None:\n    print(\"Нужно число\")\nelse:\n    print(f\"Через год тебе будет {age + 1}\")"
+  ],
+  "starter": "empty"
+}

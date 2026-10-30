@@ -1,0 +1,73 @@
+{
+  "id": "l10-02",
+  "lesson": 10,
+  "num": 2,
+  "title": "Справка из словаря",
+  "level": 1,
+  "step": 2,
+  "minutes": 8,
+  "topics": [
+    "items()",
+    "for"
+  ],
+  "file": "02_Справка.py",
+  "statement": "Словарь HELP: «/hello» → «поздороваться», «/joke» → «рассказать шутку», «/coin» → «подбросить монетку».\nЦикл «Ты: »: «/help» печатает каждую команду строкой «/hello — поздороваться», команда из словаря → «Выполняю: <описание>», «/exit» — конец, иначе — «Нет такой команды. Напиши /help».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "/help"
+    ],
+    [
+      "bot",
+      "/hello — поздороваться\n/joke — рассказать шутку\n/coin — подбросить монетку"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "/help",
+        "/exit"
+      ],
+      "expect": [
+        "/hello — поздороваться",
+        "/joke — рассказать шутку",
+        "/coin — подбросить монетку"
+      ]
+    },
+    {
+      "input": [
+        "/coin",
+        "/exit"
+      ],
+      "expect": [
+        "Выполняю: подбросить монетку"
+      ]
+    },
+    {
+      "input": [
+        "/fly",
+        "/exit"
+      ],
+      "expect": [
+        "Нет такой команды. Напиши /help"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:items",
+      "title": "есть items()",
+      "msg": "Перебери словарь: for cmd, about in HELP.items():"
+    }
+  ],
+  "hints": [
+    "for cmd, about in HELP.items(): print(f\"{cmd} — {about}\") — тире длинное: «—».",
+    "Проверяй по порядку: /exit → break, /help → справка, elif text in HELP → «Выполняю: ...», else → «Нет такой команды. Напиши /help».",
+    "HELP = {\"/hello\": \"поздороваться\", \"/joke\": \"рассказать шутку\", \"/coin\": \"подбросить монетку\"}\n\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    elif text == \"/help\":\n        for cmd, about in HELP.items():\n            print(f\"{cmd} — {about}\")\n    elif text in HELP:\n        print(\"Выполняю:\", HELP[text])\n    else:\n        print(\"Нет такой команды. Напиши /help\")"
+  ],
+  "starter": "empty"
+}

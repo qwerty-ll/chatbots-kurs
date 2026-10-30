@@ -1,0 +1,123 @@
+{
+  "id": "l07-06",
+  "lesson": 7,
+  "num": 6,
+  "title": "Агент-кассир",
+  "level": 3,
+  "step": 5,
+  "minutes": 15,
+  "topics": [
+    "словарь цен",
+    "цикл агента"
+  ],
+  "file": "06_Кассир.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Меню — словарь цен: «пицца» 450, «сок» 120, «булочка» 60.\nИнструмент total(item, count) возвращает «<count> × <item> = <сумма> ₽», а если такого нет — «Такого нет в меню».\nАгент работает в цикле: «Ты: », «/exit» — конец.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Сколько стоят 2 пиццы?"
+    ],
+    [
+      "bot",
+      "  🔧 total({'item': 'пицца', 'count': 2}) -> 2 × пицца = 900 ₽\nАгент: Две пиццы — 900 ₽."
+    ],
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "/exit"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "пицц",
+      "tool": "total",
+      "arguments": {
+        "item": "пицца",
+        "count": 2
+      }
+    },
+    {
+      "if": "торт",
+      "tool": "total",
+      "arguments": {
+        "item": "торт",
+        "count": 1
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Сколько стоят 2 пиццы?",
+        "/exit"
+      ],
+      "expect": [
+        "900"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "900"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Хочу торт",
+        "/exit"
+      ],
+      "expect": [
+        "нет в меню"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "нет в меню"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Сколько стоят 2 пиццы?",
+        "Хочу торт",
+        "/exit"
+      ],
+      "expect": [
+        "900",
+        "нет в меню"
+      ],
+      "ai": {
+        "min_calls": 4
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "dict",
+      "msg": "Цены храни в словаре: PRICES = {\"пицца\": 450, ...}."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    }
+  ],
+  "hints": [
+    "PRICES = {\"пицца\": 450, \"сок\": 120, \"булочка\": 60}; в total сначала проверь: if item not in PRICES.",
+    "Цикл агента — как в занятии 5: while True, input(\"Ты: \"), /exit → break, messages.append(...) для вопроса и ответа.",
+    "from agent import agent_answer, make_tool\n\nPRICES = {\"пицца\": 450, \"сок\": 120, \"булочка\": 60}\n\n\ndef total(item, count):\n    if item not in PRICES:\n        return \"Такого нет в меню\"\n    return f\"{count} × {item} = {PRICES[item] * count} ₽\"\n\n\nTOOLS = [make_tool(\"total\", \"Посчитать стоимость заказа из меню.\",\n                   {\"item\": {\"type\": \"string\", \"description\": \"Название из меню: пицца, сок, булочка\"},\n                    \"count\": {\"type\": \"integer\", \"description\": \"Сколько штук\"}},\n                   [\"item\", \"count\"])]\nFUNCTIONS = {\"total\": lambda args: total(args[\"item\"], args[\"count\"])}\nSYSTEM = \"Ты кассир кафе. Цены считай только инструментом total.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

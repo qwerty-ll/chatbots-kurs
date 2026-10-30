@@ -1,0 +1,106 @@
+{
+  "id": "l10-06",
+  "lesson": 10,
+  "num": 6,
+  "title": "Свой набор инструментов",
+  "level": 3,
+  "step": 5,
+  "minutes": 20,
+  "topics": [
+    "свои инструменты",
+    "цикл агента"
+  ],
+  "file": "06_Свой_набор.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Придумай тему агента (спорт, кино, игры…) и сделай ТРИ своих инструмента — хотя бы у одного должен быть параметр.\nАгент в цикле: «Ты: », «/exit» — конец. Проверка по очереди вызовет каждый инструмент: они должны работать без ошибок.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Посоветуй тренировку"
+    ],
+    [
+      "bot",
+      "  🔧 workout({}) -> 20 приседаний и планка 1 минута\nАгент: Попробуй: 20 приседаний и планку!"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "первый",
+      "tool_index": 0
+    },
+    {
+      "if": "второй",
+      "tool_index": 1
+    },
+    {
+      "if": "третий",
+      "tool_index": 2
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Используй первый инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true
+      }
+    },
+    {
+      "input": [
+        "Используй второй инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true
+      },
+      "fail": "Нужно три инструмента в TOOLS."
+    },
+    {
+      "input": [
+        "Используй третий инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true
+      },
+      "fail": "Нужно три инструмента в TOOLS."
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    },
+    {
+      "need": "params",
+      "msg": "Хотя бы у одной функции должен быть параметр."
+    },
+    {
+      "forbid": "call:eval",
+      "title": "нет eval()",
+      "msg": "eval() выполняет любой код — давать его агенту нельзя."
+    }
+  ],
+  "hints": [
+    "Начни с темы и трёх глаголов: «посоветовать», «посчитать», «найти». Каждый — функция с return.",
+    "Функция с параметром берёт значение из args: lambda args: find(args[\"name\"]). В make_tool опиши этот параметр.",
+    "import random\n\nfrom agent import agent_answer, make_tool\n\nCALORIES = {\"бег\": 10, \"плавание\": 8, \"велосипед\": 7}\n\n\ndef workout():\n    return random.choice([\"20 приседаний и планка 1 минута\", \"3 круга по 10 отжиманий\", \"15 минут бега\"])\n\n\ndef burn(sport, minutes):\n    if sport not in CALORIES:\n        return \"Не знаю такой вид спорта\"\n    return f\"{sport}: {CALORIES[sport] * minutes} ккал за {minutes} мин\"\n\n\ndef water(weight):\n    return f\"Пей около {weight * 30} мл воды в день\"\n\n\nTOOLS = [make_tool(\"workout\", \"Посоветовать тренировку на сегодня.\"),\n         make_tool(\"burn\", \"Посчитать, сколько калорий сжигает спорт.\",\n                   {\"sport\": {\"type\": \"string\", \"description\": \"бег, плавание или велосипед\"},\n                    \"minutes\": {\"type\": \"integer\", \"description\": \"Сколько минут\"}}, [\"sport\", \"minutes\"]),\n         make_tool(\"water\", \"Сколько воды пить в день.\",\n                   {\"weight\": {\"type\": \"integer\", \"description\": \"Вес в кг\"}}, [\"weight\"])]\nFUNCTIONS = {\"workout\": lambda args: workout(),\n             \"burn\": lambda args: burn(args[\"sport\"], args[\"minutes\"]),\n             \"water\": lambda args: water(args[\"weight\"])}\nSYSTEM = \"Ты спортивный тренер. Советы и расчёты бери из инструментов.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

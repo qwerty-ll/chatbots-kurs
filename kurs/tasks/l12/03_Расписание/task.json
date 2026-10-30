@@ -1,0 +1,111 @@
+{
+  "id": "l12-03",
+  "lesson": 12,
+  "num": 3,
+  "title": "Помощник по расписанию",
+  "level": 2,
+  "step": 3,
+  "minutes": 12,
+  "topics": [
+    "словарь списков",
+    "join"
+  ],
+  "file": "03_Расписание.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "SCHEDULE: «понедельник» → [«математика», «русский», «физкультура»], «вторник» → [«история», «информатика»].\nИнструмент schedule(day) возвращает уроки через запятую («математика, русский, физкультура»), а для дня без расписания — «В этот день уроков нет».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Какие уроки в понедельник?"
+    ],
+    [
+      "bot",
+      "  🔧 schedule({'day': 'понедельник'}) -> математика, русский, физкультура\nАгент: В понедельник математика, русский и физкультура."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "урок",
+      "tool": "schedule",
+      "arguments": {
+        "day": "понедельник"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Какие уроки в понедельник?"
+      ],
+      "expect": [
+        "математика, русский, физкультура"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "физкультура"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Какие уроки в воскресенье?"
+      ],
+      "ai_answers": [
+        {
+          "if": "урок",
+          "tool": "schedule",
+          "arguments": {
+            "day": "воскресенье"
+          }
+        }
+      ],
+      "expect": [
+        "В этот день уроков нет"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "уроков нет"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Привет"
+      ],
+      "expect": [
+        "(ответ нейросети)"
+      ],
+      "ai": {
+        "called": true
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "method:join",
+      "title": "есть join()",
+      "msg": "Соедини уроки: \", \".join(...)."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "SCHEDULE = {\"понедельник\": [\"математика\", \"русский\", \"физкультура\"], \"вторник\": [...]}",
+    "if day not in SCHEDULE: return \"В этот день уроков нет\"; return \", \".join(SCHEDULE[day]).",
+    "from agent import agent_answer, make_tool\n\nSCHEDULE = {\"понедельник\": [\"математика\", \"русский\", \"физкультура\"], \"вторник\": [\"история\", \"информатика\"]}\n\n\ndef schedule(day):\n    if day not in SCHEDULE:\n        return \"В этот день уроков нет\"\n    return \", \".join(SCHEDULE[day])\n\n\nTOOLS = [make_tool(\"schedule\", \"Узнать уроки на день недели.\",\n                   {\"day\": {\"type\": \"string\", \"description\": \"День недели маленькими буквами\"}}, [\"day\"])]\nFUNCTIONS = {\"schedule\": lambda args: schedule(args[\"day\"])}\nSYSTEM = \"Ты школьный помощник. Расписание бери только из инструмента schedule.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

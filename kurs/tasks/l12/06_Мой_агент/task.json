@@ -1,0 +1,135 @@
+{
+  "id": "l12-06",
+  "lesson": 12,
+  "num": 6,
+  "title": "Итоговый проект: мой агент",
+  "level": 4,
+  "step": 5,
+  "minutes": 25,
+  "topics": [
+    "проект",
+    "всё вместе"
+  ],
+  "file": "06_Мой_агент.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Собери своего агента по чек-листу:\n• карточка AGENT и роль из make_system;\n• не меньше трёх инструментов, хотя бы один с параметром;\n• хотя бы один инструмент сохраняет данные в файл JSON (json.dump);\n• цикл «Ты: » с «/exit» и короткой историей (system + последние реплики).\nПроверка по очереди вызовет три первых инструмента.",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "…вопрос по теме твоего агента…"
+    ],
+    [
+      "bot",
+      "  🔧 твой_инструмент(...) -> …\nАгент: …"
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "первый",
+      "tool_index": 0
+    },
+    {
+      "if": "второй",
+      "tool_index": 1
+    },
+    {
+      "if": "третий",
+      "tool_index": 2
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Используй первый инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true,
+        "system_always": true
+      }
+    },
+    {
+      "input": [
+        "Используй второй инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true
+      },
+      "fail": "Нужно не меньше трёх инструментов."
+    },
+    {
+      "input": [
+        "Используй третий инструмент",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "tool_ok": true
+      },
+      "fail": "Нужно не меньше трёх инструментов."
+    },
+    {
+      "input": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "/exit"
+      ],
+      "expect": [],
+      "ai": {
+        "max_messages": 12,
+        "system_always": true
+      },
+      "fail": "Обрезай историю: messages = [messages[0]] + messages[1:][-6:]."
+    }
+  ],
+  "structure": [
+    {
+      "need": "def:make_system",
+      "title": "есть функция make_system",
+      "msg": "Роль агента собери функцией make_system(AGENT)."
+    },
+    {
+      "need": "method:dump",
+      "msg": "Хотя бы один инструмент сохраняет данные: json.dump(...)."
+    },
+    {
+      "need": "params",
+      "msg": "Хотя бы у одного инструмента должен быть параметр."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "while",
+      "msg": "Агент работает в цикле while True, выход — /exit."
+    },
+    {
+      "forbid": "call:eval",
+      "title": "нет eval()",
+      "msg": "eval() выполняет любой код — давать его агенту нельзя."
+    }
+  ],
+  "hints": [
+    "Начни с карточки и трёх функций на бумаге: что делает, какие параметры, что возвращает.",
+    "Возьми за основу планировщик (задание 5): память в файле там уже есть — добавь свои инструменты и карточку.",
+    "import json\nimport random\n\nfrom agent import agent_answer, make_tool\n\nAGENT = {\"name\": \"Бобо\", \"role\": \"помощник по уходу за питомцами\", \"rules\": [\"отвечай коротко\", \"советы бери из инструментов\"]}\n\ntry:\n    with open(\"pets.json\", encoding=\"utf-8\") as f:\n        PETS = json.load(f)\nexcept FileNotFoundError:\n    PETS = []\n\nFOOD = {\"кошка\": \"2 раза в день\", \"собака\": \"2 раза в день\", \"попугай\": \"зерно каждый день\"}\n\n\ndef make_system(agent):\n    return f\"Ты {agent['name']}, {agent['role']}. Правила: \" + \"; \".join(agent[\"rules\"]) + \".\"\n\n\ndef add_pet(name, kind):\n    PETS.append({\"name\": name, \"kind\": kind})\n    with open(\"pets.json\", \"w\", encoding=\"utf-8\") as f:\n        json.dump(PETS, f, ensure_ascii=False)\n    return f\"Запомнил питомца: {name} ({kind})\"\n\n\ndef feeding(kind):\n    return FOOD.get(kind, \"Про такого питомца не знаю\")\n\n\ndef pet_tip():\n    return random.choice([\"Гуляй с собакой дважды в день.\", \"Меняй воду каждый день.\", \"Хвали питомца за хорошее поведение.\"])\n\n\nTOOLS = [make_tool(\"add_pet\", \"Запомнить питомца.\",\n                   {\"name\": {\"type\": \"string\", \"description\": \"Кличка\"},\n                    \"kind\": {\"type\": \"string\", \"description\": \"Кто это: кошка, собака, попугай\"}}, [\"name\", \"kind\"]),\n         make_tool(\"feeding\", \"Как часто кормить питомца.\",\n                   {\"kind\": {\"type\": \"string\", \"description\": \"Вид питомца\"}}, [\"kind\"]),\n         make_tool(\"pet_tip\", \"Случайный совет по уходу.\")]\nFUNCTIONS = {\"add_pet\": lambda args: add_pet(args[\"name\"], args[\"kind\"]),\n             \"feeding\": lambda args: feeding(args[\"kind\"]),\n             \"pet_tip\": lambda args: pet_tip()}\n\nmessages = [{\"role\": \"system\", \"content\": make_system(AGENT)}]\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    messages.append({\"role\": \"user\", \"content\": text})\n    messages = [messages[0]] + messages[1:][-6:]\n    answer = agent_answer(messages, TOOLS, FUNCTIONS)\n    messages.append({\"role\": \"assistant\", \"content\": answer})\n    print(\"Агент:\", answer)"
+  ],
+  "starter": "empty"
+}

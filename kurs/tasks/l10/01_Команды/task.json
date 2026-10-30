@@ -1,0 +1,87 @@
+{
+  "id": "l10-01",
+  "lesson": 10,
+  "num": 1,
+  "title": "Команды через словарь",
+  "level": 1,
+  "step": 2,
+  "minutes": 10,
+  "topics": [
+    "словарь функций"
+  ],
+  "file": "01_Команды.py",
+  "statement": "Три функции-команды: hello() → «Привет!», joke() → «Почему программисты путают Хэллоуин и Рождество? 31 OCT = 25 DEC», help_cmd() → «Команды: /hello /joke /help».\nСловарь COMMANDS связывает «/hello», «/joke», «/help» с функциями.\nЦикл «Ты: »: команда из словаря — печатаем результат её функции, «/exit» — конец, иначе — «Не знаю такой команды».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "/hello"
+    ],
+    [
+      "bot",
+      "Привет!\nТы:"
+    ],
+    [
+      "you",
+      "/fly"
+    ],
+    [
+      "bot",
+      "Не знаю такой команды"
+    ]
+  ],
+  "tests": [
+    {
+      "input": [
+        "/hello",
+        "/help",
+        "/exit"
+      ],
+      "expect": [
+        "Привет!",
+        "Команды: /hello /joke /help"
+      ]
+    },
+    {
+      "input": [
+        "/joke",
+        "/exit"
+      ],
+      "expect": [
+        "31 OCT = 25 DEC"
+      ]
+    },
+    {
+      "input": [
+        "/fly",
+        "/exit"
+      ],
+      "expect": [
+        "Не знаю такой команды"
+      ]
+    }
+  ],
+  "structure": [
+    {
+      "need": "dict",
+      "msg": "Свяжи команды с функциями словарём COMMANDS = {...}."
+    },
+    {
+      "need": "in",
+      "msg": "Проверь команду: if text in COMMANDS."
+    },
+    {
+      "need": "while",
+      "msg": "Нужен цикл while True."
+    }
+  ],
+  "hints": [
+    "COMMANDS = {\"/hello\": hello, \"/joke\": joke, \"/help\": help_cmd} — функции БЕЗ скобок: кладём саму функцию, а не её результат.",
+    "if text in COMMANDS: print(COMMANDS[text]()) — скобки в конце вызывают найденную функцию.",
+    "def hello():\n    return \"Привет!\"\n\n\ndef joke():\n    return \"Почему программисты путают Хэллоуин и Рождество? 31 OCT = 25 DEC\"\n\n\ndef help_cmd():\n    return \"Команды: /hello /joke /help\"\n\n\nCOMMANDS = {\"/hello\": hello, \"/joke\": joke, \"/help\": help_cmd}\n\nwhile True:\n    text = input(\"Ты: \").strip()\n    if text == \"/exit\":\n        break\n    if text in COMMANDS:\n        print(COMMANDS[text]())\n    else:\n        print(\"Не знаю такой команды\")"
+  ],
+  "starter": "empty"
+}

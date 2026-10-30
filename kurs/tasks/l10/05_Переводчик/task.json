@@ -1,0 +1,124 @@
+{
+  "id": "l10-05",
+  "lesson": 10,
+  "num": 5,
+  "title": "Агент-переводчик",
+  "level": 2,
+  "step": 4,
+  "minutes": 12,
+  "topics": [
+    "словарь словарей",
+    "два параметра"
+  ],
+  "file": "05_Переводчик.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Словарь WORDS: «кот» → en «cat», de «Katze»; «собака» → en «dog», de «Hund»; «дом» → en «house», de «Haus».\nИнструмент translate(word, lang) возвращает перевод, «Не знаю слова <word>» или «Не знаю такой язык».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Как по-немецки кот?"
+    ],
+    [
+      "bot",
+      "  🔧 translate({'word': 'кот', 'lang': 'de'}) -> Katze\nАгент: Кот по-немецки — Katze."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "кот",
+      "tool": "translate",
+      "arguments": {
+        "word": "кот",
+        "lang": "de"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Как по-немецки кот?"
+      ],
+      "expect": [
+        "Katze"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Katze"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Как по-английски слон?"
+      ],
+      "ai_answers": [
+        {
+          "if": "слон",
+          "tool": "translate",
+          "arguments": {
+            "word": "слон",
+            "lang": "en"
+          }
+        }
+      ],
+      "expect": [
+        "Не знаю слова слон"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Не знаю слова"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Как по-французски дом?"
+      ],
+      "ai_answers": [
+        {
+          "if": "дом",
+          "tool": "translate",
+          "arguments": {
+            "word": "дом",
+            "lang": "fr"
+          }
+        }
+      ],
+      "expect": [
+        "Не знаю такой язык"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Не знаю такой язык"
+        ]
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "dict",
+      "msg": "Переводы храни в словаре словарей WORDS."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "WORDS = {\"кот\": {\"en\": \"cat\", \"de\": \"Katze\"}, ...}; WORDS[word][lang] — перевод.",
+    "Сначала проверь слово (if word not in WORDS), потом язык (if lang not in WORDS[word]).",
+    "from agent import agent_answer, make_tool\n\nWORDS = {\n    \"кот\": {\"en\": \"cat\", \"de\": \"Katze\"},\n    \"собака\": {\"en\": \"dog\", \"de\": \"Hund\"},\n    \"дом\": {\"en\": \"house\", \"de\": \"Haus\"},\n}\n\n\ndef translate(word, lang):\n    if word not in WORDS:\n        return f\"Не знаю слова {word}\"\n    if lang not in WORDS[word]:\n        return \"Не знаю такой язык\"\n    return WORDS[word][lang]\n\n\nTOOLS = [make_tool(\"translate\", \"Перевести русское слово на английский (en) или немецкий (de).\",\n                   {\"word\": {\"type\": \"string\", \"description\": \"Русское слово\"},\n                    \"lang\": {\"type\": \"string\", \"description\": \"Код языка: en или de\"}},\n                   [\"word\", \"lang\"])]\nFUNCTIONS = {\"translate\": lambda args: translate(args[\"word\"], args[\"lang\"])}\nSYSTEM = \"Ты переводчик. Переводы бери только из инструмента translate.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}

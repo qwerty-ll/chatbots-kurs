@@ -1,0 +1,127 @@
+{
+  "id": "l11-03",
+  "lesson": 11,
+  "num": 3,
+  "title": "Будильник с проверкой",
+  "level": 2,
+  "step": 3,
+  "minutes": 12,
+  "topics": [
+    "проверка аргументов"
+  ],
+  "file": "03_Будильник.py",
+  "uses_ai": true,
+  "helpers": [
+    "agent.py"
+  ],
+  "statement": "Инструмент set_alarm(hour, minute) проверяет время: час от 0 до 23, минуты от 0 до 59.\nЕсли всё верно — «Будильник на 07:30» (две цифры с нулём), иначе — «Неверное время».\nПрограмма: «Ты: » → «Агент: <ответ>».",
+  "dialog": [
+    [
+      "bot",
+      "Ты:"
+    ],
+    [
+      "you",
+      "Разбуди меня в 7:30"
+    ],
+    [
+      "bot",
+      "  🔧 set_alarm({'hour': 7, 'minute': 30}) -> Будильник на 07:30\nАгент: Готово, разбужу в 07:30."
+    ]
+  ],
+  "ai_answers": [
+    {
+      "if": "разбуди",
+      "tool": "set_alarm",
+      "arguments": {
+        "hour": 7,
+        "minute": 30
+      }
+    }
+  ],
+  "tests": [
+    {
+      "input": [
+        "Разбуди меня в 7:30"
+      ],
+      "expect": [
+        "Будильник на 07:30"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "07:30"
+        ]
+      },
+      "fail": "Формат с нулём: f\"{hour:02d}:{minute:02d}\"."
+    },
+    {
+      "input": [
+        "Разбуди меня в 25:00"
+      ],
+      "ai_answers": [
+        {
+          "if": "разбуди",
+          "tool": "set_alarm",
+          "arguments": {
+            "hour": 25,
+            "minute": 0
+          }
+        }
+      ],
+      "expect": [
+        "Неверное время"
+      ],
+      "reject": [
+        "Будильник на"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Неверное время"
+        ]
+      }
+    },
+    {
+      "input": [
+        "Разбуди меня в 6:75"
+      ],
+      "ai_answers": [
+        {
+          "if": "разбуди",
+          "tool": "set_alarm",
+          "arguments": {
+            "hour": 6,
+            "minute": 75
+          }
+        }
+      ],
+      "expect": [
+        "Неверное время"
+      ],
+      "ai": {
+        "tool_result_has": [
+          "Неверное время"
+        ]
+      }
+    }
+  ],
+  "structure": [
+    {
+      "need": "order",
+      "msg": "Проверь диапазон сравнениями: 0 <= hour <= 23."
+    },
+    {
+      "need": "call:make_tool",
+      "msg": "Опиши инструмент для нейросети через make_tool(...)."
+    },
+    {
+      "need": "call:agent_answer",
+      "msg": "Запусти агента: agent_answer(messages, TOOLS, FUNCTIONS)."
+    }
+  ],
+  "hints": [
+    "if not (0 <= hour <= 23 and 0 <= minute <= 59): return \"Неверное время\"",
+    "Две цифры с нулём: f\"Будильник на {hour:02d}:{minute:02d}\".",
+    "from agent import agent_answer, make_tool\n\n\ndef set_alarm(hour, minute):\n    if not (0 <= hour <= 23 and 0 <= minute <= 59):\n        return \"Неверное время\"\n    return f\"Будильник на {hour:02d}:{minute:02d}\"\n\n\nTOOLS = [make_tool(\"set_alarm\", \"Поставить будильник.\",\n                   {\"hour\": {\"type\": \"integer\", \"description\": \"Час 0–23\"},\n                    \"minute\": {\"type\": \"integer\", \"description\": \"Минуты 0–59\"}}, [\"hour\", \"minute\"])]\nFUNCTIONS = {\"set_alarm\": lambda args: set_alarm(args[\"hour\"], args[\"minute\"])}\nSYSTEM = \"Ты помощник с будильником. Ставь его только инструментом set_alarm.\"\n\nmessages = [{\"role\": \"system\", \"content\": SYSTEM},\n            {\"role\": \"user\", \"content\": input(\"Ты: \")}]\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
+  ],
+  "starter": "empty"
+}
