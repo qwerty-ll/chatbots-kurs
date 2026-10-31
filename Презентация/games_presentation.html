@@ -1211,11 +1211,11 @@ guess = <span class="fn">int</span>(<span class="fn">input</span>(<span class="s
       <span style="font-size:48px">🌟</span>
       <h3 style="font-family:'Rubik', sans-serif;font-size:36px;color:#12163A">Бонусное задание:</h3>
     </div>
-    <p style="font-size:28px;color:#12163A;line-height:1.45;font-weight:600">Дайте игроку ровно 3 попытки угадать код без циклов — последовательными проверками!</p>
+    <p style="font-size:28px;color:#12163A;line-height:1.45;font-weight:600">Дайте игроку ровно 3 попытки угадать код без циклов и флагов — вложенными проверками else!</p>
     <div style="margin-top:8px">
       <h4 style="font-size:26px;color:#2F43E8;margin-bottom:10px">Как подойти к решению:</h4>
       <ul style="padding-left:26px;display:flex;flex-direction:column;gap:10px">
-        <li style="font-size:26px;color:#4A5170;line-height:1.45">Заведите флаг успешного взлома: guessed = False</li><li style="font-size:26px;color:#4A5170;line-height:1.45">Запрашивайте следующую попытку только если код ещё не найден: if not guessed:</li><li style="font-size:26px;color:#4A5170;line-height:1.45">В самом конце: if not guessed: print('Сигнализация сработала!')</li>
+        <li style="font-size:26px;color:#4A5170;line-height:1.45">Первая проверка: if guess == code: победа, иначе переходим в else</li><li style="font-size:26px;color:#4A5170;line-height:1.45">Вторую попытку запрашиваем ВНУТРИ блока else (только если код не угадан!)</li><li style="font-size:26px;color:#4A5170;line-height:1.45">Третью попытку — внутри следующего else. Если и она неверна — звучит тревога!</li>
       </ul>
     </div>
   </div>
@@ -1235,7 +1235,7 @@ guess = <span class="fn">int</span>(<span class="fn">input</span>(<span class="s
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">33</p>
 </section></div>
-<div class="notes">Прокачка игры: пошаговый алгоритм трёх попыток через ветвления if / elif / else без циклов.</div></div>
+<div class="notes">Прокачка игры: пошаговый алгоритм трёх попыток через вложенные ветвления else без циклов и флагов.</div></div>
 <div class="frame" data-id="l2-reflect"><div class="stage">
 <section class="slide" id="l2-reflect" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
