@@ -1,0 +1,50 @@
+{
+  "id": "g08-02",
+  "lesson": 8,
+  "num": 2,
+  "level": 1,
+  "step": 2,
+  "minutes": 7,
+  "title": "Сохранение рекорда в файл",
+  "topics": [
+    "open",
+    "with",
+    "write"
+  ],
+  "file": "02_Запись_рекорда.py",
+  "statement": "Спроси имя игрока `name = input(\"Имя: \")` и набранный счёт `score = input(\"Очки: \")`.\nЗапиши в файл `records.txt` строку вида:\n`{name}: {score}`\nПосле успешной записи выведи сообщение: `Рекорд успешно сохранён в records.txt!`.",
+  "example": "Имя: Алекс\nОчки: 150\nРекорд успешно сохранён в records.txt!",
+  "starter": "empty",
+  "tests": [
+    {
+      "input": [
+        "Алекс",
+        "150"
+      ],
+      "expect": [
+        "Рекорд успешно сохранён в records.txt!"
+      ],
+      "file_has": {
+        "records.txt": [
+          "Алекс",
+          "150"
+        ]
+      },
+      "fail": "Запиши имя и очки в файл records.txt и выведи сообщение об успехе."
+    }
+  ],
+  "structure": [
+    {
+      "need": "call:open",
+      "msg": "Используй open('records.txt', 'w')."
+    },
+    {
+      "need": "call:print",
+      "msg": "Используй print()."
+    }
+  ],
+  "hints": [
+    "name = input(\"Имя: \")\nscore = input(\"Очки: \")",
+    "with open(\"records.txt\", \"w\") as f:\n    f.write(f\"{name}: {score}\")\nprint(\"Рекорд успешно сохранён в records.txt!\")"
+  ]
+}

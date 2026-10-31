@@ -1,0 +1,45 @@
+{
+  "id": "g05-01",
+  "lesson": 5,
+  "num": 1,
+  "level": 1,
+  "step": 2,
+  "minutes": 5,
+  "title": "Бегущий спортсмен",
+  "topics": [
+    "import time",
+    "time.sleep",
+    "анимация"
+  ],
+  "file": "01_Бегун.py",
+  "statement": "Импортируй модуль `time`.\nВ цикле `for x in range(4):` выведи позицию бегуна:\n`print(\" \" * x + \"🏃\")`\nПосле каждого вывода добавь задержку `time.sleep(0.1)`.\nВ конце выведи строку `Финиш!`.",
+  "example": "🏃\n 🏃\n  🏃\n   🏃\nФиниш!",
+  "starter": "empty",
+  "tests": [
+    {
+      "input": [],
+      "expect": [
+        "🏃",
+        " 🏃",
+        "  🏃",
+        "   🏃",
+        "Финиш!"
+      ],
+      "fail": "Бегун должен пробежать 4 позиции от 0 до 3 и достичь финиша."
+    }
+  ],
+  "structure": [
+    {
+      "need": "import:time",
+      "msg": "Импортируй time."
+    },
+    {
+      "need": "call:print",
+      "msg": "Используй print()."
+    }
+  ],
+  "hints": [
+    "import time\nfor x in range(4):\n    print(\" \" * x + \"🏃\")\n    time.sleep(0.1)",
+    "print(\"Финиш!\")"
+  ]
+}

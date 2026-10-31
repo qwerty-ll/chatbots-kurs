@@ -24,7 +24,12 @@
 
   const send = (cmd, extra) => vscode.postMessage(Object.assign({ cmd }, extra || {}));
   const save = () => vscode.setState(ui);
-  const LEVELS = { 1: "Разминка", 2: "Посложнее", 3: "Задачи на подумать", 4: "Со звёздочкой" };
+  const LEVELS = {
+    1: "🎯 Тренировка (решение задач)",
+    2: "🎮 Реализация игры",
+    3: "🌟 Прокачка игры (со звёздочкой)",
+    4: "Со звёздочкой"
+  };
 
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
@@ -292,7 +297,7 @@
     out.push(h("div", { class: "top" },
       h("div", { class: "top-row" },
         h("span", { class: "avatar" }, (view.me.name || "?")[0]),
-        h("div", { class: "who" }, h("b", {}, view.me.name), h("span", {}, `Занятие ${st.lesson} · ${view.me.pc}`)),
+        h("div", { class: "who" }, h("b", {}, view.me.name), h("span", {}, `${view.lesson.part_title ? view.lesson.part_title + " · " : ""}Занятие ${st.lesson} · ${view.me.pc}`)),
         h("span", { class: "spacer" }),
         st.help_open ? h("span", { class: "pill", title: "Учитель знает, что тебе нужна помощь" }, "🙋 жду учителя") : null,
         view.lesson.uses_ai && st.ai ? h("span", { class: "pill", title: aiTitle(st.ai) }, aiPill(st.ai)) : null,
@@ -356,9 +361,12 @@
         h("div", { class: "section-title" }, "План урока"),
         view.lesson.steps.map((s) => h("div", { class: "stage" }, h("span", { class: "n" }, s.n), h("span", {}, s.title)))];
     }
-    const out = [h("h1", {}, view.lesson.title),
+    const out = [
+      view.lesson.part_title ? h("div", { class: "pill", style: "align-self:flex-start; margin-bottom:6px; font-weight:600;" }, view.lesson.part_title) : null,
+      h("h1", {}, view.lesson.title),
       h("p", { class: "muted" }, view.lesson.teams ? "Проект команды: каждый пишет свои инструменты, бот команды собирает их вместе."
-        : `Выполнено ${done} из ${tasks.length}. Главные — задания 1–6, остальные для тех, кто успевает.`)];
+        : `Выполнено ${done} из ${tasks.length}. 🎯 Сначала реши тренировочные задачи, затем собери игру!`)
+    ].filter(Boolean);
     if (view.lesson.teams) out.push(teamBrief());
     if (next) {
       out.push(h("button", { class: "big wide", style: "margin:10px 0 4px", onclick: () => openTask(next) }, `Продолжить: задание ${next.num} →`));

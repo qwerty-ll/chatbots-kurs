@@ -78,7 +78,30 @@ CREATE TABLE IF NOT EXISTS team_members(student_id INTEGER PRIMARY KEY, team_id 
     plan TEXT NOT NULL DEFAULT '', joined REAL NOT NULL);
 """
 
-DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 2, "open_tasks": [], "paused": 0, "pause_text": "",
+COURSES = {
+    "games": {
+        "id": "games",
+        "title": "Разработка консольных игр на Python",
+        "subtitle": "8 занятий · От простых текстовых игр до симуляций и консольной графики",
+        "dir": os.path.join(KURS, "courses", "games"),
+        "parts": [
+            {"part": 1, "title": "Часть 1: Основы Python и Текстовые Игры", "lessons": [1, 2, 3, 4]},
+            {"part": 2, "title": "Часть 2: Консольная Графика, Сетки и Симуляции", "lessons": [5, 6, 7, 8]}
+        ]
+    },
+    "chatbots": {
+        "id": "chatbots",
+        "title": "Чат-боты и ИИ-агенты на Python",
+        "subtitle": "6 занятий · Командные боты и мост нейросетей",
+        "dir": os.path.join(KURS, "courses", "chatbots"),
+        "parts": [
+            {"part": 1, "title": "Часть 1: Основы ботов и логика", "lessons": [1, 2]},
+            {"part": 2, "title": "Часть 2: Нейросети, инструменты и проект", "lessons": [3, 4, 5, 6]}
+        ]
+    }
+}
+
+DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 1, "course": "games", "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
                  "lock_on_paste": 1, "locks": {},
                  "play": {"mode": "off", "games": ["chess", "hockey", "battleship"], "teacher": True, "allow": []},
@@ -90,17 +113,24 @@ TEAM_LIMITS = {"topic": 120, "bot_name": 40, "persona": 400}
 
 
 # ---------------------------------------------------------------------------
-# Материалы: занятия и задания (папка kurs/tasks)
+# Материалы: занятия и задания
 # ---------------------------------------------------------------------------
 class Library:
     def __init__(self, tasks_dir: str, content_dir: str):
         self.tasks_dir = tasks_dir
         self.content_dir = content_dir
+        self.is_custom = False
+        self.load()
+
+    def set_tasks_dir(self, new_dir: str) -> None:
+        self.tasks_dir = new_dir
         self.load()
 
     def load(self) -> None:
         self.lessons: dict[int, dict] = {}
         self.tasks: dict[str, dict] = {}
+        if not os.path.isdir(self.tasks_dir):
+            return
         for name in sorted(os.listdir(self.tasks_dir)):
             ldir = os.path.join(self.tasks_dir, name)
             lfile = os.path.join(ldir, "lesson.json")
@@ -321,9 +351,11 @@ class Store:
         self.teacher_tokens: dict[str, float] = {}
 
     # --- state ---
-    def get(self, key: str):
+    def get(self, key: str, default=None):
         r = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
-        return json.loads(r["value"]) if r else DEFAULT_STATE.get(key)
+        if r:
+            return json.loads(r["value"])
+        return default if default is not None else DEFAULT_STATE.get(key)
 
     def set(self, key: str, value) -> None:
         self.db.execute("INSERT INTO state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -739,8 +771,13 @@ class Kurs:
 
     def lesson_for(self) -> dict:
         lesson = self.lesson()
-        return {"lesson": lesson["lesson"], "title": lesson["title"], "steps": lesson["steps"],
-                "theory": lesson["theory"], "stages": [],
+        cid = self.s.get("course", "games")
+        c_info = COURSES.get(cid, COURSES["games"])
+        return {"lesson": lesson["lesson"], "title": lesson["title"],
+                "part": lesson.get("part", 1), "part_title": lesson.get("part_title", ""),
+                "course": {"id": cid, "title": c_info["title"]},
+                "steps": lesson["steps"],
+                "theory": lesson.get("theory", []), "stages": [],
                 "training_template": training_template(lesson),
                 "notebook_template": training_template(lesson),
                 "files": lesson.get("_files", {}), "uses_ai": bool(lesson.get("uses_ai")), "note": lesson.get("note", ""),
@@ -844,6 +881,17 @@ class Kurs:
             raise ApiError(404, "Нет такого этапа")
         return {"stage": n, "code": notebook_upto(lesson["_notebook"], n)}
 
+    def set_course(self, course_id: str) -> None:
+        if course_id not in COURSES:
+            raise ApiError(400, "Нет такого курса")
+        self.s.set("course", course_id)
+        if not self.lib.is_custom:
+            target_dir = COURSES[course_id]["dir"]
+            if os.path.isdir(target_dir):
+                self.lib.set_tasks_dir(target_dir)
+        if self.s.get("lesson") not in self.lib.lessons and self.lib.lessons:
+            self.s.set("lesson", min(self.lib.lessons.keys()))
+
     # ---------- учитель ----------
     def overview(self) -> dict:
         st = self.s.state()
@@ -854,7 +902,8 @@ class Kurs:
         for g in self.s.q("SELECT * FROM groups ORDER BY name"):
             names = [r["name"] for r in self.s.q("SELECT name FROM students WHERE group_id=? AND archived=0 ORDER BY name", (g["id"],))]
             groups.append({"id": g["id"], "name": g["name"], "students": names})
-        lessons = [{"lesson": n, "title": l["title"], "steps": l["steps"], "uses_ai": bool(l.get("uses_ai")),
+        lessons = [{"lesson": n, "title": l["title"], "part": l.get("part", 1), "part_title": l.get("part_title", ""),
+                    "steps": l["steps"], "uses_ai": bool(l.get("uses_ai")),
                     "project_idea": bool(l.get("project_idea")), "teams": bool(l.get("teams")), "tasks": [
             {"id": i, "num": self.lib.tasks[i]["num"], "title": self.lib.tasks[i]["title"],
              "level": self.lib.tasks[i]["level"], "step": self.lib.tasks[i]["step"]} for i in l["task_ids"]],
@@ -883,7 +932,13 @@ class Kurs:
         helps = [{"id": h["id"], "name": self.name(h["student_id"]), "pc": h["pc"], "text": h["text"],
                   "status": h["status"], "created": h["created"]}
                  for h in self.s.q("SELECT * FROM help WHERE status!='done' ORDER BY created")]
+        cid = st.get("course", "games")
+        if cid not in COURSES:
+            cid = "games"
+        c_info = COURSES[cid]
         return {"state": st, "now": now, "groups": groups, "lessons": lessons, "students": students,
+                "course": {"id": cid, "title": c_info["title"], "subtitle": c_info["subtitle"], "parts": c_info["parts"]},
+                "courses": [{"id": k, "title": v["title"], "subtitle": v["subtitle"]} for k, v in COURSES.items()],
                 "requests": reqs, "help": helps, "addresses": local_addresses(),
                 "locks": [dict(v, student_id=int(k), name=self.name(int(k))) for k, v in (st["locks"] or {}).items()]}
 
@@ -2085,6 +2140,8 @@ class Handler(BaseHTTPRequestHandler):
                     k.close_session(sess["token"], "Учитель завершил твой сеанс")
             elif name == "reload":
                 k.lib.load()
+            elif name == "set_course":
+                k.set_course(str(b.get("course") or "games"))
             elif name == "restart_clients":
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
                 k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
@@ -2156,7 +2213,14 @@ def clean_pc(pc) -> str:
 
 def make_server(host: str, port: int, data_dir: str, tasks_dir: str | None = None, quiet: bool = False):
     store = Store(data_dir)
-    lib = Library(tasks_dir or os.path.join(KURS, "tasks"), os.path.join(KURS, "content"))
+    st = store.state()
+    course_id = st.get("course", "games")
+    if course_id not in COURSES:
+        course_id = "games"
+    default_dir = COURSES[course_id]["dir"] if os.path.isdir(COURSES[course_id]["dir"]) else os.path.join(KURS, "tasks")
+    lib = Library(tasks_dir or default_dir, os.path.join(KURS, "content"))
+    if tasks_dir:
+        lib.is_custom = True
     handler = type("KursHandler", (Handler,), {"kurs": Kurs(store, lib), "quiet": quiet})
     return ThreadingHTTPServer((host, port), handler)
 

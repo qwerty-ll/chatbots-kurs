@@ -1,0 +1,41 @@
+{
+  "id": "g02-01",
+  "lesson": 2,
+  "num": 1,
+  "level": 1,
+  "step": 2,
+  "minutes": 5,
+  "title": "Бросок кубика",
+  "topics": [
+    "import random",
+    "randint",
+    "f-строки"
+  ],
+  "file": "01_Кубик.py",
+  "statement": "Импортируй модуль `random` и брось шестигранный кубик с помощью `random.randint(1, 6)`.\nВыведи результат в формате:\n`На кубике выпало: {число}`",
+  "example": "На кубике выпало: 5",
+  "starter": "empty",
+  "tests": [
+    {
+      "input": [],
+      "expect": [
+        "На кубике выпало:"
+      ],
+      "fail": "Выведи фразу: «На кубике выпало: {число}»"
+    }
+  ],
+  "structure": [
+    {
+      "need": "import:random",
+      "msg": "Нужен импорт модуля random."
+    },
+    {
+      "need": "call:print",
+      "msg": "Выведи результат через print()."
+    }
+  ],
+  "hints": [
+    "import random",
+    "roll = random.randint(1, 6)\nprint(f\"На кубике выпало: {roll}\")"
+  ]
+}

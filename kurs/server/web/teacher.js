@@ -352,19 +352,68 @@ function render() {
 // ---------- до занятия ----------
 function renderIdle() {
   if (pick.group === null && data.groups.length) pick.group = data.state.group_id || data.groups[0].id;
-  if (pick.lesson === null) pick.lesson = data.state.lesson || (data.lessons[0] && data.lessons[0].lesson);
-  const wizard = h("section", { class: "card" }, h("h2", {}, "Начать занятие"), h("div", { class: "wizard" },
-    h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "1"), h("b", {}, "Группа")),
-      data.groups.length ? data.groups.map((g) => h("button", { class: "choice" + (pick.group === g.id ? " sel" : ""), onclick: () => { pick.group = g.id; render(); } },
-        g.name, h("small", {}, `${g.students.length} ${plural(g.students.length, "ученик", "ученика", "учеников")}`)))
-        : h("p", { class: "muted" }, "Пока нет групп — добавьте ниже.")),
-    h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "2"), h("b", {}, "Занятие")),
-      data.lessons.map((l) => h("button", { class: "choice" + (pick.lesson === l.lesson ? " sel" : ""), onclick: () => { pick.lesson = l.lesson; render(); } },
-        `Занятие ${l.lesson}. ${l.title}`, h("small", {}, `${l.tasks.length} ${plural(l.tasks.length, "задание", "задания", "заданий")}`)))),
-    h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "3"), h("b", {}, "Начать")),
-      h("p", { class: "muted" }, "После начала ученики увидят список группы. Каждый вход вы подтверждаете сами."),
-      h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
-      addresses())));
+  if (pick.lesson === null || !data.lessons.some((l) => l.lesson === pick.lesson)) {
+    pick.lesson = (data.lessons.some((l) => l.lesson === data.state.lesson) ? data.state.lesson : null) || (data.lessons[0] && data.lessons[0].lesson);
+  }
+
+  const courseCard = h("div", { class: "course-switch", style: "margin-bottom:14px; padding:12px 14px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px;" },
+    h("div", { class: "row", style: "gap:8px; align-items:center; margin-bottom:8px" },
+      h("span", { style: "font-size:18px" }, "📚"),
+      h("b", {}, "Программа курса:"),
+      data.course ? h("span", { class: "pill" }, data.course.title) : null
+    ),
+    h("div", { class: "row", style: "gap:8px; flex-wrap:wrap" },
+      (data.courses || []).map((c) =>
+        h("button", {
+          class: "choice" + ((data.course && data.course.id === c.id) ? " sel" : ""),
+          style: "flex:1; min-width:240px; text-align:left;",
+          onclick: () => { act("set_course", { course: c.id }); }
+        },
+        h("b", {}, (c.id === "games" ? "🎮 " : "🤖 ") + c.title),
+        h("small", {}, c.subtitle))
+      )
+    )
+  );
+
+  const parts = (data.course && data.course.parts) || [];
+  let lessonButtons = [];
+  if (parts.length > 0) {
+    for (const part of parts) {
+      const partLessons = data.lessons.filter((l) => part.lessons.includes(l.lesson));
+      if (!partLessons.length) continue;
+      lessonButtons.push(
+        h("div", { class: "section-title", style: "margin:10px 0 4px; font-weight:bold; color:var(--brand); font-size:12px; text-transform:uppercase; letter-spacing:0.5px;" },
+          part.title
+        )
+      );
+      for (const l of partLessons) {
+        lessonButtons.push(
+          h("button", { class: "choice" + (pick.lesson === l.lesson ? " sel" : ""), onclick: () => { pick.lesson = l.lesson; render(); } },
+            `Занятие ${l.lesson}. ${l.title}`, h("small", {}, `${l.tasks.length} ${plural(l.tasks.length, "задание", "задания", "заданий")}`))
+        );
+      }
+    }
+  } else {
+    lessonButtons = data.lessons.map((l) =>
+      h("button", { class: "choice" + (pick.lesson === l.lesson ? " sel" : ""), onclick: () => { pick.lesson = l.lesson; render(); } },
+        `Занятие ${l.lesson}. ${l.title}`, h("small", {}, `${l.tasks.length} ${plural(l.tasks.length, "задание", "задания", "заданий")}`))
+    );
+  }
+
+  const wizard = h("section", { class: "card" },
+    h("h2", {}, "Начать занятие"),
+    courseCard,
+    h("div", { class: "wizard" },
+      h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "1"), h("b", {}, "Группа")),
+        data.groups.length ? data.groups.map((g) => h("button", { class: "choice" + (pick.group === g.id ? " sel" : ""), onclick: () => { pick.group = g.id; render(); } },
+          g.name, h("small", {}, `${g.students.length} ${plural(g.students.length, "ученик", "ученика", "учеников")}`)))
+          : h("p", { class: "muted" }, "Пока нет групп — добавьте ниже.")),
+      h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "2"), h("b", {}, "Занятие")),
+        lessonButtons),
+      h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "3"), h("b", {}, "Начать")),
+        h("p", { class: "muted" }, "После начала ученики увидят список группы. Каждый вход вы подтверждаете сами."),
+        h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
+        addresses())));
   const cards = [wizard,
     h("div", { class: "hint-cards" },
       h("button", { class: "hint-card", onclick: () => goTab("groups") }, h("b", {}, "👥 Группы"), h("small", {}, "добавить группу и учеников")),
