@@ -1879,6 +1879,15 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/teacher/play.js":       # игры — тот же файл, что и в панели ученика
                     return self.send_static(self.media_dir, "play.js")
                 return self.send_static(self.web_dir, path[len("/teacher/"):])
+            if path in ("/presentation", "/presentation/", "/slides", "/slides/"):
+                pres_dir = os.path.join(REPO, "Презентация")
+                course_id = self.kurs.s.get("course", "games")
+                fname = "games_presentation.html" if course_id == "games" else "presentation.html"
+                return self.send_static(pres_dir, fname)
+            if path in ("/presentation/games", "/slides/games"):
+                return self.send_static(os.path.join(REPO, "Презентация"), "games_presentation.html")
+            if path in ("/presentation/chatbots", "/slides/chatbots"):
+                return self.send_static(os.path.join(REPO, "Презентация"), "presentation.html")
             if path.startswith("/client/"):
                 return self.send_static(self.client_dir, path[len("/client/"):])
             if path in ("/k", "/k/"):

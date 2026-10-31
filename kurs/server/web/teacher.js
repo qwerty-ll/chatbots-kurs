@@ -288,6 +288,7 @@ function renderTop() {
   const sound = store.get("kurs.sound") !== "off";
   const item = (icon, text, fn, hint) => h("button", { class: "menu-item", title: hint || "", onclick: () => { menuOpen = false; fn(); } }, h("span", { class: "mi" }, icon), text);
   const menu = h("div", { class: "menu" + (menuOpen ? "" : " hidden") },
+    item("📽", "Слайды / Презентация", () => window.open("/presentation", "_blank"), "Открыть слайды к уроку для проектора"),
     st.running ? item("🖥", "Экран для проектора", () => window.open("/teacher/projector.html", "kurs-projector"), "Таймер и прогресс без имён") : null,
     item("🔄", "Перезапустить VS Code у всех", () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); }),
     item("⏻", "Закрыть VS Code у всех", () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); }),
@@ -298,6 +299,7 @@ function renderTop() {
     h("hr", {}),
     item("🚪", "Выйти из пульта", async () => { await api("POST", "/tapi/logout", {}); boot(); }));
   const parts = [];
+  parts.push(h("button", { class: "ghost", title: "Открыть презентацию со слайдами к уроку", onclick: () => window.open("/presentation", "_blank") }, "📽 Слайды"));
   if (st.running) {
     parts.push(h("button", { class: st.paused ? "on" : "ghost", title: "Закрыть экраны учеников надписью «Смотрим на учителя»", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
     parts.push(h("button", { class: "danger", onclick: () => {
@@ -416,6 +418,7 @@ function renderIdle() {
         addresses())));
   const cards = [wizard,
     h("div", { class: "hint-cards" },
+      h("button", { class: "hint-card", onclick: () => window.open("/presentation", "_blank") }, h("b", {}, "📽 Презентация"), h("small", {}, "открыть слайды к уроку для проектора")),
       h("button", { class: "hint-card", onclick: () => goTab("groups") }, h("b", {}, "👥 Группы"), h("small", {}, "добавить группу и учеников")),
       h("button", { class: "hint-card", onclick: () => goTab("connect") }, h("b", {}, "🔌 Подключение"), h("small", {}, "команда для компьютеров учеников")),
       h("button", { class: "hint-card", onclick: () => goTab("ai") }, h("b", {}, "🤖 Нейросеть"), h("small", {}, "ключ GigaChat и проверка связи")))];
