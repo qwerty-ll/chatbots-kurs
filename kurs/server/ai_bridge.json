@@ -4,7 +4,7 @@
   "openai_base_url": "https://api.trycloudflare.com/v1",
   "openai_key": "sk-1c068d87327e4c01b1711b3a0d2b189d",
   "openai_models": "gemini-3.8-flash,gemini-3.x-flash",
-  "updated_at": 1794056794,
+  "updated_at": 1794056947,
   "tunnel_url": "https://api.trycloudflare.com",
   "hostname": "Mac"
 }
