@@ -738,6 +738,7 @@ class Kurs {
       case "check": return this.checkTask(m.task);
       case "hint": return this.hint(m.task, m.level);
       case "reset": return this.resetTask(m.task);
+      case "resetLesson": return this.resetLesson(m.lesson);
       case "rate": await this.api("POST", "/api/rating", { task_id: m.task, rating: m.rating }); return this.pollState();
       case "compareSolution": return this.compareSolution(m.task);
       case "loadSolution": return this.loadSolution(m.task);
@@ -1171,6 +1172,47 @@ class Kurs {
       F.writeFile(file, t.start);
       this.trust(file, t.start);
       await this.openPath(file);
+    }
+  }
+
+  async resetLesson(lessonNum) {
+    const ok = await vscode.window.showWarningMessage(
+      "Сбросить всё занятие? Твой написанный код по всем заданиям этого занятия вернётся к начальному состоянию, а результаты проверок будут очищены.",
+      { modal: true },
+      "Сбросить всё занятие"
+    );
+    if (ok !== "Сбросить всё занятие") return;
+
+    if (this.v && this.v.lesson && this.v.lesson.tasks) {
+      for (const tInfo of this.v.lesson.tasks) {
+        try {
+          const t = await this.getTask(tInfo.id);
+          const file = this.taskFile(t);
+          if (fs.existsSync(file)) {
+            const doc = vscode.workspace.textDocuments.find((d) => path.resolve(d.uri.fsPath) === path.resolve(file));
+            this.guard.allow(t.start);
+            if (doc) {
+              const ed = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+              await ed.edit((b) => b.replace(new vscode.Range(0, 0, doc.lineCount, 0), t.start));
+              await doc.save();
+            } else {
+              F.writeFile(file, t.start);
+              this.trust(file, t.start);
+            }
+          }
+        } catch (e) {
+          // продолжаем для остальных файлов
+        }
+      }
+    }
+
+    try {
+      await this.api("POST", "/api/reset_lesson", { lesson: lessonNum });
+      this.refreshFiles();
+      await this.pollState();
+      this.toast("Прогресс занятия сброшен.");
+    } catch (e) {
+      vscode.window.showErrorMessage("Ошибка при сбросе занятия: " + e.message);
     }
   }
 

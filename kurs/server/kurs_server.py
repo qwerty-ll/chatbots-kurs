@@ -34,11 +34,25 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+KURS = os.path.dirname(HERE)
+CHECKER_DIR = os.path.join(KURS, "checker")
+if os.path.isdir(CHECKER_DIR) and CHECKER_DIR not in sys.path:
+    sys.path.insert(0, CHECKER_DIR)
+
+# Повышение лимита дескрипторов (на macOS по умолчанию 256, расширяем до 8192)
+try:
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(8192, hard), hard))
+except Exception:
+    pass
+
 import kurs_ai
 import kurs_play
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-KURS = os.path.dirname(HERE)
 REPO = os.path.dirname(KURS)
 AI_LOG_DAYS = 30               # сколько дней хранить ленту вопросов к нейросети
 VERSION = "0.1.0"
@@ -76,6 +90,13 @@ CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY, group_id INTEGER NOT NU
     banned TEXT NOT NULL DEFAULT '[]', edited_by TEXT NOT NULL DEFAULT '', created REAL NOT NULL, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS team_members(student_id INTEGER PRIMARY KEY, team_id INTEGER NOT NULL,
     plan TEXT NOT NULL DEFAULT '', joined REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_seen ON sessions(seen);
+CREATE INDEX IF NOT EXISTS idx_events_student_kind ON events(student_id, kind);
+CREATE INDEX IF NOT EXISTS idx_help_status ON help(status);
+CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
+CREATE INDEX IF NOT EXISTS idx_results_student ON results(student_id);
 """
 
 COURSES = {
@@ -344,34 +365,47 @@ class Store:
         except OSError:
             pass
         self.data_dir = data_dir
-        self.db = sqlite3.connect(os.path.join(data_dir, "kurs.sqlite3"), check_same_thread=False)
+        self.db = sqlite3.connect(os.path.join(data_dir, "kurs.sqlite3"), check_same_thread=False, timeout=20.0)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
         self.lock = threading.RLock()
+        with self.lock:
+            self.db.execute("PRAGMA journal_mode=WAL;")
+            self.db.execute("PRAGMA busy_timeout=15000;")
+            self.db.execute("PRAGMA synchronous=NORMAL;")
+            self.db.execute("PRAGMA foreign_keys=ON;")
+            self.db.executescript(SCHEMA)
+            self.db.commit()
         self.teacher_tokens: dict[str, float] = {}
 
     # --- state ---
     def get(self, key: str, default=None):
-        r = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
-        if r:
-            return json.loads(r["value"])
-        return default if default is not None else DEFAULT_STATE.get(key)
+        with self.lock:
+            r = self.db.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+            if r:
+                return json.loads(r["value"])
+            return default if default is not None else DEFAULT_STATE.get(key)
 
     def set(self, key: str, value) -> None:
-        self.db.execute("INSERT INTO state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                        (key, json.dumps(value, ensure_ascii=False)))
+        with self.lock:
+            self.db.execute("INSERT INTO state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (key, json.dumps(value, ensure_ascii=False)))
+            self.db.commit()
 
     def state(self) -> dict:
-        return {k: self.get(k) for k in DEFAULT_STATE}
+        with self.lock:
+            return {k: self.get(k) for k in DEFAULT_STATE}
 
     def q(self, sql: str, args=()):
-        return self.db.execute(sql, args).fetchall()
+        with self.lock:
+            return self.db.execute(sql, args).fetchall()
 
     def one(self, sql: str, args=()):
-        return self.db.execute(sql, args).fetchone()
+        with self.lock:
+            return self.db.execute(sql, args).fetchone()
 
     def ex(self, sql: str, args=()):
-        return self.db.execute(sql, args)
+        with self.lock:
+            return self.db.execute(sql, args)
 
     def log(self, student_id, kind: str, data=None) -> None:
         self.ex("INSERT INTO events(ts,student_id,kind,data) VALUES(?,?,?,?)",
@@ -843,6 +877,28 @@ class Kurs:
         self.task(task_id)
         self._touch_result(sess["student_id"], task_id)
         self.s.ex("UPDATE results SET rating=? WHERE student_id=? AND task_id=?", (rating, sess["student_id"], task_id))
+
+    def reset_lesson_progress(self, lesson_num: int, group_id: int | None = None, student_id: int | None = None) -> dict:
+        lesson = self.lib.lessons.get(lesson_num)
+        if not lesson:
+            raise ApiError(404, f"Занятие {lesson_num} не найдено")
+        task_ids = lesson.get("task_ids", [])
+        if not task_ids:
+            return {"ok": True, "lesson": lesson_num, "task_ids": [], "deleted": 0}
+        placeholders = ",".join("?" for _ in task_ids)
+        with self.s.lock:
+            if student_id:
+                cur = self.s.ex(f"DELETE FROM results WHERE student_id=? AND task_id IN ({placeholders})", (student_id, *task_ids))
+                self.s.log(student_id, "reset_lesson_progress", {"lesson": lesson_num})
+            elif group_id:
+                cur = self.s.ex(f"DELETE FROM results WHERE student_id IN (SELECT id FROM students WHERE group_id=?) AND task_id IN ({placeholders})", (group_id, *task_ids))
+                self.s.log(None, "reset_lesson_progress", {"lesson": lesson_num, "group_id": group_id})
+            else:
+                cur = self.s.ex(f"DELETE FROM results WHERE task_id IN ({placeholders})", (*task_ids,))
+                self.s.log(None, "reset_lesson_progress", {"lesson": lesson_num})
+            self.s.db.commit()
+            deleted = cur.rowcount if cur else 0
+        return {"ok": True, "lesson": lesson_num, "task_ids": task_ids, "deleted": deleted}
 
     def help(self, sess, text: str, cancel: bool = False) -> dict:
         sid = sess["student_id"]
@@ -1769,6 +1825,7 @@ class Handler(BaseHTTPRequestHandler):
     client_dir = os.path.join(KURS, "client", "dist")
     media_dir = os.path.join(KURS, "vscode", "media")
     quiet = False
+    timeout = 15  # Защита от зависших потоков: таймаут сокета 15 с
 
     def log_message(self, fmt, *args):  # noqa: D401
         if not self.quiet:
@@ -1776,31 +1833,37 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- ответы ---
     def send_json(self, data, status: int = 200, headers: dict | None = None) -> None:
-        body = json.dumps(data, ensure_ascii=False).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        for k, v in (headers or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            self.close_connection = True
 
     def send_bytes(self, body: bytes, ctype: str, status: int = 200, headers: dict | None = None) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        for k, v in (headers or {}).items():
-            val = str(v)
-            try:
-                val.encode("latin-1")
-                self.send_header(k, val)
-            except UnicodeEncodeError:
-                self.send_header(k, quote(val, safe=";= \"'*-"))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            for k, v in (headers or {}).items():
+                val = str(v)
+                try:
+                    val.encode("latin-1")
+                    self.send_header(k, val)
+                except UnicodeEncodeError:
+                    self.send_header(k, quote(val, safe=";= \"'*-"))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            self.close_connection = True
 
     def send_static(self, folder: str, name: str) -> None:
         path = os.path.realpath(os.path.join(folder, name))
@@ -1813,6 +1876,7 @@ class Handler(BaseHTTPRequestHandler):
             host = re.sub(r"[^A-Za-z0-9.:\-\[\]]", "", self.headers.get("Host") or "")
             headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline'; "
                                                   f"img-src 'self' data:; connect-src 'self' ws://{host}; frame-ancestors 'none'")
+            headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         self.send_bytes(body, STATIC_TYPES.get(os.path.splitext(path)[1], "application/octet-stream"), 200, headers)
 
     # --- разбор запроса ---
@@ -1862,12 +1926,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.teacher_ok():
                     raise ApiError(401, "Нужно войти")
                 return self.send_json(self.kurs.ai.test())
-            with self.kurs.s.lock:
-                if path.startswith("/api/"):
-                    return self.student_api(method, path[5:], qs)
-                if path.startswith("/tapi/"):
-                    return self.teacher_api(method, path[6:], qs)
-                self.kurs.s.db.commit()
+            if path.startswith("/api/"):
+                return self.student_api(method, path[5:], qs)
+            if path.startswith("/tapi/"):
+                return self.teacher_api(method, path[6:], qs)
             if path in ("/", "/teacher", "/teacher/"):
                 if not self.is_local():
                     return self.send_bytes("Страница учителя открывается только на учительском компьютере.".encode(),
@@ -1902,13 +1964,25 @@ class Handler(BaseHTTPRequestHandler):
                 src = src.replace('DEFAULT_SERVER = ""', f'DEFAULT_SERVER = "http://{host}"', 1)
                 return self.send_bytes(src.encode("utf-8"), "text/x-python; charset=utf-8")
             return self.send_json({"error": "Не найдено"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+            return
         except ApiError as e:
-            self.kurs.s.db.rollback()
+            try:
+                self.kurs.s.db.rollback()
+            except Exception:
+                pass
             return self.send_json(dict(e.extra, error=e.message), e.status)
         except Exception as e:  # noqa: BLE001
-            self.kurs.s.db.rollback()
+            try:
+                self.kurs.s.db.rollback()
+            except Exception:
+                pass
             sys.stderr.write(f"Ошибка сервера: {e!r}\n")
-            return self.send_json({"error": "Ошибка сервера"}, 500)
+            try:
+                return self.send_json({"error": "Ошибка сервера"}, 500)
+            except Exception:
+                self.close_connection = True
 
     # --- партия по WebSocket ---
     def ws_play(self, qs: dict) -> None:
@@ -1981,6 +2055,10 @@ class Handler(BaseHTTPRequestHandler):
                 b = self.body_json()
                 k.rating(sess, str(b.get("task_id")), str(b.get("rating")))
                 out = {"ok": True}
+            elif method == "POST" and name == "reset_lesson":
+                b = self.body_json()
+                lesson_num = int(b.get("lesson") or k.s.get("lesson") or 1)
+                out = k.reset_lesson_progress(lesson_num, student_id=sess["student_id"])
             elif method == "POST" and name == "help":
                 b = self.body_json()
                 out = k.help(sess, str(b.get("text", "")), bool(b.get("cancel")))
@@ -2111,6 +2189,11 @@ class Handler(BaseHTTPRequestHandler):
                 k.continue_class()
             elif name == "end":
                 k.end()
+            elif name == "reset_lesson_progress":
+                lesson_num = int(b.get("lesson") or k.s.get("lesson") or 1)
+                gid = int(b.get("group_id") or k.s.get("group_id") or 0) if b.get("group_id") else None
+                sid = int(b.get("student_id") or 0) if b.get("student_id") else None
+                out = k.reset_lesson_progress(lesson_num, group_id=gid, student_id=sid)
             elif name == "open":
                 ids = list(b.get("ids") or [])
                 if b.get("step") is not None:
@@ -2220,6 +2303,18 @@ def clean_pc(pc) -> str:
     return pc or "без-имени"
 
 
+class RobustThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 128  # Очередь входящих запросов для класса (по умолчанию в Python всего 5)
+
+    def handle_error(self, request, client_address):
+        err = sys.exc_info()[1]
+        if isinstance(err, (BrokenPipeError, ConnectionResetError, TimeoutError, OSError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def make_server(host: str, port: int, data_dir: str, tasks_dir: str | None = None, quiet: bool = False):
     store = Store(data_dir)
     st = store.state()
@@ -2231,7 +2326,7 @@ def make_server(host: str, port: int, data_dir: str, tasks_dir: str | None = Non
     if tasks_dir:
         lib.is_custom = True
     handler = type("KursHandler", (Handler,), {"kurs": Kurs(store, lib), "quiet": quiet})
-    return ThreadingHTTPServer((host, port), handler)
+    return RobustThreadingHTTPServer((host, port), handler)
 
 
 def build_client() -> None:
@@ -2294,10 +2389,15 @@ def main() -> None:
     print(f"🟢 [4] ПУЛЬТ УЧИТЕЛЯ    : http://localhost:{a.port}/teacher")
     print("=" * 66)
     print("  Остановить сервер: нажмите Ctrl+C в этом окне\n")
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\nСервер остановлен.")
+    while True:
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            print("\nСервер остановлен учителем.")
+            break
+        except Exception as e:
+            sys.stderr.write(f"\n[Критическая ошибка цикла сервера, автовосстановление]: {e!r}\n")
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":

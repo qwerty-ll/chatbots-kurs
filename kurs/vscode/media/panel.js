@@ -364,8 +364,15 @@
     const out = [
       view.lesson.part_title ? h("div", { class: "pill", style: "align-self:flex-start; margin-bottom:6px; font-weight:600;" }, view.lesson.part_title) : null,
       h("h1", {}, view.lesson.title),
-      h("p", { class: "muted" }, view.lesson.teams ? "Проект команды: каждый пишет свои инструменты, бот команды собирает их вместе."
-        : `Выполнено ${done} из ${tasks.length}. 🎯 Сначала реши тренировочные задачи, затем собери игру!`)
+      h("div", { class: "row", style: "align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;" },
+        h("p", { class: "muted", style: "margin:0;" }, view.lesson.teams ? "Проект команды: каждый пишет свои инструменты, бот команды собирает их вместе."
+          : `Выполнено ${done} из ${tasks.length}. 🎯 Сначала реши тренировочные задачи, затем собери игру!`),
+        tasks.length ? h("button", {
+          class: "link small",
+          style: "color:var(--bad);font-weight:600;padding:2px 4px;",
+          title: "Сбросить прогресс всех задач этого урока и начать сначала",
+          onclick: () => send("resetLesson", { lesson: view.lesson.num })
+        }, "↺ Сбросить занятие") : null)
     ].filter(Boolean);
     if (view.lesson.teams) out.push(teamBrief());
     if (next) {
@@ -391,6 +398,15 @@
         h("h2", {}, view.idea ? "💡 Твоя идея проекта: " + (view.idea.title || "без названия") : "💡 Придумай свой проект"),
         h("p", { class: "muted small-text" }, "На следующем занятии — проект в командах. Запиши идею: кто бот, что делает и какие у него инструменты."),
         h("button", { class: view.idea ? "secondary small" : "small", onclick: () => go({ tab: "idea" }) }, view.idea ? "Изменить идею" : "Записать идею")));
+    }
+    if (tasks.length) {
+      out.push(h("div", { style: "margin-top:20px;padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:center;" },
+        h("button", {
+          class: "secondary small",
+          style: "color:var(--bad);border-color:rgba(239, 68, 68, .35);",
+          title: "Сбросить все задачи этого урока к исходным файлам и очистить результаты",
+          onclick: () => send("resetLesson", { lesson: view.lesson.num })
+        }, "↺ Начать занятие заново (сбросить всё)")));
     }
     return out;
   }
@@ -620,8 +636,9 @@
     if (passed) out.push(...solutionBlock(t, st));
     if (!passed && !check && !(st.attempts > 0)) out.push(stepsCard(t, st));
     out.push(hintsCard(t, st));
-    out.push(h("div", { class: "row", style: "margin-top:6px" },
+    out.push(h("div", { class: "row", style: "margin-top:6px;flex-wrap:wrap;" },
       view.files[id] ? h("button", { class: "secondary small", onclick: () => send("reset", { task: id }) }, "↺ Начать заново") : null,
+      h("button", { class: "secondary small", style: "color:var(--bad);", onclick: () => send("resetLesson", { lesson: view.lesson.num }) }, "↺ Сбросить всё занятие"),
       h("button", { class: "secondary small", onclick: () => askAiAboutTask(t) }, "🤖 Спросить ИИ"),
       h("button", { class: "secondary small", onclick: () => go({ tab: "help" }) }, "🙋 Позвать учителя")));
     return out;

@@ -25,6 +25,8 @@ button.ghost { background: var(--card); color: var(--text); border: 1.5px solid 
 button.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 button.big { padding: 12px 22px; font-size: 17px; border-radius: 12px; }
 button.danger { background: var(--bad); }
+button.ghost.danger { background: var(--card); color: var(--bad); border: 1.5px solid rgba(239, 68, 68, .4); }
+button.ghost.danger:hover { background: var(--bad-bg); border-color: var(--bad); filter: none; }
 button.ok { background: var(--ok); }
 button.on { background: var(--indigo); }
 button.link { background: none; color: var(--blue); padding: 2px 4px; }

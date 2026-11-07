@@ -95,6 +95,17 @@ def start_tunnel() -> tuple[subprocess.Popen, str]:
                     break
                 m = pattern.search(line)
                 if m:
+                    # Фоновый сброс stdout/stderr, чтобы 64КБ буфер пайпа ОС не переполнялся и не вешал туннель
+                    def _drain(p):
+                        try:
+                            while p.poll() is None:
+                                line = p.stdout.readline() or p.stderr.readline()
+                                if not line:
+                                    break
+                        except Exception:
+                            pass
+                    import threading
+                    threading.Thread(target=_drain, args=(proc,), daemon=True).start()
                     return proc, m.group(0)
             proc.terminate()
         except Exception:
@@ -114,6 +125,8 @@ def start_tunnel() -> tuple[subprocess.Popen, str]:
                     break
                 m = pattern.search(line)
                 if m:
+                    import threading
+                    threading.Thread(target=_drain, args=(proc,), daemon=True).start()
                     return proc, m.group(0)
             proc.terminate()
         except Exception:

@@ -293,6 +293,18 @@ function renderTop() {
     item("🔄", "Перезапустить VS Code у всех", () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); }),
     item("⏻", "Закрыть VS Code у всех", () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); }),
     st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
+    item("↺", "Сбросить прогресс занятия у группы", () => {
+      const lessonNum = st.running ? (data.lesson && data.lesson.num) : pick.lesson;
+      const groupId = st.running ? data.state.group_id : pick.group;
+      if (!lessonNum || !groupId) return alert("Сначала выберите группу и занятие");
+      const l = data.lessons.find((x) => x.lesson === lessonNum);
+      const g = data.groups.find((x) => x.id === groupId);
+      const title = l ? l.title : `Занятие ${lessonNum}`;
+      const groupName = g ? g.name : "выбранной группы";
+      if (confirm(`Сбросить прогресс занятия ${lessonNum} («${title}») у ВСЕХ учеников группы «${groupName}»?\n\nВсе выполненные задания, попытки и подсказки этого урока будут очищены.`)) {
+        act("reset_lesson_progress", { lesson: lessonNum, group_id: groupId });
+      }
+    }, "Очистить попытки и оценки по всем заданиям урока у группы"),
     item("📦", "Скачать проекты команд (ZIP)", () => { location.href = "/tapi/export_projects.zip"; }, "Все боты, код и команда.json"),
     item("📄", "Скачать проекты команд (JSON)", () => { location.href = "/tapi/export_projects.json"; }, "Машиночитаемый JSON для парсинга"),
     item(sound ? "🔔" : "🔕", sound ? "Звук сигналов: включён" : "Звук сигналов: выключен", () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); }),
@@ -414,7 +426,21 @@ function renderIdle() {
         lessonButtons),
       h("div", {}, h("div", { class: "row" }, h("span", { class: "num" }, "3"), h("b", {}, "Начать")),
         h("p", { class: "muted" }, "После начала ученики увидят список группы. Каждый вход вы подтверждаете сами."),
-        h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
+        h("div", { class: "row", style: "gap:10px;margin-bottom:8px;flex-wrap:wrap;align-items:center;" },
+          h("button", { class: "big", disabled: !pick.group || !pick.lesson, onclick: () => act("start", { group_id: pick.group, lesson: pick.lesson }) }, "▶ Начать занятие"),
+          h("button", {
+            class: "ghost small danger",
+            disabled: !pick.group || !pick.lesson,
+            title: "Очистить все результаты проверок и попытки выбранного занятия для этой группы",
+            onclick: () => {
+              const g = data.groups.find((x) => x.id === pick.group);
+              const l = data.lessons.find((x) => x.lesson === pick.lesson);
+              const gName = g ? g.name : "выбранной группы";
+              const lTitle = l ? l.title : `Занятие ${pick.lesson}`;
+              if (!confirm(`Сбросить прогресс занятия ${pick.lesson} («${lTitle}») у группы «${gName}»?\n\nВсе выполненные задания, попытки и подсказки учеников будут очищены.`)) return;
+              act("reset_lesson_progress", { lesson: pick.lesson, group_id: pick.group });
+            }
+          }, "↺ Сбросить прогресс занятия у группы")),
         addresses())));
   const cards = [wizard,
     h("div", { class: "hint-cards" },
@@ -430,7 +456,16 @@ function renderIdle() {
     cards.unshift(h("section", { class: "card" }, h("h2", {}, "Продолжить прошлое занятие"),
       h("p", {}, `${lastGroup.name} · Занятие ${lastLesson.lesson}. ${lastLesson.title}`),
       h("p", { class: "muted" }, `Вернутся открытые задания (${n}) и этап тетради. Решённые задания и файлы учеников сохранены — заново ничего делать не нужно.`),
-      h("button", { class: "big", onclick: () => act("continue") }, "⏯ Продолжить занятие")));
+      h("div", { class: "row", style: "gap:10px;flex-wrap:wrap;align-items:center;" },
+        h("button", { class: "big", onclick: () => act("continue") }, "⏯ Продолжить занятие"),
+        h("button", {
+          class: "ghost small danger",
+          title: "Сбросить результаты прошлого занятия",
+          onclick: () => {
+            if (!confirm(`Сбросить прогресс занятия ${lastLesson.lesson} («${lastLesson.title}») у группы «${lastGroup.name}»?\n\nВсе выполненные задания и попытки учеников будут очищены.`)) return;
+            act("reset_lesson_progress", { lesson: lastLesson.lesson, group_id: lastGroup.id });
+          }
+        }, "↺ Сбросить прогресс этого занятия"))));
   }
   return cards;
 }
@@ -624,6 +659,11 @@ function tableCard(lesson) {
   const foot = h("tr", {}, h("td", { class: "name" }, "Сдали"), lesson.tasks.map((t) =>
     h("td", {}, `${data.students.filter((s) => s.results[t.id] && s.results[t.id].status === "passed").length}`)), h("td", {}, ""));
   return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "Прогресс класса"), h("span", { class: "spacer" }),
+      h("button", { class: "ghost small danger", title: "Сбросить результаты всех заданий этого урока у всех учеников группы",
+        onclick: async () => {
+          if (!confirm(`Сбросить прогресс урока ${lesson.num} («${lesson.title}») у всех учеников группы?\n\nВсе выполненные задания, попытки и подсказки этого урока будут очищены.`)) return;
+          await act("reset_lesson_progress", { lesson: lesson.num, group_id: data.state.group_id });
+        } }, "↺ Сбросить прогресс урока"),
       h("a", { href: "/tapi/export.csv" }, h("button", { class: "ghost small" }, "Скачать таблицу"))),
     h("div", { class: "legend" },
       h("span", {}, h("i", { style: "background:var(--ok-bg)" }), "выполнено"),
@@ -1009,7 +1049,18 @@ async function showStudent(id) {
     const when = (ts) => new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     const locked = (data.locks || []).some((x) => x.student_id === id);
     openModal(h("h2", {}, d.name),
-      locked ? h("p", {}, h("button", { class: "ok small", onclick: async () => { await act("unlock", { student_id: id }); closeModal(); } }, "🔓 Разблокировать панель")) : null,
+      h("div", { style: "display:flex;gap:8px;align-items:center;margin:6px 0 10px;" },
+        locked ? h("button", { class: "ok small", onclick: async () => { await act("unlock", { student_id: id }); closeModal(); } }, "🔓 Разблокировать панель") : null,
+        data.lesson ? h("button", {
+          class: "ghost small danger",
+          title: "Сбросить результаты текущего урока только для этого ученика",
+          onclick: async () => {
+            if (!confirm(`Сбросить прогресс урока ${data.lesson.num} («${data.lesson.title}») у ученика ${d.name}?\n\nВсе результаты проверок, попытки и подсказки этого урока будут очищены.`)) return;
+            await act("reset_lesson_progress", { lesson: data.lesson.num, student_id: id });
+            closeModal();
+          }
+        }, "↺ Сбросить прогресс урока ученика") : null
+      ),
       d.ai_queries && d.ai_queries.length ? [
         h("h3", { style: "margin-top:14px;display:flex;align-items:center;gap:8px;" }, "🤖 Запросы к нейросети", h("span", { class: "chip" }, d.ai_queries.length)),
         h("p", { class: "muted small" }, "Что ученик отправлял ИИ и какие ответы получал:"),
