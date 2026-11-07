@@ -73,6 +73,9 @@ class Kurs {
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
     this.restartSeen = {};     // номера команд «перезапустить VS Code» с пульта, которые мы уже видели
+    this.focusMode = false;    // режим концентрации (блокировка игр и браузеров)
+    this.focusTimer = null;
+    this.lastFocusWarningAt = 0;
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -130,6 +133,10 @@ class Kurs {
   stop() {
     clearTimeout(this.timer);
     clearTimeout(this.uploadTimer);
+    if (this.focusTimer) {
+      clearInterval(this.focusTimer);
+      this.focusTimer = null;
+    }
   }
 
   schedule(fn, ms) {
@@ -157,6 +164,7 @@ class Kurs {
       return;
     }
     if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
+    if (typeof hello.focus_mode !== "undefined") this.applyFocusMode(!!hello.focus_mode);
     if (!hello.running) {
       this.setScreen("idle", "Занятие ещё не началось. Подожди учителя.");
       this.schedule(this.boot, IDLE_POLL_MS);
@@ -187,6 +195,7 @@ class Kurs {
     try {
       const hello = await call(this.server(), "GET", "/api/hello?pc=" + encodeURIComponent(this.pc()));
       if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
+      if (typeof hello.focus_mode !== "undefined") this.applyFocusMode(!!hello.focus_mode);
       if (!hello.running) return this.boot();
       this.v.students = hello.students || [];
       this.v.here = hello.here || null;
@@ -308,6 +317,7 @@ class Kurs {
       if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me") || this.checkClose(st.close)) return;
       st.local_offset = Date.now() / 1000 - st.now;
       this.applyLock(!!st.locked);
+      this.applyFocusMode(!!st.focus_mode);
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
       this.v.me = { name: st.name, pc: st.pc };
@@ -447,6 +457,66 @@ class Kurs {
   async applyLock(on) {
     this.locked = on;
     return this.applyReadonly();
+  }
+
+  // ---------------------------------------------------------------- режим концентрации (блокировка игр и браузеров)
+  applyFocusMode(on) {
+    if (this.focusMode === on) return;
+    this.focusMode = on;
+    if (on) {
+      if (!this.focusTimer) {
+        this.enforceFocus();
+        this.focusTimer = setInterval(() => this.enforceFocus(), 2500);
+      }
+    } else {
+      if (this.focusTimer) {
+        clearInterval(this.focusTimer);
+        this.focusTimer = null;
+      }
+    }
+  }
+
+  enforceFocus() {
+    if (!this.focusMode) return;
+    const isWin = process.platform === "win32";
+    if (isWin) {
+      // Windows: закрываем браузеры, лаунчеры, javaw (Майнкрафт), мессенджеры
+      const targets = [
+        "chrome.exe", "msedge.exe", "browser.exe", "yandex.exe", "firefox.exe",
+        "opera.exe", "brave.exe", "javaw.exe", "Minecraft.exe", "Telegram.exe",
+        "Discord.exe", "Steam.exe"
+      ];
+      const args = ["/F", "/T", ...targets.flatMap((t) => ["/IM", t])];
+      cp.execFile("taskkill", args, (err) => {
+        if (!err) this.onFocusKilled();
+      });
+    } else {
+      // Linux (ALT Linux, Astra, Ubuntu) и macOS:
+      // 1. Браузеры, мессенджеры и клиенты игр (точное совпадение имени процесса)
+      const names = [
+        "chrome", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+        "yandex-browser", "yandex-browser-stable", "browser", "firefox", "firefox-bin", "opera",
+        "msedge", "brave", "brave-browser", "vivaldi", "telegram-desktop", "discord",
+        "Discord", "steam", "minetest", "tlauncher", "minecraft-launcher", "supertux", "supertuxkart"
+      ];
+      cp.exec(`pkill -x "${names.join("|")}"`, (err1) => {
+        if (!err1) this.onFocusKilled();
+      });
+      // 2. Майнкрафт на Java (java с аргументами minecraft / tlauncher / klauncher / curseforge / prism)
+      // Обычный python/python3 или VS Code никогда не задеваются!
+      cp.exec('pkill -f -i "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"', (err2) => {
+        if (!err2) this.onFocusKilled();
+      });
+    }
+  }
+
+  onFocusKilled() {
+    const now = Date.now();
+    if (now - this.lastFocusWarningAt > 12000) {
+      this.lastFocusWarningAt = now;
+      vscode.window.showWarningMessage("🚫 Игра или браузер закрыты. Учитель включил режим урока!");
+      this.toast("🚫 Игра или браузер закрыты учителем. Возвращайся к заданию!");
+    }
   }
 
   /** Что в папке курса только для чтения: всё — при блокировке; всегда — файлы товарищей и бот команды
