@@ -73,9 +73,8 @@ class Kurs {
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
     this.restartSeen = {};     // номера команд «перезапустить VS Code» с пульта, которые мы уже видели
-    this.focusMode = false;    // режим концентрации (блокировка игр и браузеров)
+    this.focusMode = false;    // режим концентрации (тихая блокировка игр и браузеров)
     this.focusTimer = null;
-    this.lastFocusWarningAt = 0;
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -480,18 +479,16 @@ class Kurs {
     if (!this.focusMode) return;
     const isWin = process.platform === "win32";
     if (isWin) {
-      // Windows: закрываем браузеры, лаунчеры, javaw (Майнкрафт), мессенджеры
+      // Windows: тихо закрываем браузеры, лаунчеры, javaw (Майнкрафт), мессенджеры
       const targets = [
         "chrome.exe", "msedge.exe", "browser.exe", "yandex.exe", "firefox.exe",
         "opera.exe", "brave.exe", "javaw.exe", "Minecraft.exe", "Telegram.exe",
         "Discord.exe", "Steam.exe"
       ];
       const args = ["/F", "/T", ...targets.flatMap((t) => ["/IM", t])];
-      cp.execFile("taskkill", args, (err) => {
-        if (!err) this.onFocusKilled();
-      });
+      cp.execFile("taskkill", args, () => {});
     } else {
-      // Linux (ALT Linux, Astra, Ubuntu) и macOS:
+      // Linux (ALT Linux, Astra, Ubuntu) и macOS: тихо закрываем процессы
       // 1. Браузеры, мессенджеры и клиенты игр (точное совпадение имени процесса)
       const names = [
         "chrome", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
@@ -499,23 +496,10 @@ class Kurs {
         "msedge", "brave", "brave-browser", "vivaldi", "telegram-desktop", "discord",
         "Discord", "steam", "minetest", "tlauncher", "minecraft-launcher", "supertux", "supertuxkart"
       ];
-      cp.exec(`pkill -x "${names.join("|")}"`, (err1) => {
-        if (!err1) this.onFocusKilled();
-      });
+      cp.exec(`pkill -x "${names.join("|")}"`, () => {});
       // 2. Майнкрафт на Java (java с аргументами minecraft / tlauncher / klauncher / curseforge / prism)
       // Обычный python/python3 или VS Code никогда не задеваются!
-      cp.exec('pkill -f -i "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"', (err2) => {
-        if (!err2) this.onFocusKilled();
-      });
-    }
-  }
-
-  onFocusKilled() {
-    const now = Date.now();
-    if (now - this.lastFocusWarningAt > 12000) {
-      this.lastFocusWarningAt = now;
-      vscode.window.showWarningMessage("🚫 Игра или браузер закрыты. Учитель включил режим урока!");
-      this.toast("🚫 Игра или браузер закрыты учителем. Возвращайся к заданию!");
+      cp.exec('pkill -f -i "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"', () => {});
     }
   }
 
