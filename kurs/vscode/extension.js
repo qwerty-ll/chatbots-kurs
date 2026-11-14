@@ -73,8 +73,9 @@ class Kurs {
     this.pending = [];     // результаты, которые не удалось отправить без связи
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
     this.restartSeen = {};     // номера команд «перезапустить VS Code» с пульта, которые мы уже видели
-    this.focusMode = false;    // режим концентрации (тихая блокировка игр и браузеров)
-    this.focusTimer = null;
+    this.focusMode = false;    // тихая блокировка игр и всех браузеров
+    this.blockSites = false;   // тихая блокировка ChatGPT, DeepSeek, Алисы, ГигаЧата и VK
+    this.guardProc = null;
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
     for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
@@ -132,10 +133,7 @@ class Kurs {
   stop() {
     clearTimeout(this.timer);
     clearTimeout(this.uploadTimer);
-    if (this.focusTimer) {
-      clearInterval(this.focusTimer);
-      this.focusTimer = null;
-    }
+    this.stopFocusGuard();
   }
 
   schedule(fn, ms) {
@@ -163,7 +161,9 @@ class Kurs {
       return;
     }
     if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
-    if (typeof hello.focus_mode !== "undefined") this.applyFocusMode(!!hello.focus_mode);
+    if (typeof hello.focus_mode !== "undefined" || typeof hello.block_sites !== "undefined") {
+      this.applyGuardState(!!hello.focus_mode, !!hello.block_sites);
+    }
     if (!hello.running) {
       this.setScreen("idle", "Занятие ещё не началось. Подожди учителя.");
       this.schedule(this.boot, IDLE_POLL_MS);
@@ -194,7 +194,9 @@ class Kurs {
     try {
       const hello = await call(this.server(), "GET", "/api/hello?pc=" + encodeURIComponent(this.pc()));
       if (this.checkRestart(hello.restart) || this.checkClose(hello.close)) return;
-      if (typeof hello.focus_mode !== "undefined") this.applyFocusMode(!!hello.focus_mode);
+      if (typeof hello.focus_mode !== "undefined" || typeof hello.block_sites !== "undefined") {
+        this.applyGuardState(!!hello.focus_mode, !!hello.block_sites);
+      }
       if (!hello.running) return this.boot();
       this.v.students = hello.students || [];
       this.v.here = hello.here || null;
@@ -316,7 +318,7 @@ class Kurs {
       if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me") || this.checkClose(st.close)) return;
       st.local_offset = Date.now() / 1000 - st.now;
       this.applyLock(!!st.locked);
-      this.applyFocusMode(!!st.focus_mode);
+      this.applyGuardState(!!st.focus_mode, !!st.block_sites);
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
       this.v.me = { name: st.name, pc: st.pc };
@@ -458,48 +460,47 @@ class Kurs {
     return this.applyReadonly();
   }
 
-  // ---------------------------------------------------------------- режим концентрации (блокировка игр и браузеров)
-  applyFocusMode(on) {
-    if (this.focusMode === on) return;
-    this.focusMode = on;
-    if (on) {
-      if (!this.focusTimer) {
-        this.enforceFocus();
-        this.focusTimer = setInterval(() => this.enforceFocus(), 2500);
-      }
-    } else {
-      if (this.focusTimer) {
-        clearInterval(this.focusTimer);
-        this.focusTimer = null;
-      }
-    }
+  // ---------------------------------------------------------------- тихий контроль игр и сайтов
+  focusGuardScript() {
+    return this.ctx.asAbsolutePath(path.join("lib", "focus_guard.py"));
   }
 
-  enforceFocus() {
-    if (!this.focusMode) return;
-    const isWin = process.platform === "win32";
-    if (isWin) {
-      // Windows: тихо закрываем браузеры, лаунчеры, javaw (Майнкрафт), мессенджеры
-      const targets = [
-        "chrome.exe", "msedge.exe", "browser.exe", "yandex.exe", "firefox.exe",
-        "opera.exe", "brave.exe", "javaw.exe", "Minecraft.exe", "Telegram.exe",
-        "Discord.exe", "Steam.exe"
-      ];
-      const args = ["/F", "/T", ...targets.flatMap((t) => ["/IM", t])];
-      cp.execFile("taskkill", args, () => {});
-    } else {
-      // Linux (ALT Linux, Astra, Ubuntu) и macOS: тихо закрываем процессы
-      // 1. Браузеры, мессенджеры и клиенты игр (точное совпадение имени процесса)
-      const names = [
-        "chrome", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
-        "yandex-browser", "yandex-browser-stable", "browser", "firefox", "firefox-bin", "opera",
-        "msedge", "brave", "brave-browser", "vivaldi", "telegram-desktop", "discord",
-        "Discord", "steam", "minetest", "tlauncher", "minecraft-launcher", "supertux", "supertuxkart"
-      ];
-      cp.exec(`pkill -x "${names.join("|")}"`, () => {});
-      // 2. Майнкрафт на Java (java с аргументами minecraft / tlauncher / klauncher / curseforge / prism)
-      // Обычный python/python3 или VS Code никогда не задеваются!
-      cp.exec('pkill -f -i "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"', () => {});
+  stopFocusGuard() {
+    const proc = this.guardProc;
+    this.guardProc = null;
+    if (!proc) return;
+    try { if (proc.stdin) proc.stdin.end(); } catch (_) {}
+    try { proc.kill("SIGTERM"); } catch (_) {}
+  }
+
+  applyGuardState(blockGames, blockSites) {
+    const wantActive = !!(blockGames || blockSites);
+    const sameFlags = this.focusMode === !!blockGames && this.blockSites === !!blockSites;
+    if (sameFlags && (wantActive ? !!this.guardProc : !this.guardProc)) return;
+    this.focusMode = !!blockGames;
+    this.blockSites = !!blockSites;
+    this.stopFocusGuard();
+    if (!wantActive) return;
+
+    const script = this.focusGuardScript();
+    const args = [script, "--watch", "--interval", "0.9"];
+    if (this.focusMode) args.push("--block-games");
+    if (this.blockSites) args.push("--block-sites");
+    try {
+      const proc = cp.spawn(this.python(), args, {
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true,
+        detached: false
+      });
+      this.guardProc = proc;
+      proc.on("error", () => {
+        if (this.guardProc === proc) this.guardProc = null;
+      });
+      proc.on("exit", () => {
+        if (this.guardProc === proc) this.guardProc = null;
+      });
+    } catch (_) {
+      this.guardProc = null;
     }
   }
 

@@ -297,6 +297,11 @@ function renderTop() {
       : item("🛡️", "Заблокировать игры и браузеры у всех", () => {
           if (confirm("Включить режим урока у ВСЕХ учеников? Браузеры, Майнкрафт и игры будут принудительно закрыты.")) act("toggle_focus", { on: true });
         }, "Принудительно закрыть игры и браузеры на всех компьютерах"),
+    data.block_sites_all
+      ? item("🔓", "Разрешить ИИ и соцсети в браузере у всех", () => act("toggle_block_sites", { on: false }), "Разрешить ChatGPT, DeepSeek, Алису, ГигаЧат и VK")
+      : item("🚫", "Запретить ИИ и VK в браузере у всех", () => {
+          if (confirm("Закрывать вкладки с ChatGPT, DeepSeek, Алисой AI, ГигаЧатом, VK и др. на ВСЕХ компьютерах? Обычные сайты и VS Code продолжат работать.")) act("toggle_block_sites", { on: true });
+        }, "Тихо закрывать ChatGPT, DeepSeek, Алису, ГигаЧат, VK и соцсети"),
     st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
     item("↺", "Сбросить прогресс занятия у группы", () => {
       const lessonNum = st.running ? (data.lesson && data.lesson.num) : pick.lesson;
@@ -581,7 +586,7 @@ function attentionCard() {
     h("input", { type: "checkbox", checked: data.state.lock_on_paste ? true : null, onchange: (e) => act("lock_on_paste", { on: e.target.checked }) }),
     " блокировать панель при вставке чужого кода");
   const focusCount = (data.students || []).filter((s) => s.focus).length;
-  const focusControl = h("div", { style: "margin-top:10px;padding-top:8px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;" },
+  const focusControl = h("div", { style: "margin-top:10px;padding-top:8px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;" },
     h("span", { class: "small", style: "font-weight:600;color:var(--text);" },
       focusCount > 0 ? `🛡️ Блок игр: ${focusCount} уч.` : "🛡️ Блокировка игр и браузеров"
     ),
@@ -590,7 +595,17 @@ function attentionCard() {
       onclick: () => act("toggle_focus", { on: focusCount === 0 })
     }, focusCount > 0 ? "Снять у всех" : "Вкл у всех")
   );
-  if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число."), lockSwitch, focusControl); return box; }
+  const blockSitesCount = (data.students || []).filter((s) => s.block_sites).length;
+  const blockSitesControl = h("div", { style: "margin-top:8px;padding-top:8px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;" },
+    h("span", { class: "small", style: "font-weight:600;color:var(--text);" },
+      blockSitesCount > 0 ? `🚫 Блок ГПТ/Алиса/ГигаЧат/VK: ${blockSitesCount} уч.` : "🚫 Блок ГПТ / Алиса / ГигаЧат / VK"
+    ),
+    h("button", {
+      class: "ghost small" + (blockSitesCount > 0 ? " danger" : ""),
+      onclick: () => act("toggle_block_sites", { on: blockSitesCount === 0 })
+    }, blockSitesCount > 0 ? "Снять у всех" : "Вкл у всех")
+  );
+  if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число."), lockSwitch, focusControl, blockSitesControl); return box; }
   for (const inv of invites) {
     box.append(h("div", { class: "att" }, h("span", { class: "ic" }, "🎮"),
       h("div", { class: "txt" }, h("b", {}, inv.name), " зовёт вас сыграть", h("small", {}, KursPlay.titles[inv.game] || inv.game)),
@@ -621,7 +636,7 @@ function attentionCard() {
       x.status !== "going" ? h("button", { class: "ghost small", onclick: () => act("help", { id: x.id, going: true }) }, "Иду") : null,
       h("button", { class: "ok small", onclick: () => act("help", { id: x.id }) }, "Готово")));
   }
-  box.append(lockSwitch, focusControl);
+  box.append(lockSwitch, focusControl, blockSitesControl);
   return box;
 }
 
@@ -658,13 +673,20 @@ function tableCard(lesson) {
         onclick: () => { if (confirm(`Разблокировать панель: ${s.name}?`)) act("unlock", { student_id: s.id }); } }, "🔒")] : null,
       s.pastes ? [" ", h("span", { class: "paste-flag", title: `Пытался вставить готовый код: ${s.pastes} раз за занятие. Нажмите на имя — покажу что.`, onclick: () => showStudent(s.id) }, `⚠ ${s.pastes}`)] : null,
       " ", h("span", { class: "pc" }, s.pc || "не вошёл"),
+      s.block_sites
+        ? h("button", { class: "link small alert-btn", style: "background:#FFF3E0;color:#E65100;border:1px solid #FFCC80;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:700;margin-left:4px;cursor:pointer;",
+            title: `Блок ChatGPT, DeepSeek, Алисы, ГигаЧата и VK ВКЛЮЧЁН для ${s.name}. Нажмите, чтобы разрешить`,
+            onclick: () => act("toggle_block_sites", { student_id: s.id, on: false }) }, "🚫 ИИ/ВК")
+        : h("button", { class: "link small", style: "color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px;margin-left:4px;cursor:pointer;",
+            title: `Закрывать ChatGPT, DeepSeek, Алису, ГигаЧат и VK в браузере у ${s.name}`,
+            onclick: () => act("toggle_block_sites", { student_id: s.id, on: true }) }, "🧠 ИИ/ВК"),
       s.focus
         ? h("button", { class: "link small alert-btn", style: "background:#FFEAEA;color:#D32F2F;border:1px solid #FFCDD2;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:700;margin-left:4px;cursor:pointer;",
             title: `Блокировка игр и браузеров ВКЛЮЧЕНА для ${s.name}. Нажмите, чтобы отключить`,
-            onclick: () => act("toggle_focus", { student_id: s.id, on: false }) }, "🛡️ Блок игр")
-        : (s.pc ? h("button", { class: "link small", style: "color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px;margin-left:4px;cursor:pointer;",
-            title: `Заблокировать игры и браузер для ${s.name}`,
-            onclick: () => act("toggle_focus", { student_id: s.id, on: true }) }, "🎮 Блок") : null),
+            onclick: () => act("toggle_focus", { student_id: s.id, on: false }) }, "🛡️ Игры")
+        : h("button", { class: "link small", style: "color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px;margin-left:4px;cursor:pointer;",
+            title: `Заблокировать игры и браузеры для ${s.name}`,
+            onclick: () => act("toggle_focus", { student_id: s.id, on: true }) }, "🎮 Игры"),
       s.pc ? h("button", { class: "link small", title: "Перезапустить VS Code у этого ученика (работа сохранится, вход останется)",
         onclick: () => { if (confirm(`Перезапустить VS Code у ученика ${s.name} (${s.pc})? Работа сохранится, вход останется.`)) act("restart_student", { student_id: s.id }); } }, "🔄") : null,
       s.pc ? h("button", { class: "link small", title: "Завершить сеанс ученика", onclick: () => { if (confirm(`Завершить сеанс: ${s.name}?`)) act("kick", { student_id: s.id }); } }, "✕") : null));
@@ -1070,10 +1092,20 @@ async function showStudent(id) {
     const d = await api("GET", "/tapi/student?id=" + id);
     const when = (ts) => new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     const locked = (data.locks || []).some((x) => x.student_id === id);
-    const isFocus = (data.students.find((x) => x.id === id) || {}).focus;
+    const stud = data.students.find((x) => x.id === id) || {};
+    const isFocus = !!stud.focus;
+    const isBlockSites = !!stud.block_sites;
     openModal(h("h2", {}, d.name),
       h("div", { style: "display:flex;gap:8px;align-items:center;margin:6px 0 10px;flex-wrap:wrap;" },
         locked ? h("button", { class: "ok small", onclick: async () => { await act("unlock", { student_id: id }); closeModal(); } }, "🔓 Разблокировать панель") : null,
+        h("button", {
+          class: isBlockSites ? "ghost small danger" : "ok small",
+          title: isBlockSites ? "Разрешить ChatGPT, DeepSeek, Алису, ГигаЧат и VK в браузере" : "Закрывать ChatGPT, DeepSeek, Алису, ГигаЧат и VK в браузере",
+          onclick: async () => {
+            await act("toggle_block_sites", { student_id: id, on: !isBlockSites });
+            closeModal();
+          }
+        }, isBlockSites ? "🔓 Разрешить ИИ и VK" : "🚫 Запретить ИИ и VK"),
         h("button", {
           class: isFocus ? "ghost small danger" : "ok small",
           title: isFocus ? "Снять блокировку игр и браузера" : "Включить блокировку игр и браузера",

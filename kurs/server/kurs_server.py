@@ -125,6 +125,7 @@ COURSES = {
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 1, "course": "games", "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
                  "lock_on_paste": 1, "locks": {}, "focus_all": 0, "focus_students": {},
+                 "block_sites_all": 0, "block_sites_students": {},
                  "play": {"mode": "off", "games": ["chess", "hockey", "battleship"], "teacher": True, "allow": []},
                  "teams": {"open": True, "min": 2, "max": 0}, "team_notices": {},
                  "last_class": None}
@@ -706,13 +707,42 @@ class Kurs:
         return t
 
     # ---------- вход ученика ----------
+    @staticmethod
+    def _flag_active(st: dict, all_key: str, map_key: str, student_id) -> bool:
+        students = st.get(map_key) or {}
+        return bool(st.get(all_key) or (student_id is not None and str(student_id) in students))
+
+    def toggle_student_flag(self, all_key: str, map_key: str, sid, on: bool, log_kind: str) -> None:
+        if sid is not None:
+            sid = int(sid)
+            if not on and self.s.get(all_key):
+                gid = self.s.get("group_id")
+                rows = (self.s.q("SELECT id FROM students WHERE group_id=? AND archived=0", (gid,))
+                        if gid is not None else [])
+                selected = {str(r["id"]): 1 for r in rows if int(r["id"]) != sid}
+                self.s.set(all_key, 0)
+            else:
+                selected = dict(self.s.get(map_key) or {})
+                if on:
+                    selected[str(sid)] = 1
+                else:
+                    selected.pop(str(sid), None)
+            self.s.set(map_key, selected)
+            self.s.log(sid, log_kind, {"on": on})
+        else:
+            self.s.set(all_key, 1 if on else 0)
+            if not on:
+                self.s.set(map_key, {})
+            self.s.log(None, f"{log_kind}_all", {"on": on})
+
     def hello(self, pc: str) -> dict:
         st = self.s.state()
         here = self.active_session_on_pc(pc)
-        focus_students = st.get("focus_students") or {}
-        focus_mode = bool(st.get("focus_all") or (here and str(here["student_id"]) in focus_students))
+        sid = here["student_id"] if here else None
+        focus_mode = self._flag_active(st, "focus_all", "focus_students", sid)
+        block_sites = self._flag_active(st, "block_sites_all", "block_sites_students", sid)
         out = {"server": VERSION, "running": bool(st["running"]), "pc": pc, "restart": st["restart_seq"],
-               "close": st["close_seq"], "focus_mode": focus_mode}
+               "close": st["close_seq"], "focus_mode": focus_mode, "block_sites": block_sites}
         if not st["running"]:
             return out
         lesson = self.lib.lessons.get(st["lesson"], {})
@@ -794,15 +824,15 @@ class Kurs:
             res[r["task_id"]] = {"status": r["status"], "attempts": r["attempts"], "hints": r["hints"],
                                  "rating": r["rating"]}
         help_open = self.s.one("SELECT id FROM help WHERE student_id=? AND status!='done'", (sess["student_id"],))
-        focus_students = st.get("focus_students") or {}
-        focus_mode = bool(st.get("focus_all") or str(sess["student_id"]) in focus_students)
+        focus_mode = self._flag_active(st, "focus_all", "focus_students", sess["student_id"])
+        block_sites = self._flag_active(st, "block_sites_all", "block_sites_students", sess["student_id"])
         return {"name": self.name(sess["student_id"]), "pc": sess["pc"], "lesson": st["lesson"],
                 "title": lesson.get("title", ""), "class_id": st["class_id"], "paused": bool(st["paused"]),
                 "pause_text": st["pause_text"], "timer_end": st["timer_end"], "timer_label": st["timer_label"],
                 "now": time.time(), "open_tasks": st["open_tasks"], "stage": st["stage"],
                 "results": res, "help_open": bool(help_open), "ai": self.ai.student_status(),
                 "restart": st["restart_seq"], "close": st["close_seq"], "locked": bool(self.lock_of(sess["student_id"])),
-                "focus_mode": focus_mode,
+                "focus_mode": focus_mode, "block_sites": block_sites,
                 "play": self.play_brief(sess),
                 # команды: панель заново спрашивает /api/team, только когда что-то изменилось
                 "team_v": self.team_version(sess) if lesson.get("teams") else None,
@@ -972,8 +1002,8 @@ class Kurs:
             for n, l in sorted(self.lib.lessons.items())]
         students = []
         pastes = self.guard_counts()
-        focus_students = st.get("focus_students") or {}
         focus_all = bool(st.get("focus_all"))
+        block_sites_all = bool(st.get("block_sites_all"))
         if st["group_id"] is not None:
             lesson = self.lib.lessons.get(st["lesson"], {"task_ids": []})
             for r in self.s.q("SELECT * FROM students WHERE group_id=? AND archived=0 ORDER BY name", (st["group_id"],)):
@@ -987,7 +1017,8 @@ class Kurs:
                                  "online": bool(sess and now - sess["seen"] < ONLINE_SEC),
                                  "seen": sess["seen"] if sess else None, "results": res, "pastes": pastes.get(r["id"], 0),
                                  "locked": bool((st["locks"] or {}).get(str(r["id"]))),
-                                 "focus": bool(focus_all or str(r["id"]) in focus_students)})
+                                 "focus": self._flag_active(st, "focus_all", "focus_students", r["id"]),
+                                 "block_sites": self._flag_active(st, "block_sites_all", "block_sites_students", r["id"])})
         reqs = []
         for r in self.s.q("SELECT * FROM requests WHERE status='pending' ORDER BY created"):
             reqs.append({"id": r["id"], "kind": r["kind"], "name": self.name(r["student_id"]), "pc": r["pc"],
@@ -1002,6 +1033,8 @@ class Kurs:
         c_info = COURSES[cid]
         return {"state": st, "now": now, "groups": groups, "lessons": lessons, "students": students,
                 "focus_all": focus_all, "focus_count": len([s for s in students if s.get("focus")]),
+                "block_sites_all": block_sites_all,
+                "block_sites_count": len([s for s in students if s.get("block_sites")]),
                 "course": {"id": cid, "title": c_info["title"], "subtitle": c_info["subtitle"], "parts": c_info["parts"]},
                 "courses": [{"id": k, "title": v["title"], "subtitle": v["subtitle"]} for k, v in COURSES.items()],
                 "requests": reqs, "help": helps, "addresses": local_addresses(),
@@ -2285,22 +2318,9 @@ class Handler(BaseHTTPRequestHandler):
                 k.s.set("restart_students", per)
                 k.s.log(sid, "restart_student")
             elif name == "toggle_focus":
-                sid = b.get("student_id")
-                on = bool(b.get("on", True))
-                if sid is not None:
-                    sid = int(sid)
-                    focus_students = dict(k.s.get("focus_students") or {})
-                    if on:
-                        focus_students[str(sid)] = 1
-                    else:
-                        focus_students.pop(str(sid), None)
-                    k.s.set("focus_students", focus_students)
-                    k.s.log(sid, "focus_mode", {"on": on})
-                else:
-                    k.s.set("focus_all", 1 if on else 0)
-                    if not on:
-                        k.s.set("focus_students", {})
-                    k.s.log(None, "focus_all", {"on": on})
+                k.toggle_student_flag("focus_all", "focus_students", b.get("student_id"), bool(b.get("on", True)), "focus_mode")
+            elif name == "toggle_block_sites":
+                k.toggle_student_flag("block_sites_all", "block_sites_students", b.get("student_id"), bool(b.get("on", True)), "block_sites")
             elif name == "ai/config":
                 k.ai.save_config(b)
             elif name == "ai/mode":
