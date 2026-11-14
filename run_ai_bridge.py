@@ -103,9 +103,48 @@ def _stop_proc(proc: subprocess.Popen | None) -> None:
         proc.kill()
 
 
+def _wait_dns(url: str, timeout: float = 10.0) -> bool:
+    """Проверяет, что домен туннеля реально резолвится в DNS."""
+    host = url.split("://", 1)[-1].split("/", 1)[0]
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
 def start_tunnel() -> tuple[subprocess.Popen, str]:
-    """Поднимает интернет-туннель: сначала cloudflared (стабильный), затем Pinggy SSH как резерв."""
-    # 1. Предпочтительно cloudflared (не обрывается каждые 60 минут и не страдает от read timeout как Pinggy)
+    """Поднимает интернет-туннель (Pinggy SSH, затем cloudflared) и проверяет DNS до публикации."""
+    # 1. Нативный SSH Pinggy (стабильно резолвится и работает в РФ через порт 443)
+    ssh = shutil.which("ssh")
+    if ssh:
+        try:
+            log("TUNNEL", f"Запускаю Pinggy туннель для http://127.0.0.1:{PORT}…", BLUE)
+            cmd = [ssh, "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=20",
+                   "-o", "ServerAliveCountMax=3", "-p", "443", f"-R0:localhost:{PORT}", "a.pinggy.io"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.(?:pinggy-free\.link|pinggy\.net)")
+            start = time.time()
+            while time.time() - start < 15:
+                line = proc.stdout.readline() if proc.stdout else ""
+                if not line and proc.poll() is not None:
+                    break
+                m = pattern.search(line)
+                if m:
+                    url = m.group(0)
+                    _start_drain_thread(proc)
+                    if _wait_dns(url, timeout=8.0):
+                        return proc, url
+                    log("WARN", f"Домен {url} не резолвится в DNS, пробую другой способ…", YELLOW)
+                    break
+            _stop_proc(proc)
+        except Exception as e:
+            log("WARN", f"Pinggy туннель не запустился: {e}", YELLOW)
+
+    # 2. Резервный вариант через cloudflared (если не заблокирован провайдером)
     cpath = shutil.which("cloudflared") or "/opt/homebrew/bin/cloudflared"
     if os.path.isfile(cpath):
         try:
@@ -120,35 +159,17 @@ def start_tunnel() -> tuple[subprocess.Popen, str]:
                     break
                 m = pattern.search(line)
                 if m:
+                    url = m.group(0)
                     _start_drain_thread(proc)
-                    return proc, m.group(0)
+                    if _wait_dns(url, timeout=8.0):
+                        return proc, url
+                    log("WARN", f"Домен {url} не резолвится в DNS (возможна блокировка провайдера).", YELLOW)
+                    break
             _stop_proc(proc)
         except Exception as e:
             log("WARN", f"Cloudflare туннель не запустился: {e}", YELLOW)
 
-    # 2. Резервный вариант через нативный SSH Pinggy
-    ssh = shutil.which("ssh")
-    if ssh:
-        try:
-            log("TUNNEL", f"Пробую резервный Pinggy туннель для http://127.0.0.1:{PORT}…", BLUE)
-            cmd = [ssh, "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=20",
-                   "-o", "ServerAliveCountMax=3", "-p", "443", f"-R0:localhost:{PORT}", "a.pinggy.io"]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.(?:pinggy-free\.link|pinggy\.net)")
-            start = time.time()
-            while time.time() - start < 15:
-                line = proc.stdout.readline() if proc.stdout else ""
-                if not line and proc.poll() is not None:
-                    break
-                m = pattern.search(line)
-                if m:
-                    _start_drain_thread(proc)
-                    return proc, m.group(0)
-            _stop_proc(proc)
-        except Exception as e:
-            log("WARN", f"Pinggy туннель не запустился: {e}", YELLOW)
-
-    raise RuntimeError("Не удалось поднять ни cloudflared, ни Pinggy туннель")
+    raise RuntimeError("Не удалось поднять рабочий туннель (Pinggy и cloudflared недоступны)")
 
 
 def is_tunnel_healthy(base_url: str, key: str) -> bool:
