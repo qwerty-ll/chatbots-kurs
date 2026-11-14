@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
     "openai_key": "",
     "openai_models": "",
     # ограничения для класса
-    "max_tokens": 400,              # длина одного ответа: короче ответ — быстрее очередь
+    "max_tokens": 1500,             # запас токенов, чтобы ответы не обрезались на полуслове
     "max_prompt_chars": 2000,       # длина вопроса
     "min_interval": 1,              # секунд между вопросами одного ученика
     "daily_limit": 80,              # вопросов в день на ученика
@@ -211,15 +211,21 @@ class OpenAICompatible:
             raise AIError("не заданы адрес сервиса и модели (пульт учителя → Нейросеть → Настройки)")
         last = None
         for model in models:
-            body = {"model": model, "messages": messages, "temperature": float(temperature), "max_tokens": int(max_tokens)}
+            body = {"model": model, "messages": messages, "temperature": float(temperature),
+                    "max_tokens": max(256, int(max_tokens))}
             if tools:
                 body["tools"] = tools
             try:
                 r = _http(base + "/chat/completions", json.dumps(body).encode(),
                           {"Authorization": "Bearer " + cfg.get("openai_key", ""), "Content-Type": "application/json"}, cfg)
-                msg = r["choices"][0]["message"]
-                if msg.get("content") or msg.get("tool_calls"):
-                    return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls")}
+                ch = r["choices"][0]
+                msg = ch["message"]
+                content = msg.get("content")
+                if ch.get("finish_reason") == "length" and not msg.get("tool_calls") and len((content or "").strip()) < 2:
+                    last = AIError(f"модель {model} обрезала ответ")
+                    continue
+                if content or msg.get("tool_calls"):
+                    return {"content": content, "tool_calls": msg.get("tool_calls")}
             except AIError as e:
                 last = e
         raise last or AIError("модели вернули пустой ответ")
@@ -300,7 +306,7 @@ class Gateway:
                 "enabled": True,
                 "openai_base_url": "http://127.0.0.1:8045/v1",
                 "openai_key": "sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d",
-                "openai_models": "claude-sonnet-4-6,gemini-3.7-flash,gemini-3.8-flash,gemini-3-flash",
+                "openai_models": "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash,claude-sonnet-4-6",
                 "updated_at": now
             }
         else:
@@ -333,7 +339,7 @@ class Gateway:
                     self.cfg["provider"] = "openai"
                     self.cfg["openai_base_url"] = bridge["openai_base_url"]
                     self.cfg["openai_key"] = bridge.get("openai_key", "")
-                    self.cfg["openai_models"] = bridge.get("openai_models", "claude-sonnet-4-6,gemini-3.7-flash,gemini-3.8-flash")
+                    self.cfg["openai_models"] = bridge.get("openai_models", "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash")
                     self.cfg["mode"] = "live"
                     self._bridge_info = {
                         "active": True,
@@ -554,7 +560,7 @@ class Gateway:
     def test(self) -> dict:
         """Проверка связи из пульта: тестовый короткий запрос напрямую."""
         self.check_bridge(force_fetch=True)
-        t = Ticket(0, None, "учитель", "", [{"role": "user", "content": "Ответь одним словом: работаешь?"}], 0.1, 20, None)
+        t = Ticket(0, None, "учитель", "", [{"role": "user", "content": "Ответь одним словом: работаешь?"}], 0.1, 256, None)
         start = time.time()
         try:
             msg = self._call(t)
@@ -580,6 +586,8 @@ class Gateway:
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _call(self, t: Ticket) -> dict:
+        if self.cfg.get("provider") == "openai":
+            self.check_bridge()
         provider = self.providers.get(self.cfg["provider"])
         if not provider:
             raise AIError("неизвестный поставщик нейросети")
@@ -614,7 +622,17 @@ class Gateway:
     def _process_ticket(self, t: Ticket) -> None:
         start = time.time()
         try:
-            msg = self._call(t)
+            try:
+                msg = self._call(t)
+            except AIError:
+                old_url = self.cfg.get("openai_base_url")
+                if self.cfg.get("provider") == "openai" and self.check_bridge(force_fetch=True):
+                    if self.cfg.get("openai_base_url") != old_url:
+                        msg = self._call(t)
+                    else:
+                        raise
+                else:
+                    raise
             dur = time.time() - start
             self._mark_ok(dur)
             with self.lock:
