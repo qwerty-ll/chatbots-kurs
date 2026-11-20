@@ -15,6 +15,167 @@ import shutil
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GAMES_DIR = os.path.join(BASE_DIR, "games")
 
+WALK_START = '''"""Бродилка команды. Запуск: python3 01_Бродилка.py."""
+import json
+from pathlib import Path
+
+LEVEL = [
+    "....",
+    ".##K",
+    "...E",
+]
+MOVES = {"w": (-1, 0), "a": (0, -1), "s": (1, 0), "d": (0, 1)}
+MENU = {"title": "Бродилка", "start": "Играть", "rules": "Правила",
+        "exit": "Выход", "intro": "Найди ключ и доберись до выхода."}
+
+
+def load_menu():
+    file = Path(__file__).with_name("studio_menu.json")
+    try:
+        custom = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return MENU
+    if not isinstance(custom, dict):
+        return MENU
+    return {key: custom.get(key) if isinstance(custom.get(key), str) else value
+            for key, value in MENU.items()}
+
+
+def draw(level, row, col, has_key):
+    for y, line in enumerate(level):
+        if has_key:
+            line = line.replace("K", ".")
+        if y == row:
+            line = line[:col] + "@" + line[col + 1:]
+        print(line)
+
+
+def play(level):
+    row, col = 0, 0
+    has_key = False
+    print("@ — игрок, # — стена, K — ключ, E — выход. w/a/s/d — ход, q — выход.")
+    while True:
+        draw(level, row, col, has_key)
+        try:
+            cmd = input("Ход: ").strip().lower()
+        except EOFError:
+            cmd = "q"
+        if cmd == "q":
+            print("Игра завершена.")
+            break
+        if cmd not in MOVES:
+            print("Неизвестная команда.")
+            continue
+
+        dr, dc = MOVES[cmd]
+        next_row, next_col = row + dr, col + dc
+        # Шаг 1. Проверь обе границы до чтения клетки.
+        # Шаг 2. Проверь стену и закрытый выход. В этих случаях ход отменяется.
+        # Шаг 3. Обнови координаты, подбери ключ или объяви победу.
+        print("Здесь будет обработка хода.")
+
+
+def main():
+    menu = load_menu()
+    while True:
+        print(f"=== {menu['title']} ===")
+        print(f"1. {menu['start']} | 2. {menu['rules']} | 3. {menu['exit']}")
+        try:
+            choice = input("Выбор: ").strip()
+        except EOFError:
+            choice = "3"
+        if choice == "1":
+            play(LEVEL)
+            return
+        if choice == "2":
+            print(menu["intro"])
+            print("Управление: w/a/s/d, q — закончить игру.")
+        elif choice == "3":
+            print("Игра завершена.")
+            return
+        else:
+            print("Выбери 1, 2 или 3.")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+WALK_MOVE = '''        if not (0 <= next_row < len(level) and 0 <= next_col < len(level[next_row])):
+            print("Край карты.")
+            continue
+        tile = level[next_row][next_col]
+        if tile == "#":
+            print("Стена.")
+            continue
+        if tile == "E" and not has_key:
+            print("Нужен ключ.")
+            continue
+
+        row, col = next_row, next_col
+        if tile == "K" and not has_key:
+            has_key = True
+            print("Ключ найден!")
+        if tile == "E":
+            draw(level, row, col, has_key)
+            print("Победа!")
+            break'''
+
+
+def walk_project():
+    todo_start = WALK_START.index("        # Шаг 1.")
+    todo_end = WALK_START.index("\n\n\ndef main()", todo_start)
+    return {
+        "folder": "01_team_walk",
+        "task": {
+            "id": "g08-walk", "lesson": 8, "num": 1, "level": 2, "step": 4, "minutes": 17,
+            "title": "Командная бродилка с ключом", "topics": ["координаты", "цикл", "состояние"],
+            "file": "01_Бродилка.py", "starter": "gaps",
+            "statement": (
+                "Соберите одну игру на команду. Выберите редактора файла, автора карты и тестировщика. "
+                "Совмещайте роли, если вас двое.\n\n"
+                "В шаблоне уже работают меню, карта, ввод и отрисовка @. Запусти его и выбери 1. "
+                "Допишите обработку хода в play. "
+                "Старт — верхний левый угол. w/a/s/d двигают на клетку, q завершает игру.\n"
+                "1. До чтения клетки проверь новые координаты. За краем карты напечатай `Край карты.` и пропусти ход.\n"
+                "2. Перед стеной # выведи `Стена.`, перед выходом E без ключа — `Нужен ключ.`. "
+                "В обоих случаях игрок остаётся на месте.\n"
+                "3. Для разрешённого хода обнови координаты. Первый вход в K меняет has_key и печатает `Ключ найден!`. "
+                "Вход в E с ключом печатает `Победа!` и завершает игру.\n\n"
+                "Перед изменением исходной карты пройдите автопроверку. Затем по желанию добавьте свой уровень или счётчик ходов. "
+                "Свой уровень пройдите вручную от старта до выхода.\n\n"
+                "Во вкладке «Студия» настройте меню, сохраните его и сдайте файл команды. "
+                "Если не успеваете дописать ход, настройте меню, проверьте рабочий шаблон и сдайте его."
+            ),
+            "example": "1 — играть. d → d → d → s: Ключ найден!\ns: Победа!",
+            "tests": [
+                {"input": ["0", "2", "3"], "expect": ["1. Играть", "2. Правила", "3. Выход",
+                    "Выбери 1, 2 или 3.", "Управление: w/a/s/d", "Игра завершена."],
+                 "reject": ["Победа!"], "fail": "Меню должно показать правила, обработать неверный выбор и выйти."},
+                {"input": ["1", "q"], "expect": ["Игра завершена."], "reject": ["Победа!"],
+                 "fail": "Команда q должна завершить игру без победы."},
+                {"input": ["1", "w", "a", "s", "d", "x", "q"], "expect": ["Край карты.", "Стена.", "Неизвестная команда.", "Игра завершена."],
+                 "reject": ["..@.", ".@#K", "Ключ найден!", "Победа!"],
+                 "fail": "Проверь край и стену. Игрок не должен переходить в недоступную клетку."},
+                {"input": ["1", "s", "s", "d", "d", "d", "q"], "expect": ["Нужен ключ.", "Игра завершена."],
+                 "reject": ["Победа!", "Ключ найден!", "...@"],
+                 "fail": "До ключа выход должен оставаться закрытым и стоять на карте."},
+                {"input": ["1", "d", "d", "d", "s", "w", "s", "s"], "expect": ["Ключ найден!", "Победа!"],
+                 "reject": ["Нужен ключ.", "Игра завершена."],
+                 "fail": "Подбери ключ, сохрани его между ходами и выйди через E."},
+            ],
+            "hints": [
+                "Проверь 0 <= next_row < len(level). Только потом сравни next_col с длиной level[next_row].",
+                "Сначала проверь tile и has_key. Используй continue для отмены хода. Меняй row и col после проверок.",
+                "Если вошли в K и has_key ещё False — запомни ключ. Если вошли в E — выведи победу и сделай break.",
+            ],
+            "bonus": "Нарисуйте свой уровень или добавьте счётчик успешных ходов. Проверьте игру вручную и покажите её классу.",
+        },
+        "start": WALK_START,
+        "solution": WALK_START[:todo_start] + WALK_MOVE + WALK_START[todo_end:],
+    }
+
+
 LESSONS_DATA = [
     # =========================================================================
     # ЧАСТЬ 1: ОСНОВЫ PYTHON И ТЕКСТОВЫЕ ИГРЫ
@@ -1230,155 +1391,39 @@ LESSONS_DATA = [
         "lesson": 8,
         "part": 2,
         "part_title": "Часть 2: Консольная Графика, Сетки и Симуляции",
-        "title": "Финальный хакатон: меню, рекорды и релиз игры",
+        "title": "Студия разработки «Бродилка»",
+        "teams": {"task": "g08-walk", "project": "game"},
         "steps": [
-            {"n": 1, "title": "Разминка перед хакатоном", "tasks": []},
-            {"n": 2, "title": "Подготовка: меню и запись в файл", "tasks": [1, 2]},
-            {"n": 3, "title": "Финальная игра: релиз с рекордами", "tasks": [3]},
-            {"n": 4, "title": "Прокачка: цвет и ASCII-арт", "tasks": [4]},
-            {"n": 5, "title": "Защита проектов и финал курса! 🎉", "tasks": []}
+            {"n": 1, "title": "5 мин · Собрать команды и распределить роли", "tasks": []},
+            {"n": 2, "title": "7 мин · Собрать меню в студии", "tasks": []},
+            {"n": 3, "title": "6 мин · Пройти по карте на бумаге", "tasks": []},
+            {"n": 4, "title": "17 мин · Дописать игру и проверить маршруты", "tasks": [1]},
+            {"n": 5, "title": "10 мин · Сдать сборку, показать игру и проголосовать", "tasks": []},
+            {"n": 6, "title": "Ещё 15 мин · Сделать свой уровень или счётчик ходов", "tasks": []},
         ],
         "theory": [
             {
-                "id": "file-records", "step": 2, "title": "Сохранение рекордов в файл",
-                "text": "Чтобы рекорд игрока сохранился даже после закрытия программы, его записывают в текстовый файл:\n`with open(\"records.txt\", \"w\") as f:`\n`    f.write(f\"{name}: {score}\")`\n\nПрочитать обратно:\n`with open(\"records.txt\", \"r\") as f:`\n`    text = f.read()`",
-                "code": "with open(\"records.txt\", \"w\") as f:\n    f.write(\"Артур: 100\\n\")\nwith open(\"records.txt\", \"r\") as f:\n    print(\"Таблица рекордов:\\n\" + f.read())\n",
-                "try": "Запусти код и проверь, как создаётся файл records.txt."
+                "id": "maze-coords", "step": 3, "title": "Один ход по карте",
+                "text": "Первая координата — строка; вторая — столбец. Сначала вычисли новые координаты. Если они за границей, к клетке обращаться нельзя. Если в клетке стена, оставь игрока на месте.",
+                "code": 'level = ["....", ".##K", "...E"]\nrow, col = 1, 0\nnext_row, next_col = row, col + 1\nif 0 <= next_row < len(level) and 0 <= next_col < len(level[next_row]):\n    print(level[next_row][next_col])\n',
+                "try": "Что лежит справа от (1, 0)? Что будет, если из (0, 0) пойти вверх?",
             },
             {
-                "id": "main-menu", "step": 2, "title": "Главное меню игры",
-                "text": "Красивое главное меню встречает игрока рамкой:\n```\n==============================\n      ИГРА: ТУРБО-КВЕСТ       \n==============================\n1. Начать игру\n2. Таблица рекордов\n3. Выход\n```",
-                "code": "print(\"=== МЕНЮ ===\")\nprint(\"1. Играть\")\nprint(\"2. Выход\")\nchoice = input(\"Выбор: \")\nif choice == \"1\": print(\"Старт игры!\")\n",
-                "try": "Добавь пункт меню 3 с правилами игры."
-            }
+                "id": "maze-key", "step": 4, "title": "Состояние игры",
+                "text": "Флаг `has_key` хранит состояние ключа между ходами. Если игрок вошёл в клетку K — меняем флаг. В клетку E можно войти только после ключа.",
+                "code": 'has_key = False\ntile = "K"\nif tile == "K":\n    has_key = True\n',
+                "try": "Назовите два маршрута от старта: к выходу без ключа и через ключ к выходу.",
+            },
         ],
-        "tasks": [
-            {
-                "folder": "01_main_menu",
-                "task": {
-                    "id": "g08-01", "lesson": 8, "num": 1, "level": 1, "step": 2, "minutes": 7,
-                    "title": "Главное консольное меню",
-                    "topics": ["меню", "if / elif / else"],
-                    "file": "01_Главное_меню.py",
-                    "statement": "Оформи стартовое меню игры:\nВыведи строки:\n`=== ГЛАВНОЕ МЕНЮ ===`\n`1. Начать игру`\n`2. Выход`\nСпроси выбор пользователя: `choice = input(\"Твой выбор: \")`.\n- Если выбрано `1`: выведи `Загрузка уровня... Приятной игры!`.\n- Если выбрано `2`: выведи `До встречи!`.\n- Иначе выведи `Неверный пункт меню!`.",
-                    "example": "=== ГЛАВНОЕ МЕНЮ ===\n1. Начать игру\n2. Выход\nТвой выбор: 1\nЗагрузка уровня... Приятной игры!",
-                    "starter": "empty",
-                    "tests": [
-                        {"input": ["1"], "expect": ["=== ГЛАВНОЕ МЕНЮ ===", "Загрузка уровня... Приятной игры!"], "fail": "На выбор 1 выведи сообщение о старте."},
-                        {"input": ["2"], "expect": ["До встречи!"], "fail": "На выбор 2 выведи «До встречи!»."},
-                        {"input": ["9"], "expect": ["Неверный пункт меню!"], "fail": "На неверный пункт выведи «Неверный пункт меню!»."}
-                    ],
-                    "structure": [
-                        {"need": "if", "msg": "Нужно условие if."},
-                        {"need": "elif", "msg": "Нужно условие elif."},
-                        {"need": "else", "msg": "Нужно условие else."}
-                    ],
-                    "hints": [
-                        "print(\"=== ГЛАВНОЕ МЕНЮ ===\")\nprint(\"1. Начать игру\")\nprint(\"2. Выход\")",
-                        "choice = input(\"Твой выбор: \")\nif choice == \"1\": ... elif choice == \"2\": ... else: ..."
-                    ]
-                },
-                "start": "# Главное меню игры\n",
-                "solution": "print(\"=== ГЛАВНОЕ МЕНЮ ===\")\nprint(\"1. Начать игру\")\nprint(\"2. Выход\")\nchoice = input(\"Твой выбор: \")\nif choice == \"1\":\n    print(\"Загрузка уровня... Приятной игры!\")\nelif choice == \"2\":\n    print(\"До встречи!\")\nelse:\n    print(\"Неверный пункт меню!\")\n"
-            },
-            {
-                "folder": "02_save_record",
-                "task": {
-                    "id": "g08-02", "lesson": 8, "num": 2, "level": 1, "step": 2, "minutes": 7,
-                    "title": "Сохранение рекорда в файл",
-                    "topics": ["open", "with", "write"],
-                    "file": "02_Запись_рекорда.py",
-                    "statement": "Спроси имя игрока `name = input(\"Имя: \")` и набранный счёт `score = input(\"Очки: \")`.\nЗапиши в файл `records.txt` строку вида:\n`{name}: {score}`\nПосле успешной записи выведи сообщение: `Рекорд успешно сохранён в records.txt!`.",
-                    "example": "Имя: Алекс\nОчки: 150\nРекорд успешно сохранён в records.txt!",
-                    "starter": "empty",
-                    "tests": [
-                        {
-                            "input": ["Алекс", "150"],
-                            "expect": ["Рекорд успешно сохранён в records.txt!"],
-                            "file_has": {"records.txt": ["Алекс", "150"]},
-                            "fail": "Запиши имя и очки в файл records.txt и выведи сообщение об успехе."
-                        }
-                    ],
-                    "structure": [
-                        {"need": "call:open", "msg": "Используй open('records.txt', 'w')."},
-                        {"need": "call:print", "msg": "Используй print()."}
-                    ],
-                    "hints": [
-                        "name = input(\"Имя: \")\nscore = input(\"Очки: \")",
-                        "with open(\"records.txt\", \"w\") as f:\n    f.write(f\"{name}: {score}\")\nprint(\"Рекорд успешно сохранён в records.txt!\")"
-                    ]
-                },
-                "start": "# Сохранение рекорда в файл\nname = input(\"Имя: \")\nscore = input(\"Очки: \")\n",
-                "solution": "name = input(\"Имя: \")\nscore = input(\"Очки: \")\nwith open(\"records.txt\", \"w\") as f:\n    f.write(f\"{name}: {score}\")\nprint(\"Рекорд успешно сохранён в records.txt!\")\n"
-            },
-            {
-                "folder": "03_final_game",
-                "task": {
-                    "id": "g08-03", "lesson": 8, "num": 3, "level": 2, "step": 3, "minutes": 15,
-                    "title": "Финальная игра: Релиз проекта",
-                    "topics": ["финальный проект", "меню", "рекорды"],
-                    "file": "03_Финальная_игра.py",
-                    "statement": "Кульминация курса! Напиши финальную консольную мини-игру с меню и таблицей рекордов:\n1. Спроси имя игрока: `name = input(\"Введи имя героя: \")`.\n2. Выведи приветствие: `Привет, {name}! Добро пожаловать на Финальную Арену!`.\n3. Спроси уровень сложности: `lvl = input(\"Выбери сложность (1 - Легко, 2 - Хардкор): \")`.\n4. Если `lvl == \"1\"`: очки игрока `score = 100`, выведи: `Уровень пройден! Набрано очков: 100`.\n5. Иначе: очки игрока `score = 250`, выведи: `Хардкор покорён! Набрано очков: 250`.\n6. Запиши в файл `highscores.txt` строку `{name} - {score}`.\n7. Выведи: `Результат занесён в Зал Славы (highscores.txt)!`.",
-                    "example": "Введи имя: Лео\nПривет, Лео! Добро пожаловать на Финальную Арену!\nСложность: 1\nУровень пройден! Набрано очков: 100\nРезультат занесён в Зал Славы (highscores.txt)!",
-                    "starter": "empty",
-                    "tests": [
-                        {
-                            "input": ["Лео", "1"],
-                            "expect": ["Привет, Лео! Добро пожаловать на Финальную Арену!", "Уровень пройден! Набрано очков: 100", "Результат занесён в Зал Славы (highscores.txt)!"],
-                            "file_has": {"highscores.txt": ["Лео", "100"]},
-                            "fail": "Для лёгкого уровня начисли 100 очков и сохрани в highscores.txt."
-                        },
-                        {
-                            "input": ["Макс", "2"],
-                            "expect": ["Хардкор покорён! Набрано очков: 250"],
-                            "file_has": {"highscores.txt": ["Макс", "250"]},
-                            "fail": "Для хардкора начисли 250 очков и сохрани в highscores.txt."
-                        }
-                    ],
-                    "structure": [
-                        {"need": "if", "msg": "Нужно условие выбора сложности."},
-                        {"need": "call:open", "msg": "Запиши результат в highscores.txt через open()."}
-                    ],
-                    "hints": [
-                        "name = input(\"Введи имя героя: \")\nprint(f\"Привет, {name}! Добро пожаловать на Финальную Арену!\")",
-                        "with open(\"highscores.txt\", \"w\") as f:\n    f.write(f\"{name} - {score}\")"
-                    ]
-                },
-                "start": "# Финальная игра с рекордами\nname = input(\"Введи имя героя: \")\n",
-                "solution": "name = input(\"Введи имя героя: \")\nprint(f\"Привет, {name}! Добро пожаловать на Финальную Арену!\")\nlvl = input(\"Выбери сложность (1 - Легко, 2 - Хардкор): \")\nif lvl == \"1\":\n    score = 100\n    print(\"Уровень пройден! Набрано очков: 100\")\nelse:\n    score = 250\n    print(\"Хардкор покорён! Набрано очков: 250\")\nwith open(\"highscores.txt\", \"w\") as f:\n    f.write(f\"{name} - {score}\")\nprint(\"Результат занесён в Зал Славы (highscores.txt)!\")\n"
-            },
-            {
-                "folder": "04_sound_effects",
-                "task": {
-                    "id": "g08-04", "lesson": 8, "num": 4, "level": 3, "step": 4, "minutes": 10,
-                    "title": "🌟 Заставка и ASCII-титул игры",
-                    "topics": ["ASCII-арт", "оформление"],
-                    "file": "04_ASCII_Титул.py",
-                    "statement": "Каждая крутая игра начинается с фирменного логотипа!\nНапечатай стартовый логотип игры в рамке:\n`+------------------------+`\n`|      PYTHON GAMES      |`\n`|       КУРС 2026        |`\n`+------------------------+`\nЗатем выведи строку: `Разработчик готов к презентации!`.",
-                    "example": "+------------------------+\n|      PYTHON GAMES      |\n|       КУРС 2026        |\n+------------------------+\nРазработчик готов к презентации!",
-                    "starter": "empty",
-                    "tests": [
-                        {"input": [], "expect": ["+------------------------+", "|      PYTHON GAMES      |", "|       КУРС 2026        |", "Разработчик готов к презентации!"], "fail": "Выведи точную ASCII-рамку с логотипом игры."}
-                    ],
-                    "structure": [
-                        {"need": "call:print", "msg": "Используй print()."}
-                    ],
-                    "hints": [
-                        "print(\"+------------------------+\")\nprint(\"|      PYTHON GAMES      |\")\nprint(\"|       КУРС 2026        |\")\nprint(\"+------------------------+\")\nprint(\"Разработчик готов к презентации!\")"
-                    ]
-                },
-                "start": "# ASCII-арт заставка игры\n",
-                "solution": "print(\"+------------------------+\")\nprint(\"|      PYTHON GAMES      |\")\nprint(\"|       КУРС 2026        |\")\nprint(\"+------------------------+\")\nprint(\"Разработчик готов к презентации!\")\n"
-            }
-        ]
+        "tasks": [walk_project()],
     }
 ]
 
 
-def generate():
+def generate(lessons=None):
     os.makedirs(GAMES_DIR, exist_ok=True)
     print(f"Генерация курса в {GAMES_DIR}...")
-    for l_data in LESSONS_DATA:
+    for l_data in LESSONS_DATA if lessons is None else lessons:
         lnum = l_data["lesson"]
         ldir = os.path.join(GAMES_DIR, f"l{lnum:02d}")
         os.makedirs(ldir, exist_ok=True)
@@ -1391,6 +1436,8 @@ def generate():
             "steps": l_data["steps"],
             "theory": l_data["theory"]
         }
+        if "teams" in l_data:
+            lesson_json["teams"] = l_data["teams"]
         with open(os.path.join(ldir, "lesson.json"), "w", encoding="utf-8") as f:
             json.dump(lesson_json, f, ensure_ascii=False, indent=2)
 

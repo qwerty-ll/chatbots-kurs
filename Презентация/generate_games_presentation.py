@@ -43,6 +43,7 @@ HTML_HEAD = """<!doctype html>
   td, th { border: 1px solid #D5DAF0; padding: .55em .8em; vertical-align: top; text-align: left; }
   th { font-weight: 700; }
   .notes { display: none; }
+  .slide > p:last-child { display: none; }
   #notes { position: fixed; left: 0; right: 0; bottom: 0; max-height: 42vh; overflow: auto; padding: 20px 30px;
             background: rgba(11,14,38,.96); color: #E8EBFF; font: 20px/1.5 'Nunito Sans', Arial, sans-serif; white-space: pre-wrap;
             border-top: 2px solid #2F43E8; display: none; z-index: 100; box-shadow: 0 -10px 40px rgba(0,0,0,0.5); }
@@ -59,10 +60,12 @@ HTML_HEAD = """<!doctype html>
   .code-box .com { color: #7E8BBB; font-style: italic; }
   .code-box .op { color: #FFFFFF; font-weight: 600; }
   .code-box .hi { background: rgba(47,67,232,0.35); padding: 2px 6px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { #hint { transition: none; } }
   @page { size: 1920px 1080px; margin: 0; }
   @media print {
     html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
     .frame { display: block !important; position: relative !important; transform: none !important; page-break-after: always; break-after: page; }
+    .slide > p:last-child { display: block; }
     #notes, #hud, #hint { display: none !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
@@ -113,8 +116,14 @@ HTML_TAIL = """
   });
   window.addEventListener('resize', fit);
   fit();
-  var start = parseInt((location.hash || '').slice(1), 10);
-  show(isNaN(start) ? 0 : start - 1);
+  function showAnchor() {
+    var target = location.hash.slice(1);
+    var named = frames.findIndex(function (frame) { return frame.dataset.id === target; });
+    var start = parseInt(target, 10);
+    show(named >= 0 ? named : (isNaN(start) ? 0 : start - 1));
+  }
+  window.addEventListener('hashchange', showAnchor);
+  showAnchor();
   setTimeout(function () { hint.style.opacity = '0'; }, 5000);
 })();
 </script>
@@ -478,7 +487,7 @@ def build_all_slides():
       <p>🔹 <b>Урок 5:</b> time.sleep, анимация ➔ <b>«Турбо-трасса 2D»</b></p>
       <p>🔹 <b>Урок 6:</b> 2D сетка, координаты, WASD ➔ <b>«Лабиринт Подземелья»</b></p>
       <p>🔹 <b>Урок 7:</b> Клеточные автоматы Конвея ➔ <b>«Игра в жизнь»</b></p>
-      <p>🔹 <b>Урок 8:</b> Файлы, меню ➔ <b>Финальный Хакатон и Рекорды</b></p>
+      <p>🔹 <b>Урок 8:</b> Карта, ключ и выход ➔ <b>Командная бродилка</b></p>
     </div>
   </div>
 </div>
@@ -1704,210 +1713,118 @@ gen2 = [<span class="str">"· ● ·"</span>, <span class="str">"· ● ·"</spa
     # -------------------------------------------------------------------------
     # УРОК 8: ФИНАЛЬНЫЙ ХАКАТОН, МЕНЮ И РЕЛИЗ (16 слайдов)
     # -------------------------------------------------------------------------
-    make_divider("l8-divider", 8, "Финальный хакатон: меню, рекорды и релиз", "Главное консольное меню, запись рекорда в файл, хакатон и защита проектов", "«Главное консольное меню», «Запись рекорда в records.txt»", "Финальная авторская игра с Залом Славы", "🌟 Заставка и фирменный ASCII-титул игры", "Урок 8: кульминация курса, финализация проектов и презентация.")
+    make_divider("l8-divider", 8, "Студия разработки «Бродилка»",
+                 "Придумайте название, настройте меню, соберите игру с ключом и передайте её учителю.",
+                 "Меню и маршрут по карте",
+                 "Одна сданная сборка на команду",
+                 "Свой уровень или счётчик ходов",
+                 "45 минут на основной проект. Если есть вторая часть занятия, добавьте 15 минут на свой уровень и взаимное тестирование.")
 
-    make_warmup("l8-warm", 8, "Что отличает черновик от релизной игры?", "Вы написали отличную игровую механику. Чего не хватает, чтобы игру можно было с гордостью отправить другу или выложить в сеть?", ["Ничего, черновика достаточно", "Главного меню, сохранения рекордов и красивой заставки!", "Удалить весь код"], "Как сохранить лучший счет игрока навсегда?", "Разминка о полировке игр и файловой системе.")
+    make_learn("l8-plan", 8, [
+        ("1", "План и меню · 12 мин", "Вступить в команду, записать роли и собрать меню в панели «Студия»."),
+        ("2", "Карта и код · 23 мин", "Пройти по карте на бумаге, дописать ход игрока и проверить три маршрута."),
+        ("3", "Сдача и показ · 10 мин", "Отправить сборку, показать игру и выбрать тему следующего модуля."),
+    ], "Тайминг: роли 5 мин, меню 7 мин, карта 6 мин, код с проверкой 17 мин, сдача и показ 10 мин. В последние минуты откройте опрос. При большом числе команд показывайте 2–3 игры, остальные примите из ZIP.")
 
-    make_learn("l8-learn", 8, [
-        ("📜", "Главное меню", "Соберем удобное меню запуска: 1 - Играть, 2 - Рекорды, 3 - Выход."),
-        ("💾", "Файлы: with open()", "Научимся сохранять имена и очки победителей в файл records.txt на диске."),
-        ("🏆", "Хакатон и Защита", "Доработаем любимую игру курса и покажем свой проект на большом экране!")
-    ], "Цели финального занятия.")
+    make_learn("l8-roles", 8, [
+        ("1", "Редактор", "Работает в одном общем Python-файле. Сохраняет его, чтобы товарищи видели копию."),
+        ("2", "Дизайнер", "Настраивает название, пункты меню и правила. Рисует карту и проверяет, есть ли маршрут."),
+        ("3", "Тестировщик", "Пытается пройти без ключа, удариться о стену и выиграть. Готовит короткий показ."),
+    ], "Учитель открывает «Класс» → «Управлять командами» и создаёт команды по 2–3. Ученики вступают во вкладке «Студия» и сохраняют роли. Если кто-то отсутствует, роли можно совмещать. Код в двух разных копиях сливать не нужно.")
 
-    make_code_explainer("l8-menu", "Интерфейс игры", "Главное меню в цикле while True",
-"""<span class="kw">while</span> <span class="kw">True</span>:
-    <span class="fn">print</span>(<span class="str">"=== ГЛАВНОЕ МЕНЮ ==="</span>)
-    <span class="fn">print</span>(<span class="str">"1. Начать игру"</span>)
-    <span class="fn">print</span>(<span class="str">"2. Таблица рекордов"</span>)
-    <span class="fn">print</span>(<span class="str">"3. Выход"</span>)
-    
-    choice = <span class="fn">input</span>(<span class="str">"Выбери пункт (1-3): "</span>)
-    <span class="kw">if</span> choice == <span class="str">"1"</span>:
-        <span class="fn">print</span>(<span class="str">"Запуск игры..."</span>)
-    <span class="kw">elif</span> choice == <span class="str">"3"</span>:
-        <span class="fn">print</span>(<span class="str">"До встречи!"</span>)
-        <span class="kw">break</span>""",
-        [
-            ("Цикл меню", "После окончания игры игрок возвращается обратно в меню, а не вылетает из программы."),
-            ("Проверка выбора", "Каждая цифра запускает соответствующую функцию или режим игры."),
-            ("Пункт «Выход»", "Единственный способ корректно завершить программу через команду break.")
-        ],
-        "Архитектура консольного меню для любого программного продукта."
-    )
-
-    make_code_explainer("l8-files-write", "Вечная память", "Сохранение рекордов в файл через with open()",
-"""player_name = <span class="str">"Алекс"</span>
-score = <span class="num">250</span>
-
-<span class="com"># Режим "a" (append) — дописывает новую запись в конец файла:</span>
-<span class="kw">with</span> <span class="fn">open</span>(<span class="str">"records.txt"</span>, <span class="str">"a"</span>, encoding=<span class="str">"utf-8"</span>) <span class="kw">as</span> f:
-    f.<span class="fn">write</span>(<span class="str">f"{player_name}: {score}\\n"</span>)
-
-<span class="fn">print</span>(<span class="str">"Рекорд успешно сохранён на диск!"</span>)""",
-        [
-            ("with open(...) as f:", "Безопасный менеджер контекста! Сам закроет файл даже при ошибке в коде."),
-            ("Режим 'a' (append)", "Не стирает старые рекорды, а добавляет новую строку в самый конец файла."),
-            ("Символ переноса \\n", "Обязательно ставим в конце строки, чтобы следующий рекорд был на новой строчке.")
-        ],
-        "Работа с дисковыми файлами в Python через безопасный менеджер контекста with."
-    )
-
-    make_code_explainer("l8-files-read", "Зал Славы", "Чтение и показ таблицы рекордов",
-"""<span class="kw">with</span> <span class="fn">open</span>(<span class="str">"records.txt"</span>, <span class="str">"r"</span>, encoding=<span class="str">"utf-8"</span>) <span class="kw">as</span> f:
-    records_data = f.<span class="fn">read</span>()
-
-<span class="fn">print</span>(<span class="str">"🏆 === ЗАЛ СЛАВЫ === 🏆"</span>)
-<span class="fn">print</span>(records_data)
-<span class="fn">print</span>(<span class="str">"======================="</span>)""",
-        [
-            ("Режим 'r' (read)", "Открывает существующий файл только для чтения данных."),
-            ("f.read()", "Считывает весь текст файла в одну строковую переменную."),
-            ("Вывод на экран", "Игроки могут увидеть все предыдущие победы и рекорды друзей.")
-        ],
-        "Чтение файла с диска и форматированный вывод Зала Славы."
-    )
-
-    make_code_explainer("l8-ascii", "Консольный стиль", "ASCII-арт заставки и рамки игры",
-"""banner = <span class="str">\"\"\"
-+-------------------------------+
-|     🔥 PYTHON GAMES 2026 🔥   |
-|   Финальный Релиз Проекта     |
-+-------------------------------+
-\"\"\"</span>
-
-<span class="fn">print</span>(banner)
-<span class="fn">print</span>(<span class="str">"Разработчик готов к презентации!"</span>)""",
-        [
-            ("Тройные кавычки \"\"\"", "Позволяют писать многострочный текст с любыми переносами строк и рамками."),
-            ("Фирменный стиль", "Любая игра выглядит в 10 раз профессиональнее с красивым логотипом при старте."),
-            ("Символы рамок", "Используйте символы +, -, |, ═, ║ для аккуратного оформления окон.")
-        ],
-        "ASCII-дизайн для консольных интерфейсов."
-    )
-
-    make_errors_table("l8-errors", 8, "Ошибки при работе с файлами и меню", [
-        ("FileNotFoundError: [Errno 2]", "Файл records.txt еще не создан на диске", "open(\"records.txt\", \"r\")", "Сначала открыть в режиме 'a' или создать пустой"),
-        ("Стерлись все прошлые рекорды", "Использовали режим 'w' вместо 'a'", "open(\"rec.txt\", \"w\")", "Режим 'w' перезаписывает! Для рекордов нужен 'a'"),
-        ("Забыли кодировку encoding='utf-8'", "Русские буквы превратились в иероглифы", "open(\"rec.txt\", \"a\")", "Всегда писать: encoding=\"utf-8\""),
-        ("Все записи склеились в одну строчку", "Забыли добавить символ \\n при записи", "f.write(f\"{name}: {score}\")", "f.write(f\"{name}: {score}\\n\")")
-    ], "Разбираем главные грабли файлового ввода-вывода.")
-
-    make_train_tasks("l8-tasks-train", 8, [
-        ("g08-01", "Главное меню", "Вывести меню с пунктами 1, 2, 3 и обработать выбор игрока через if/elif", 'choice == "1" -> запуск'),
-        ("g08-02", "Запись рекорда в файл", "Открыть файл records.txt в режиме 'a' и записать строку с именем и очками", 'with open("records.txt", "a") as f:'),
-        ("g08-03", "Заставка игры", "Оформить красивую рамку с названием игры через тройные кавычки", 'print("+----------------+")')
-    ], "15 минут на тренировочные задачи перед стартом хакатона.")
-
-    add_slide("l8-hackathon", "#12163A", """
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#FFDE59">Творческий этап · 35 минут</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:64px;font-weight:700;color:#FFFFFF">Хакатон: прокачка и полировка игры</h2>
-</div>
-<div style="display:flex;gap:36px;align-items:stretch;margin-top:20px">
-  <div style="flex:1;background:#1B2050;border:2px solid #2F43E8;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:20px">
-    <span style="font-size:54px">💡</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:36px;color:#FFFFFF">Что можно сделать:</h3>
-    <ul style="font-size:26px;color:#D5DAFF;line-height:1.5;padding-left:26px;display:flex;flex-direction:column;gap:12px">
-      <li>Выбрать свою самую любимую игру из 8 уроков курса</li>
-      <li>Добавить выбор уровней сложности (легкий / хардкор)</li>
-      <li>Украсить игру крутыми ASCII-баннерами и эмодзи</li>
-      <li>Подключить сохранение очков в Зал Славы records.txt</li>
-      <li>Придумать неожиданные сюжетные повороты и пасхалки</li>
-    </ul>
+    add_slide("l8-menu-preview", "#F6F7FB", f"""
+{header_light("7 минут · Меню", "Сначала решите, что увидит игрок")}
+<div style="display:grid;grid-template-columns:620px 1fr;gap:52px;align-items:start;margin-top:22px">
+  <div class="code-box" style="font-size:38px;line-height:1.75">
+    <strong>Станция «Север»</strong><br>
+    <span class="num">1.</span> Войти на станцию<br>
+    <span class="num">2.</span> Прочитать инструкцию<br>
+    <span class="num">3.</span> Закрыть игру
   </div>
-  <div style="flex:1;background:#2F43E8;border-radius:24px;padding:36px;color:#FFFFFF;display:flex;flex-direction:column;gap:20px;box-shadow:0 8px 30px rgba(47,67,232,0.4)">
-    <span style="font-size:54px">⏱</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:36px">Тайминг хакатона:</h3>
-    <div style="font-size:28px;line-height:1.6;display:flex;flex-direction:column;gap:14px">
-      <p>🔹 <b>00–25 мин:</b> Доработка механик и кода</p>
-      <p>🔹 <b>25–35 мин:</b> Тестирование и подготовка к показу</p>
-      <p>🔹 <b>Финал:</b> Выступление каждого разработчика!</p>
-    </div>
-    <div style="margin-top:auto;background:rgba(255,255,255,0.2);padding:14px 20px;border-radius:14px;font-size:24px">
-      🚀 Преподаватель помогает каждому воплотить идеи!
-    </div>
+  <div style="font-size:34px;line-height:1.55">
+    <p>Откройте «Студия» → «Конструктор меню».</p>
+    <p>Задайте название, подписи и короткие правила.</p>
+    <p>Попробуйте три кнопки в предпросмотре. Нажмите «Сохранить меню для команды».</p>
   </div>
 </div>
-""", "Старт хакатона: даем ребятам свободу творчества на 35 минут с поддержкой преподавателя.")
+""", "Объясните, что подписи свободные, а команды 1, 2, 3 всегда одни и те же. Пусть дизайнер покажет, где появится текст правил. Удобно назначить одного редактора меню. Если другой сохранил правки раньше, панель предложит загрузить его версию.")
 
-    add_slide("l8-criteria", "#F6F7FB", """
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Оценка проектов</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:56px;font-weight:700;color:#12163A">4 Критерия классной игры</h2>
-</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:20px">
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🎮</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Геймплей</h3><p style="font-size:24px;color:#4A5170">В игру интересно играть, есть победа, поражение и понятные правила.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🧼</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Чистота кода</h3><p style="font-size:24px;color:#4A5170">Понятные имена переменных, аккуратные отступы, нет лишнего кода.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🎨</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Атмосфера и дизайн</h3><p style="font-size:24px;color:#4A5170">ASCII-арт, сюжетные реплики, эмодзи, погружение игрока в мир.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">💾</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Зал Славы</h3><p style="font-size:24px;color:#4A5170">Работающее сохранение лучших результатов игроков в файл на диске.</p></div>
-  </div>
-</div>
-""", "Критерии оценки проектов для защиты.")
+    make_code_explainer("l8-menu-code", "Меню в Python", "Ввод определяет, какая ветка сработает",
+        '<pre>choice = input("Выбор: ").strip()\n\nif choice == "1":\n    play(LEVEL)\nelif choice == "2":\n    print(menu["intro"])\nelif choice == "3":\n    print("Игра завершена.")</pre>',
+        [("1", "Вызов play запускает карту и цикл ходов."),
+         ("2", "Показываем правила и даём выбрать ещё раз."),
+         ("3", "Завершаем программу. Другой ввод просим повторить.")],
+        "Это схема ветвления. Полный код меню уже лежит в заготовке. При запуске он читает studio_menu.json рядом с игрой, а при отсутствии файла использует встроенные подписи. Попросите ученика ввести 2, затем 1.")
 
-    add_slide("l8-defense", "#12163A", """
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#A9B5FF">Кульминация курса</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:64px;font-weight:700;color:#FFFFFF">Презентация и защита проектов 🎤</h2>
-</div>
-<div style="display:flex;gap:36px;align-items:stretch;margin-top:20px">
-  <div style="flex:1.2;background:#1B2050;border:2px solid #2F3876;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:20px">
-    <h3 style="font-family:'Rubik', sans-serif;font-size:34px;color:#FFDE59">План выступления (2–3 минуты на разработчика):</h3>
-    <div style="font-size:26px;color:#FFFFFF;line-height:1.55;display:flex;flex-direction:column;gap:14px">
-      <p>1️⃣ <b>Название и жанр:</b> как называется твоя игра и о чем её сюжет?</p>
-      <p>2️⃣ <b>Демонстрация:</b> запусти игру на экране и покажи один раунд!</p>
-      <p>3️⃣ <b>Гордость разработчика:</b> какая фича получилась круче всего?</p>
-      <p>4️⃣ <b>Главный баг:</b> с какой ошибкой пришлось больше всего повоевать?</p>
-    </div>
-  </div>
-  <div style="flex:0.8;background:#2F43E8;border-radius:24px;padding:36px;color:#FFFFFF;display:flex;flex-direction:column;gap:20px;justify-content:center;text-align:center">
-    <span style="font-size:72px">👏</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:38px">Правило зрителей:</h3>
-    <p style="font-size:26px;line-height:1.45;color:#E4E8FF">Поддерживаем каждого аплодисментами! Задаем добрые вопросы и пробуем пройти игры друг друга!</p>
+    add_slide("l8-map", "#F6F7FB", f"""
+{header_light("6 минут · Карта", "Пройдите по карте на бумаге")}
+<div style="display:grid;grid-template-columns:460px 1fr;gap:72px;align-items:center;margin-top:28px">
+  <pre style="font:84px/1.35 'JetBrains Mono', monospace;background:#12163A;color:#fff;padding:56px;border-radius:28px;margin:0">@...
+.##K
+...E</pre>
+  <div style="font-size:38px;line-height:1.55">
+    <p><b>@</b> игрок · <b>#</b> стена · <b>K</b> ключ · <b>E</b> выход</p>
+    <p>Найдите путь к выходу с ключом.</p>
+    <p>А теперь попробуйте подойти к выходу снизу карты без ключа.</p>
   </div>
 </div>
-""", "Сценарий защиты проектов: каждый ученик получает минуту славы у доски.")
+""", "На карте старт в (0, 0). Победа: d, d, d, s, s. Без ключа: s, s, d, d, d — последний ход заблокирован. Попросите проговорить координаты после каждого хода. Напомните, что строка растёт вниз.")
 
-    add_slide("l8-future", "#F6F7FB", """
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Твой путь в IT продолжается</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:56px;font-weight:700;color:#12163A">Куда двигаться дальше в разработке игр?</h2>
-</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:20px">
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">👾</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Библиотека Pygame</h3><p style="font-size:24px;color:#4A5170">Настоящие окна, спрайты, физика прыжков, музыка и поддержка геймпада.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🌐</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Игровые боты в Telegram</h3><p style="font-size:24px;color:#4A5170">Перенос ваших консольных квестов в чат-боты, в которые могут играть тысячи друзей.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🕹️</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Движок Godot Engine</h3><p style="font-size:24px;color:#4A5170">Популярный движок с языком GDScript, очень похожим на изученный вами Python!</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🥇</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Олимпиадное программирование</h3><p style="font-size:24px;color:#4A5170">Алгоритмы, сортировки, поиск кратчайших путей и победы на турнирах.</p></div>
-  </div>
-</div>
-""", "Мотивационный слайд о дальнейших горизонтах развития юных программистов.")
+    make_code_explainer("l8-coordinates", "Ход игрока", "Проверяем координаты до чтения клетки",
+        '<pre>row, col = 0, 0\ndr, dc = MOVES[cmd]\nnext_row = row + dr\nnext_col = col + dc\n\n# Только если обе координаты допустимы:\ntile = level[next_row][next_col]</pre>',
+        [("Строка", "w уменьшает row, s увеличивает row."),
+         ("Столбец", "a уменьшает col, d увеличивает col."),
+         ("Границы", "Сначала проверяем строку; затем длину именно этой строки.")],
+        "В Python индекс −1 означает последний элемент. Поэтому одной проверки next_row < len(level) мало. Запишите на доске оба неравенства: 0 ≤ next_row < число строк и 0 ≤ next_col < длина строки. Отладочный вопрос: что случится при w в самой верхней строке?")
 
-    make_reflection("l8-reflect", 8, [
-        "Какой проект из 8 занятий тебе больше всего запомнился и почему?",
-        "С какой программной ошибкой за курс было сложнее всего справиться?",
-        "Какую игру ты хочешь разработать следующей?"
-    ], "Финальная душевная рефлексия всего курса.")
+    make_learn("l8-state", 8, [
+        ("#", "Запреты до перемещения", "Стена и край карты оставляют игрока на месте. continue начинает новый ход."),
+        ("K", "Ключ остаётся с игроком", "Сначала has_key равен False. После клетки K он становится True и сохраняется между ходами."),
+        ("E", "Выход проверяет ключ", "Без ключа клетка закрыта. С ключом игрок входит, программа объявляет победу и прекращает цикл."),
+    ], "Дважды проследите один и тот же ход к E, с has_key = False и True. Обратите внимание, что флаг создаётся перед while. Если написать has_key = False внутри while, ключ потеряется на следующем ходу.")
+
+    make_mission("l8-build", 8, "Соберите ход игрока",
+                 "Откройте «Командная бродилка с ключом». Меню, карта и отрисовка уже в заготовке.",
+                 ["Вычислите новые координаты и проверьте границы.",
+                  "Отмените ход в стену или к выходу без ключа.",
+                  "Обновите позицию. Запомните ключ. Объявите победу при входе в выход."],
+                 17, "Сначала запустите заготовку: 1 открывает карту, q завершает игру. Дорабатывайте по одному правилу. Нажимайте «Проверить» после каждого этапа. После первой попытки откроется подсказка. За пять минут до сдачи предложите командам с незавершённым кодом перейти на рабочий шаблон.")
+
+    make_errors_table("l8-debug", 8, "Три ошибки, которые стоит поймать", [
+        ("Прыжок за край", "Игрок оказывается на другом краю или игра падает.", "level[-1][0]", "Проверь нижнюю и верхнюю границы перед чтением."),
+        ("Проход сквозь стену", "Игрок успел занять запрещённую клетку.", "row = next_row слишком рано", "Проверь # и закрытый E перед обновлением позиции."),
+        ("Ключ пропал", "Выход снова говорит «Нужен ключ».", "has_key = False внутри while", "Установи False один раз перед циклом."),
+    ], "Пусть тестировщик назовёт первый ввод, после которого видна ошибка. Если урок короткий, покажите этот слайд прямо во время самостоятельной работы.")
+
+    make_learn("l8-check", 8, [
+        ("1", "Меню", "2 показывает правила, неизвестная цифра просит повторить, 3 закрывает программу."),
+        ("2", "Ошибочный путь", "1 → s → s → d → d → d. Выход закрыт. q завершает игру."),
+        ("3", "Победный путь", "1 → d → d → d → s → s. Появятся «Ключ найден!» и «Победа!»."),
+    ], "Для стены используйте 1, s, d. Для края — 1, w. В терминале после каждой команды нажимайте Enter. Сравните результат запуска и автопроверки. Автопроверка ориентируется на исходный уровень.")
+
+    make_learn("l8-fallback", 8, [
+        ("1", "Начните даже вдвоём или в одиночку", "Совместите роли и настройте меню. Товарищ может подключиться позже."),
+        ("2", "Если код не готов", "В «Студии» нажмите «Запустить рабочий шаблон», проверьте меню и пройдите карту."),
+        ("3", "Сдайте то, что работает", "Нажмите «Сдать рабочий шаблон». Когда свой код заработает, замените сборку."),
+    ], "Пометка «Рабочий шаблон» видна в карточке команды и в ZIP. Даже с шаблоном попросите ученика назвать свою правку меню и показать проверку. Сдача относится к команде. Роль каждого видна отдельно и обсуждается на показе.")
+
+    make_learn("l8-release", 8, [
+        ("1", "Сохраните", "Сохраните меню в панели и Python-файл редактора. После правок перезапустите игру."),
+        ("2", "Отправьте", "В «Сдать сборку» выберите файл редактора или рабочий шаблон и подтвердите отправку."),
+        ("3", "Проверьте статус", "На панели будет «Сдано». Учитель видит тип сборки и скачивает ZIP по командам."),
+    ], "Покажите на пульте «Проекты» → «Сборки и черновики». В папке «Сдано» лежит снимок игры на момент отправки с её меню. Чтобы включить новые правки, нужно пересдать.")
+
+    make_bonus("l8-bonus", 8, "Свой уровень", "После сдачи добавьте один поворот, второй маршрут или счётчик успешных ходов.",
+               "@..#..\n.#.K#.\n....#E\n......",
+               ["Оставьте свободный старт в левом верхнем углу.", "Проверьте, что достижимы и ключ, и выход.",
+                "Попросите товарища пройти уровень без подсказок. Готовую сборку отправьте повторно."],
+               "Дополнительные 15 минут. Работа с новой картой идёт после автопроверки исходной. Вместо новой карты можно считать только разрешённые перемещения.")
+
+    make_reflection("l8-show", 8, [
+        "Покажите меню, один заблокированный ход и победу.",
+        "Расскажите, что сделал каждый участник.",
+        "Предложите тему во вкладке «Идеи модуля». После отбора проголосуйте.",
+    ], "Запустите сбор идей на пульте до показов, чтобы часть класса могла отправить темы заранее. После показов выберите 2–8 вариантов и нажмите «Открыть голосование». У ученика один голос, его можно изменить до закрытия. Покажите общие итоги с пульта.")
 
     # -------------------------------------------------------------------------
     # ЗАКЛЮЧИТЕЛЬНЫЙ СЛАЙД (1 слайд)

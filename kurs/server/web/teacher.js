@@ -35,6 +35,14 @@ let pollTimer = null;
 let clockTimer = null;
 let busy = false;
 let lastAttention = 0;
+let navKey = "";
+let pollDraft = null;
+const teacherTop = document.querySelector(".top");
+if (teacherTop && typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty("--teacher-top-height", teacherTop.offsetHeight + "px");
+  }).observe(teacherTop);
+}
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -145,15 +153,18 @@ async function boot() {
 function showPasswordForm(setup) {
   lessonEl.textContent = "";
   actionsEl.replaceChildren();
-  const pw = h("input", { type: "password", autocomplete: setup ? "new-password" : "current-password", placeholder: "Пароль" });
-  const pw2 = setup ? h("input", { type: "password", autocomplete: "new-password", placeholder: "Пароль ещё раз" }) : null;
-  const err = h("div", { class: "err" });
+  const pw = h("input", { id: "teacher-password", type: "password", required: true,
+    autocomplete: setup ? "new-password" : "current-password" });
+  const pw2 = setup ? h("input", { id: "teacher-password-repeat", type: "password", required: true, autocomplete: "new-password" }) : null;
+  const err = h("div", { class: "err", role: "alert" });
   const go = async (e) => {
     e.preventDefault();
     err.textContent = "";
     if (setup && pw.value !== pw2.value) { err.textContent = "Пароли не совпадают"; return; }
     try {
       await api("POST", setup ? "/tapi/setup" : "/tapi/login", { password: pw.value });
+      pw.blur();
+      pw2?.blur();
       boot();
     } catch (ex) { err.textContent = ex.message; }
   };
@@ -175,7 +186,8 @@ function showPasswordForm(setup) {
   app.replaceChildren(h("form", { class: "card center", onsubmit: go },
     h("h2", {}, setup ? "Первый запуск: придумайте пароль учителя" : "Вход для учителя"),
     setup ? h("p", { class: "muted" }, "Пароль нужен, чтобы пульт не открыл посторонний. Не короче 6 символов.") : null,
-    pw, pw2, err,
+    h("label", { class: "field", for: pw.id }, h("span", {}, "Пароль"), pw),
+    pw2 ? h("label", { class: "field", for: pw2.id }, h("span", {}, "Повторите пароль"), pw2) : null, err,
     h("button", { type: "submit", class: "big" }, setup ? "Сохранить пароль" : "Войти"),
     resetBtn));
   pw.focus();
@@ -203,13 +215,24 @@ async function refresh() {
   const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest(".play-host");
   const key = JSON.stringify([data, ai, play, teams, tab], (k, v) => (k === "now" || k === "seen" ? undefined : v));
   if (key === lastKey && Date.now() - lastRenderAt < 30000) return;
-  lastKey = key;
   renderTop();
   renderNav();
-  if (!typing) render();
+  if (!typing && !app.querySelector('.module-poll[aria-busy="true"]')) {
+    lastKey = key;
+    render();
+  } else if (typing && data.poll?.phase === "ideas") {
+    const live = document.getElementById("poll-live-ideas");
+    const options = document.getElementById("poll-options");
+    if (live?.dataset.pollId === String(data.poll.id) && options) updatePollIdeas(live, data.poll, options);
+  }
 }
 
 const currentLesson = () => data.lessons.find((l) => l.lesson === data.state.lesson) || data.lessons[0];
+function openSlides() {
+  const lesson = data.state.running ? data.state.lesson : pick.lesson;
+  const anchor = data.course.id === "games" && lesson ? "#l" + lesson + "-divider" : "";
+  window.open("/presentation" + anchor, "_blank");
+}
 const currentGroup = () => data.groups.find((g) => g.id === data.state.group_id);
 
 function renderTrafficLight() {
@@ -251,11 +274,11 @@ function renderTrafficLight() {
         alert("Адрес для учеников скопирован в буфер:\n" + studentUrl);
       }
     }, `🟢 Сеть: ${studentUrl}`),
-    h("button", {
+    data.course.id === "chatbots" ? h("button", {
       class: "traffic-chip " + aiClass,
       title: "Статус нейросети (нажмите для перехода к настройкам и проверке связи)",
       onclick: () => goTab("ai")
-    }, aiText),
+    }, aiText) : null,
     h("button", {
       class: "traffic-chip " + (st.running ? "ok" : "wait"),
       title: "Статус класса (нажмите для перехода)",
@@ -263,7 +286,7 @@ function renderTrafficLight() {
     }, st.running ? `🟢 Класс: ${online} онлайн` : "⚪ Занятие не начато"),
   ];
 
-  trafficLightEl.replaceChildren(...chips);
+  trafficLightEl.replaceChildren(...chips.filter(Boolean));
 }
 
 function renderTop() {
@@ -288,7 +311,7 @@ function renderTop() {
   const sound = store.get("kurs.sound") !== "off";
   const item = (icon, text, fn, hint) => h("button", { class: "menu-item", title: hint || "", onclick: () => { menuOpen = false; fn(); } }, h("span", { class: "mi" }, icon), text);
   const menu = h("div", { class: "menu" + (menuOpen ? "" : " hidden") },
-    item("📽", "Слайды / Презентация", () => window.open("/presentation", "_blank"), "Открыть слайды к уроку для проектора"),
+    item("📽", "Слайды / Презентация", openSlides, "Открыть слайды к уроку для проектора"),
     st.running ? item("🖥", "Экран для проектора", () => window.open("/teacher/projector.html", "kurs-projector"), "Таймер и прогресс без имён") : null,
     item("🔄", "Перезапустить VS Code у всех", () => { if (confirm("Перезапустить VS Code у всех учеников? Их работа сохранится, вход останется.")) act("restart_clients"); }),
     item("⏻", "Закрыть VS Code у всех", () => { if (confirm("Закрыть VS Code у всех учеников? Их файлы сохранятся. Открыть снова — ярлыком «Курс».")) act("close_clients"); }),
@@ -304,7 +327,7 @@ function renderTop() {
         }, "Тихо закрывать ChatGPT, DeepSeek, Алису, ГигаЧат, VK и соцсети"),
     st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
     item("↺", "Сбросить прогресс занятия у группы", () => {
-      const lessonNum = st.running ? (data.lesson && data.lesson.num) : pick.lesson;
+      const lessonNum = st.running ? st.lesson : pick.lesson;
       const groupId = st.running ? data.state.group_id : pick.group;
       if (!lessonNum || !groupId) return alert("Сначала выберите группу и занятие");
       const l = data.lessons.find((x) => x.lesson === lessonNum);
@@ -315,13 +338,13 @@ function renderTop() {
         act("reset_lesson_progress", { lesson: lessonNum, group_id: groupId });
       }
     }, "Очистить попытки и оценки по всем заданиям урока у группы"),
-    item("📦", "Скачать проекты команд (ZIP)", () => { location.href = "/tapi/export_projects.zip"; }, "Все боты, код и команда.json"),
-    item("📄", "Скачать проекты команд (JSON)", () => { location.href = "/tapi/export_projects.json"; }, "Машиночитаемый JSON для парсинга"),
+    data.course.id === "chatbots" ? item("📦", "Скачать проекты команд (ZIP)", () => { location.href = "/tapi/export_projects.zip"; }, "Все боты, код и команда.json") : null,
+    data.course.id === "chatbots" ? item("📄", "Скачать проекты команд (JSON)", () => { location.href = "/tapi/export_projects.json"; }, "Машиночитаемый JSON для парсинга") : null,
     item(sound ? "🔔" : "🔕", sound ? "Звук сигналов: включён" : "Звук сигналов: выключен", () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); }),
     h("hr", {}),
     item("🚪", "Выйти из пульта", async () => { await api("POST", "/tapi/logout", {}); boot(); }));
   const parts = [];
-  parts.push(h("button", { class: "ghost", title: "Открыть презентацию со слайдами к уроку", onclick: () => window.open("/presentation", "_blank") }, "📽 Слайды"));
+  parts.push(h("button", { class: "ghost", title: "Открыть презентацию со слайдами к уроку", onclick: openSlides }, "📽 Слайды"));
   if (st.running) {
     parts.push(h("button", { class: st.paused ? "on" : "ghost", title: "Закрыть экраны учеников надписью «Смотрим на учителя»", onclick: () => act("pause", { paused: !st.paused }) }, st.paused ? "▶ Снять паузу" : "⏸ Пауза"));
     parts.push(h("button", { class: "danger", onclick: () => {
@@ -352,17 +375,23 @@ function renderNav() {
     project: teams && teams.team_lesson && teams.teams.length ? teams.free.length : 0,
   };
   const soft = { play: play && play.matches.length ? play.matches.length : 0 };
-  navEl.replaceChildren(...TABS.map(([id, ic, title]) => h("button", { class: "tab" + (tab === id ? " on" : ""), onclick: () => goTab(id) },
-    h("span", { class: "ic" }, ic), title,
+  const key = JSON.stringify([tab, badges, soft]);
+  if (key === navKey && navEl.childElementCount) return;
+  navKey = key;
+  const focused = navEl.contains(document.activeElement) ? document.activeElement.id : "";
+  navEl.replaceChildren(...TABS.map(([id, ic, title]) => h("button", { id: "nav-" + id, class: "tab" + (tab === id ? " on" : ""),
+    "aria-current": tab === id ? "page" : null, onclick: () => goTab(id) },
+    h("span", { class: "ic", "aria-hidden": "true" }, ic), title,
     badges[id] ? h("span", { class: "badge" }, badges[id]) : null,
     soft[id] ? h("span", { class: "badge soft", title: "Идут партии" }, soft[id]) : null)));
+  if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
 }
 
 function render() {
   const y = window.scrollY;
   lastRenderAt = Date.now();
   const views = {
-    class: () => (data.state.running ? renderLesson() : renderIdle()),
+    class: () => (data.state.running ? renderLesson() : [...renderIdle(), data.poll ? modulePollCard() : null]),
     ai: () => aiTab(),
     play: () => playTab(),
     project: () => projectTab(),
@@ -390,7 +419,7 @@ function renderIdle() {
       (data.courses || []).map((c) =>
         h("button", {
           class: "choice" + ((data.course && data.course.id === c.id) ? " sel" : ""),
-          style: "flex:1; min-width:240px; text-align:left;",
+          style: "flex:1; min-width:min(100%, 240px); text-align:left;",
           onclick: () => { act("set_course", { course: c.id }); }
         },
         h("b", {}, (c.id === "games" ? "🎮 " : "🤖 ") + c.title),
@@ -454,13 +483,15 @@ function renderIdle() {
         addresses())));
   const cards = [wizard,
     h("div", { class: "hint-cards" },
-      h("button", { class: "hint-card", onclick: () => window.open("/presentation", "_blank") }, h("b", {}, "📽 Презентация"), h("small", {}, "открыть слайды к уроку для проектора")),
+      h("button", { class: "hint-card", onclick: openSlides }, h("b", {}, "📽 Презентация"), h("small", {}, "открыть слайды к уроку для проектора")),
       h("button", { class: "hint-card", onclick: () => goTab("groups") }, h("b", {}, "👥 Группы"), h("small", {}, "добавить группу и учеников")),
       h("button", { class: "hint-card", onclick: () => goTab("connect") }, h("b", {}, "🔌 Подключение"), h("small", {}, "команда для компьютеров учеников")),
       h("button", { class: "hint-card", onclick: () => goTab("ai") }, h("b", {}, "🤖 Нейросеть"), h("small", {}, "ключ GigaChat и проверка связи")))];
   const last = data.state.last_class;
   const lastGroup = last && data.groups.find((g) => g.id === last.group_id);
-  const lastLesson = last && data.lessons.find((l) => l.lesson === last.lesson);
+  const lastLesson = last && (last.course && last.course !== data.course.id
+    ? { lesson: last.lesson, title: last.lesson_title || data.courses.find((c) => c.id === last.course)?.title }
+    : data.lessons.find((l) => l.lesson === last.lesson));
   if (lastGroup && lastLesson) {
     const n = (last.open_tasks || []).length;
     cards.unshift(h("section", { class: "card" }, h("h2", {}, "Продолжить прошлое занятие"),
@@ -468,14 +499,14 @@ function renderIdle() {
       h("p", { class: "muted" }, `Вернутся открытые задания (${n}) и этап тетради. Решённые задания и файлы учеников сохранены — заново ничего делать не нужно.`),
       h("div", { class: "row", style: "gap:10px;flex-wrap:wrap;align-items:center;" },
         h("button", { class: "big", onclick: () => act("continue") }, "⏯ Продолжить занятие"),
-        h("button", {
+        !last.course || last.course === data.course.id ? h("button", {
           class: "ghost small danger",
           title: "Сбросить результаты прошлого занятия",
           onclick: () => {
             if (!confirm(`Сбросить прогресс занятия ${lastLesson.lesson} («${lastLesson.title}») у группы «${lastGroup.name}»?\n\nВсе выполненные задания и попытки учеников будут очищены.`)) return;
             act("reset_lesson_progress", { lesson: lastLesson.lesson, group_id: lastGroup.id });
           }
-        }, "↺ Сбросить прогресс этого занятия"))));
+        }, "↺ Сбросить прогресс этого занятия") : null)));
   }
   return cards;
 }
@@ -544,20 +575,126 @@ function renderLesson() {
   if (st.paused) out.push(h("div", { class: "pause-banner" }, "⏸", h("span", {}, "У учеников пауза: панель закрыта экраном «Смотрим на учителя»."),
     h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => act("pause", { paused: false }) }, "Снять паузу")));
   out.push(h("div", { class: "grid" },
-    h("div", { class: "side" }, attentionCard(), projectBrief(lesson), stepsCard(lesson)),
+    h("div", { class: "side" }, attentionCard(), projectBrief(lesson), stepsCard(lesson), modulePollCard()),
     h("div", {}, tiles(), tableCard(lesson))));
   return out;
+}
+
+function updatePollIdeas(host, poll, options) {
+  const key = JSON.stringify(poll.ideas);
+  if (host.dataset.ideas === key) return;
+  host.dataset.ideas = key;
+  const total = poll.ideas.reduce((n, item) => n + item.count, 0);
+  const list = h("ul", { class: "poll-results poll-ideas" }, poll.ideas.map(({ topic, count }) => {
+    const add = h("button", { class: "ghost small", "aria-label": "Добавить в бюллетень: " + topic,
+      onclick: () => {
+        const current = options.value.split("\n").map((line) => line.trim()).filter(Boolean);
+        if (!current.some((line) => line.toLowerCase() === topic.toLowerCase())) current.push(topic);
+        pollDraft.options = options.value = current.join("\n");
+        options.focus();
+      } }, "Добавить");
+    return h("li", {}, h("div", {}, h("b", {}, topic), h("small", { class: "muted" }, "Предложили: " + count)), add);
+  }));
+  host.querySelector("p").textContent = "Идёт сбор идей · предложений: " + total;
+  host.lastElementChild.replaceChildren(poll.ideas.length ? list : h("p", { class: "muted" }, "Идеи учеников появятся здесь."));
+}
+
+function modulePollCard() {
+  const poll = data.poll;
+  const running = Boolean(data.state.running);
+  const group = data.groups.find((g) => g.id === data.state.group_id);
+  const card = h("section", { class: "card module-poll", "aria-labelledby": "module-poll-title" },
+    h("h2", { id: "module-poll-title" }, "Голосование за следующий модуль"));
+  if (poll?.options.length) {
+    card.append(h("p", {}, h("b", {}, poll.question)),
+      h("p", { class: "muted small" }, (group ? group.name + " · " : "") +
+        (poll.open ? "Идёт голосование" : "Голосование завершено") + " · голосов: " + poll.total),
+      h("ul", { class: "poll-results" }, poll.options.map((topic, i) =>
+        h("li", {}, h("span", {}, topic), h("b", {}, poll.counts[i])))));
+    if (poll.open) {
+      card.append(h("button", { id: "poll-close", class: "ghost",
+        onclick: (e) => submitPoll("poll/close", { id: poll.id }, card, e.currentTarget) },
+        "Завершить голосование"));
+      return card;
+    }
+  }
+  const collecting = poll?.phase === "ideas";
+  if (poll?.phase === "closed" && !poll.options.length) {
+    card.append(h("p", { class: "muted" }, "Сбор идей завершён."));
+  }
+  if (collecting) {
+    card.append(h("p", {}, h("b", {}, poll.question)));
+  }
+  if (!running) return card;
+  const draftKey = [data.state.group_id, data.course.id, poll?.id, poll?.phase].join("/");
+  if (pollDraft?.key !== draftKey) {
+    pollDraft = { key: draftKey, question: "Что вы хотите попробовать разработать в следующем модуле?",
+      options: collecting ? "" : "2D-игры на Pygame\nЧат-боты и ИИ-агенты\nВеб-приложения на Python\nАвтоматизация на Python" };
+  }
+  const question = h("input", { id: "poll-question", required: true, maxlength: "120", value: pollDraft.question,
+    oninput: (e) => { pollDraft.question = e.target.value; } });
+  const options = h("textarea", { id: "poll-options", required: true, rows: "4", "aria-describedby": "poll-options-hint" },
+    pollDraft.options);
+  options.addEventListener("input", (e) => { pollDraft.options = e.target.value; });
+  const publish = h("button", { id: "poll-publish", type: "submit" }, "Открыть голосование");
+  const ballot = h("form", { class: "poll-form", onsubmit: (e) => {
+    e.preventDefault();
+    const payload = { options: options.value.split("\n"), question: question.value, id: poll?.id };
+    submitPoll(collecting ? "poll/publish" : "poll", payload, card, publish);
+  } }, h("label", { for: options.id }, "Темы для голосования"), options,
+    h("small", { id: "poll-options-hint", class: "muted" }, "От 2 до 8 тем, по одной на строку. Темы можно отредактировать и добавить свои."),
+    publish);
+  if (collecting) {
+    const live = h("div", { id: "poll-live-ideas", "data-poll-id": poll.id },
+      h("p", { id: "poll-ideas-status", class: "muted small", role: "status", tabindex: "-1" }), h("div"));
+    updatePollIdeas(live, poll, options);
+    card.append(live,
+      ballot,
+      h("button", { id: "poll-close", class: "ghost",
+        onclick: (e) => submitPoll("poll/close", { id: poll.id }, card, e.currentTarget) }, "Завершить сбор идей"));
+  } else {
+    card.append(h("form", { class: "poll-form", onsubmit: (e) => {
+      e.preventDefault();
+      submitPoll("poll/collect", { question: question.value }, card, e.submitter || e.currentTarget.querySelector("button"));
+    } }, h("label", { for: question.id }, "Вопрос ученикам"), question,
+      h("button", { id: "poll-collect", type: "submit" }, "Начать сбор идей")),
+      details("poll-ready-" + draftKey, "У меня уже есть список тем", ballot));
+  }
+  return card;
+}
+
+async function submitPoll(path, payload, card, button) {
+  if (button.disabled || card.getAttribute("aria-busy") === "true") return;
+  card.querySelector("[role=alert]")?.remove();
+  button.disabled = true;
+  card.setAttribute("aria-busy", "true");
+  try {
+    await api("POST", "/tapi/" + path, payload);
+    await refresh();
+    render();
+    const next = path === "poll/collect" ? "poll-ideas-status" : path === "poll/close" ? "poll-collect" : "poll-close";
+    document.getElementById(next)?.focus({ preventScroll: true });
+  } catch (e) {
+    if (e.status === 401) return boot();
+    card.append(h("p", { class: "poll-error", role: "alert" }, e.message));
+    button.focus({ preventScroll: true });
+  } finally {
+    button.disabled = false;
+    card.removeAttribute("aria-busy");
+  }
 }
 
 // на занятиях с проектом: коротко про идеи и команды, подробно — на вкладке «Проекты»
 function projectBrief(lesson) {
   if (!teams || !(lesson.project_idea || lesson.teams)) return null;
+  const game = teams.team_project === "game";
   const text = lesson.teams
     ? (teams.teams.length ? `Команд: ${teams.teams.length} · без команды: ${teams.free.length}` +
+        (game ? ` · сдали: ${teams.teams.filter((team) => team.studio?.release).length}` : "") +
         (teams.cfg.open ? " · запись открыта" : " · запись закрыта") : "Команд ещё нет — создайте их, ученики выберут сами.")
     : `Идей записано: ${teams.ideas.length} из ${data.students.length}. Ученики пишут их на вкладке «💡 Проект».`;
-  return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, lesson.teams ? "👥 Команды" : "💡 Идеи проектов"),
-    h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => goTab("project") }, "Открыть «Проекты»")),
+  return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, game ? "Студия разработки игры" : lesson.teams ? "👥 Команды" : "💡 Идеи проектов"),
+    h("span", { class: "spacer" }), h("button", { class: "ghost small", onclick: () => goTab("project") }, game ? "Управлять командами" : "Открыть «Проекты»")),
     h("p", { class: "small" }, text));
 }
 
@@ -694,7 +831,8 @@ function tableCard(lesson) {
       const r = s.results[t.id];
       if (!r) { row.append(h("td", {}, h("span", { class: "cell empty" }, "·"))); continue; }
       const sign = r.status === "passed" ? "✓" : r.status === "failed" ? "✗" : "…";
-      row.append(h("td", {}, h("span", { class: "cell " + r.status, onclick: () => showResult(s, t), title: r.summary || "" },
+      row.append(h("td", {}, h("button", { class: "cell " + r.status, onclick: () => showResult(s, t), title: r.summary || "",
+        "aria-label": s.name + ", задание " + t.num + ", " + (r.status === "passed" ? "выполнено" : r.status === "failed" ? "есть ошибки" : "начато") },
         sign, h("small", {}, `${r.attempts}×` + (r.hints ? ` 💡${r.hints}` : "")))));
     }
     row.append(h("td", {}, h("span", { class: "done-count" }, `${done}/${lesson.tasks.length}`)));
@@ -705,10 +843,10 @@ function tableCard(lesson) {
   return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "Прогресс класса"), h("span", { class: "spacer" }),
       h("button", { class: "ghost small danger", title: "Сбросить результаты всех заданий этого урока у всех учеников группы",
         onclick: async () => {
-          if (!confirm(`Сбросить прогресс урока ${lesson.num} («${lesson.title}») у всех учеников группы?\n\nВсе выполненные задания, попытки и подсказки этого урока будут очищены.`)) return;
-          await act("reset_lesson_progress", { lesson: lesson.num, group_id: data.state.group_id });
+          if (!confirm(`Сбросить прогресс урока ${lesson.lesson} («${lesson.title}») у всех учеников группы?\n\nВсе выполненные задания, попытки и подсказки этого урока будут очищены.`)) return;
+          await act("reset_lesson_progress", { lesson: lesson.lesson, group_id: data.state.group_id });
         } }, "↺ Сбросить прогресс урока"),
-      h("a", { href: "/tapi/export.csv" }, h("button", { class: "ghost small" }, "Скачать таблицу"))),
+      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export.csv"; } }, "Скачать таблицу")),
     h("div", { class: "legend" },
       h("span", {}, h("i", { style: "background:var(--ok-bg)" }), "выполнено"),
       h("span", {}, h("i", { style: "background:var(--bad-bg)" }), "есть ошибки"),
@@ -809,25 +947,33 @@ function projectTab() {
   if (!teams.group) return [h("section", { class: "card" }, h("h2", {}, "🚀 Проекты"),
     h("p", { class: "muted" }, "Начните занятие с группой — здесь появятся идеи учеников и команды для проекта."))];
   const cfg = teams.cfg;
+  const game = teams.team_project === "game";
+  const releases = teams.teams.map((team) => team.studio?.release).filter(Boolean);
   const inTeams = teams.teams.reduce((n, t) => n + t.members.length, 0);
   const small = teams.teams.filter((t) => t.members.length < cfg.min);
   const num = (key, label, hint) => h("label", { class: "field" }, h("span", {}, label),
     h("input", { type: "number", min: "0", max: "50", value: cfg[key], style: "width:90px",
       onchange: (e) => act("teams/config", { [key]: Number(e.target.value || 0) }) }), hint ? h("small", { class: "muted" }, hint) : null);
-  const count = h("input", { type: "number", min: "1", max: "30", value: teams.teams.length ? 1 : 7, style: "width:90px" });
+  const count = h("input", { type: "number", min: "1", max: "30", value: teams.teams.length ? 1
+    : game ? Math.min(30, Math.max(1, Math.ceil(teams.free.length / 3))) : 7, style: "width:90px" });
   const names = h("textarea", { placeholder: "Названия по одному в строке (можно не писать — будет «Команда 1», «Команда 2»…)", rows: "3", style: "min-height:64px;margin-top:6px" });
   const create = () => act("teams/create", { count: Number(count.value || 0), names: names.value.split("\n").map((x) => x.trim()).filter(Boolean) });
   const seg = (open, label, hint) => h("button", { class: "seg" + (!!cfg.open === open ? " on" : ""), title: hint, onclick: () => act("teams/config", { open }) }, label);
 
-  const exportCard = h("section", { class: "card", style: "border-left:4px solid var(--ok, #10b981)" },
+  const exportCard = game ? h("section", { class: "card" }, h("h2", {}, "Сборки и черновики"),
+    h("p", { class: "muted small" }, "Архив содержит сданные версии с меню и текущие черновики команд."),
+    h("button", { class: "ghost", disabled: !releases.length && !teams.teams.some((t) => t.members.some((m) => m.has_file)),
+      onclick: () => { location.href = "/tapi/export_games.zip"; } }, "Скачать игры (ZIP)"))
+    : data.course.id === "chatbots" ? h("section", { class: "card", style: "border-left:4px solid var(--ok, #10b981)" },
     h("h2", {}, "💾 Экспорт проектов"),
     h("p", { class: "muted small" }, "Выгрузить карточки команд, код участников и файл Наш_бот.py:"),
     h("div", { class: "row", style: "gap:8px;margin-top:8px" },
       h("button", { class: "ok small", onclick: () => { location.href = "/tapi/export_projects.zip"; } }, "📦 Скачать все (ZIP)"),
-      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export_projects.json"; } }, "📄 Данные (JSON)")));
+      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export_projects.json"; } }, "📄 Данные (JSON)"))) : null;
 
   const manage = h("section", { class: "card" }, h("h2", {}, "👥 Команды"),
-    !teams.team_lesson ? h("p", { class: "muted small" }, "Ученики выбирают команду на занятии-проекте (Занятие 6). Создать команды можно и заранее.") : null,
+    game ? h("p", { class: "muted small" }, "Обычно в команде 2–3 ученика. Работу можно начать одному. Сдача доступна и с рабочим шаблоном, это будет видно в карточке.")
+      : !teams.team_lesson ? h("p", { class: "muted small" }, "Ученики выбирают команду на финальном занятии. Создать команды можно заранее.") : null,
     h("div", { class: "row", style: "align-items:flex-end;gap:10px" },
       h("label", { class: "field" }, h("span", {}, teams.teams.length ? "Добавить команд" : "Сколько команд"), count),
       h("button", { onclick: create }, teams.teams.length ? "+ Добавить" : "Создать команды")),
@@ -855,7 +1001,7 @@ function projectTab() {
   if (!teams.free.length) free.append(h("p", { class: "muted" }, "Все ученики в командах."));
   for (const st of teams.free) {
     free.append(h("div", { class: "list-item" }, h("span", { class: "dot" + (st.online ? " on" : "") }),
-      h("span", { class: "grow name-link", onclick: () => showStudent(st.id) }, st.name),
+      h("button", { class: "grow link name-link", onclick: () => showStudent(st.id) }, st.name),
       teams.teams.length ? assignSelect(st.id, null, "в команду…") : null));
   }
 
@@ -868,7 +1014,7 @@ function projectTab() {
       x.tools ? h("div", { class: "small muted", style: "white-space:pre-wrap" }, "🔧 " + x.tools) : null));
   }
 
-  const mark = { passed: ["✓ инструменты работают", "ok"], failed: ["✗ ошибки", "bad"], started: ["… пишет", ""] };
+  const mark = { passed: [game ? "✓ проверка пройдена" : "✓ инструменты работают", "ok"], failed: ["✗ ошибки", "bad"], started: ["… пишет", ""] };
   const grid = h("div", { class: "team-grid" });
   if (!teams.teams.length) grid.append(h("section", { class: "card" }, h("p", { class: "muted" }, "Команд пока нет: создайте их слева. Ученики сами выберут команду в панели.")));
   for (const t of teams.teams) {
@@ -876,25 +1022,32 @@ function projectTab() {
     for (const m of t.members) for (const x of m.tools) (owners[x] = owners[x] || []).push(m.name);
     const card = h("section", { class: "card team" },
       h("div", { class: "card-head" },
-        h("h2", { class: "name-link", title: "Переименовать", onclick: () => { const n = prompt("Название команды", t.name); if (n) act("teams/rename", { team_id: t.id, name: n }); } }, t.name),
-        h("span", { class: "badge" + (t.members.length < cfg.min ? "" : " zero") }, t.members.length),
+        h("h2", {}, h("button", { class: "link name-link", "aria-label": "Переименовать команду «" + t.name + "»",
+          onclick: () => { const n = prompt("Название команды", t.name); if (n) act("teams/rename", { team_id: t.id, name: n }); } }, t.name)),
+        h("span", { class: "badge" + (!game && t.members.length < cfg.min ? "" : " zero") }, t.members.length),
         h("span", { class: "spacer" }),
-        h("button", { class: "ghost small", title: "Удалить команду", onclick: () => { if (confirm(`Удалить команду «${t.name}»? Её участники останутся без команды.`)) act("teams/delete", { team_id: t.id }); } }, "✕")),
-      t.bot_name || t.topic ? h("p", { class: "small" }, [t.bot_name ? `🤖 ${t.bot_name}` : "", t.topic].filter(Boolean).join(" · ")) : null,
-      t.persona ? h("p", { class: "small muted" }, "🎭 " + t.persona) : null,
-      t.members.length < cfg.min ? h("p", { class: "small", style: "color:var(--bad)" }, `Мало участников: нужно минимум ${cfg.min}`) : null);
+        h("button", { class: "ghost small", "aria-label": "Удалить команду «" + t.name + "»", onclick: () => { if (confirm(`Удалить команду «${t.name}»? Её участники останутся без команды.`)) act("teams/delete", { team_id: t.id }); } }, "✕")),
+      !game && (t.bot_name || t.topic) ? h("p", { class: "small" }, [t.bot_name ? `🤖 ${t.bot_name}` : "", t.topic].filter(Boolean).join(" · ")) : null,
+      !game && t.persona ? h("p", { class: "small muted" }, "🎭 " + t.persona) : null,
+      game && t.studio ? h("div", { class: "teacher-studio-build" }, h("b", {}, t.studio.menu.title),
+        h("p", { class: "small" }, t.studio.release
+          ? `Сдано · ${t.studio.release.mode === "template" ? "Рабочий шаблон" : "Файл команды"} · ${t.studio.release.menu.title}`
+          : t.studio.revision ? "Меню сохранено · сборка ожидается" : "Сборка ожидается"),
+        t.studio.release ? h("p", { class: "small muted" }, "Отправил(а) " + t.studio.release.submitted_by +
+          (t.studio.release.author ? " · файл " + t.studio.release.author : "")) : null) : null,
+      !game && t.members.length < cfg.min ? h("p", { class: "small", style: "color:var(--bad)" }, `Мало участников: нужно минимум ${cfg.min}`) : null);
     if (!t.members.length) card.append(h("p", { class: "muted small" }, "Пока никого."));
     for (const m of t.members) {
-      const st = mark[m.status] || [m.tools.length ? "файл сохранён" : "нет файла", ""];
+      const st = mark[m.status] || [m.has_file ? "файл сохранён" : "нет файла", ""];
       card.append(h("div", { class: "member" },
         h("div", { class: "row" },
           h("span", { class: "dot" + (m.online ? " on" : "") }),
-          h("span", { class: "name-link", onclick: () => showStudent(m.id) }, h("b", {}, m.name)),
+          h("button", { class: "link name-link", onclick: () => showStudent(m.id) }, m.name),
           h("span", { class: "chip " + st[1] }, st[0]),
           h("span", { class: "actions" }, assignSelect(m.id, t.id, "перевести…"),
             h("button", { class: "ghost small", title: "Убрать из команды: сам вернуться не сможет", onclick: () => { if (confirm(`Убрать ${m.name} из команды «${t.name}»? Вернуться в неё сам ученик не сможет — только вы его переведёте.`)) act("teams/kick", { student_id: m.id }); } }, "Выгнать"))),
         m.plan ? h("div", { class: "small muted" }, "📝 " + m.plan) : null,
-        m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (owners[x].length > 1 ? " bad" : ""), title: owners[x].length > 1 ? "Такое же имя у товарища" : "" }, "🔧 " + x))) : null));
+        !game && m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (owners[x].length > 1 ? " bad" : ""), title: owners[x].length > 1 ? "Такое же имя у товарища" : "" }, "🔧 " + x))) : null));
     }
     if (t.banned.length) {
       card.append(h("p", { class: "small muted" }, "Выгнаны: ", t.banned.map((b, i) => [i ? ", " : "", b.name, " ",
@@ -902,7 +1055,9 @@ function projectTab() {
     }
     grid.append(card);
   }
-  return [h("div", { class: "grid" }, h("div", { class: "side" }, exportCard, manage, free, ideasCard), h("div", {}, grid))];
+  return [game ? h("section", { class: "teacher-studio-summary" }, h("h2", {}, "Студия · Командная бродилка"),
+    h("p", {}, `Команд: ${teams.teams.length} · сдали: ${releases.length} · на шаблоне: ${releases.filter((r) => r.mode === "template").length}`)) : null,
+    h("div", { class: "grid" }, h("div", { class: "side" }, manage, free, exportCard, game ? null : ideasCard), h("div", {}, grid))];
 }
 
 // ---------- нейросеть ----------
@@ -1114,12 +1269,12 @@ async function showStudent(id) {
             closeModal();
           }
         }, isFocus ? "🔓 Снять блокировку игр и браузера" : "🛡️ Заблокировать игры и браузер"),
-        data.lesson ? h("button", {
+        data.state.running ? h("button", {
           class: "ghost small danger",
           title: "Сбросить результаты текущего урока только для этого ученика",
           onclick: async () => {
-            if (!confirm(`Сбросить прогресс урока ${data.lesson.num} («${data.lesson.title}») у ученика ${d.name}?\n\nВсе результаты проверок, попытки и подсказки этого урока будут очищены.`)) return;
-            await act("reset_lesson_progress", { lesson: data.lesson.num, student_id: id });
+            if (!confirm(`Сбросить прогресс урока ${data.state.lesson} («${currentLesson().title}») у ученика ${d.name}?\n\nВсе результаты проверок, попытки и подсказки этого урока будут очищены.`)) return;
+            await act("reset_lesson_progress", { lesson: data.state.lesson, student_id: id });
             closeModal();
           }
         }, "↺ Сбросить прогресс урока ученика") : null

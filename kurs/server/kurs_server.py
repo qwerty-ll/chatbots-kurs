@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS teams(id INTEGER PRIMARY KEY, group_id INTEGER NOT NU
     banned TEXT NOT NULL DEFAULT '[]', edited_by TEXT NOT NULL DEFAULT '', created REAL NOT NULL, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS team_members(student_id INTEGER PRIMARY KEY, team_id INTEGER NOT NULL,
     plan TEXT NOT NULL DEFAULT '', joined REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS module_polls(id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    question TEXT NOT NULL, options TEXT NOT NULL, is_open INTEGER NOT NULL DEFAULT 1,
+    course TEXT NOT NULL, collecting INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_module_polls_group ON module_polls(group_id, id);
+CREATE TABLE IF NOT EXISTS module_votes(poll_id INTEGER NOT NULL REFERENCES module_polls(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL, choice INTEGER NOT NULL, PRIMARY KEY(poll_id, student_id));
+CREATE TABLE IF NOT EXISTS module_ideas(poll_id INTEGER NOT NULL REFERENCES module_polls(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL, topic TEXT NOT NULL, PRIMARY KEY(poll_id, student_id));
+CREATE TABLE IF NOT EXISTS game_studios(team_id INTEGER PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    menu TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, release TEXT, code TEXT);
+CREATE TABLE IF NOT EXISTS game_roles(team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL, plan TEXT NOT NULL, PRIMARY KEY(team_id, student_id));
 CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_student ON sessions(student_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_seen ON sessions(seen);
@@ -121,6 +133,16 @@ COURSES = {
         ]
     }
 }
+
+GAME_MENU = {
+    "title": "Бродилка",
+    "start": "Играть",
+    "rules": "Правила",
+    "exit": "Выход",
+    "intro": "Найди ключ и доберись до выхода.",
+}
+GAME_MENU_LIMITS = {"title": 36, "start": 24, "rules": 24, "exit": 24, "intro": 100}
+GAME_MENU_FILE = "studio_menu.json"
 
 DEFAULT_STATE = {"running": 0, "group_id": None, "lesson": 1, "course": "games", "open_tasks": [], "paused": 0, "pause_text": "",
                  "timer_end": None, "timer_label": "", "stage": 0, "class_id": 0, "restart_seq": 0, "close_seq": 0,
@@ -213,7 +235,7 @@ def notebook_upto(text: str, n: int) -> str:
     return "\n".join(lines[start:end]).rstrip() + "\n"
 
 
-def training_template(lesson: dict) -> str:
+def training_template(lesson: dict, course: str = "chatbots") -> str:
     n = lesson.get("lesson", 1)
     title = lesson.get("title", "")
     header = [
@@ -225,7 +247,12 @@ def training_template(lesson: dict) -> str:
         "# =====================================================================",
         "",
     ]
-    if n == 1:
+    if course == "games":
+        body = []
+        for item in lesson.get("theory", []):
+            if item.get("code"):
+                body.extend([f"# {item['title']}", item["code"].rstrip(), ""])
+    elif n == 1:
         body = [
             "# 1. Вывод текста на экран:",
             'print("Привет! Я тренируюсь писать код на Python.")',
@@ -375,7 +402,18 @@ class Store:
             self.db.execute("PRAGMA synchronous=NORMAL;")
             self.db.execute("PRAGMA foreign_keys=ON;")
             self.db.executescript(SCHEMA)
-            self.db.commit()
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                columns = {row["name"] for row in self.db.execute("PRAGMA table_info(module_polls)")}
+                if "course" not in columns:
+                    # В старой базе курс опроса отдельно не хранился.
+                    self.db.execute("ALTER TABLE module_polls ADD COLUMN course TEXT NOT NULL DEFAULT 'games'")
+                    course = self.get("course")
+                    if course in COURSES:
+                        self.db.execute("UPDATE module_polls SET course=?", (course,))
+                if "collecting" not in columns:
+                    self.db.execute("ALTER TABLE module_polls ADD COLUMN collecting INTEGER NOT NULL DEFAULT 0")
+                self.db.execute("CREATE INDEX IF NOT EXISTS idx_module_polls_course ON module_polls(group_id, course, id)")
         self.teacher_tokens: dict[str, float] = {}
 
     # --- state ---
@@ -834,6 +872,7 @@ class Kurs:
                 "restart": st["restart_seq"], "close": st["close_seq"], "locked": bool(self.lock_of(sess["student_id"])),
                 "focus_mode": focus_mode, "block_sites": block_sites,
                 "play": self.play_brief(sess),
+                "poll": self.module_poll(st["group_id"], sess["student_id"]),
                 # команды: панель заново спрашивает /api/team, только когда что-то изменилось
                 "team_v": self.team_version(sess) if lesson.get("teams") else None,
                 "restart_me": int((self.s.get("restart_students") or {}).get(str(sess["student_id"]), 0))}
@@ -842,16 +881,18 @@ class Kurs:
         lesson = self.lesson()
         cid = self.s.get("course", "games")
         c_info = COURSES.get(cid, COURSES["games"])
+        training = training_template(lesson, cid)
         return {"lesson": lesson["lesson"], "title": lesson["title"],
                 "part": lesson.get("part", 1), "part_title": lesson.get("part_title", ""),
                 "course": {"id": cid, "title": c_info["title"]},
                 "steps": lesson["steps"],
                 "theory": lesson.get("theory", []), "stages": [],
-                "training_template": training_template(lesson),
-                "notebook_template": training_template(lesson),
+                "training_template": training,
+                "notebook_template": training,
                 "files": lesson.get("_files", {}), "uses_ai": bool(lesson.get("uses_ai")), "note": lesson.get("note", ""),
                 "project_idea": bool(lesson.get("project_idea")), "teams": bool(lesson.get("teams")),
                 "team_task": (lesson.get("teams") or {}).get("task"),
+                "team_project": (lesson.get("teams") or {}).get("project"),
                 "tasks": [self.lib.public_task(self.lib.tasks[i], with_start=False) for i in lesson["task_ids"]],
                 "cheatsheet": self.lib.cheatsheet}
 
@@ -1038,7 +1079,118 @@ class Kurs:
                 "course": {"id": cid, "title": c_info["title"], "subtitle": c_info["subtitle"], "parts": c_info["parts"]},
                 "courses": [{"id": k, "title": v["title"], "subtitle": v["subtitle"]} for k, v in COURSES.items()],
                 "requests": reqs, "help": helps, "addresses": local_addresses(),
+                "poll": self.module_poll(st["group_id"]),
                 "locks": [dict(v, student_id=int(k), name=self.name(int(k))) for k, v in (st["locks"] or {}).items()]}
+
+    def module_poll(self, gid, sid=None) -> dict | None:
+        with self.s.lock:
+            if sid is not None and not self.s.one("SELECT 1 FROM students WHERE id=? AND group_id=? AND archived=0", (sid, gid)):
+                return None
+            row = self.s.one("SELECT * FROM module_polls WHERE group_id=? AND course=? ORDER BY id DESC LIMIT 1",
+                             (gid, self.s.get("course")))
+            if not row:
+                return None
+            options = json.loads(row["options"])
+            phase = "ideas" if row["collecting"] else "vote" if row["is_open"] else "closed"
+            poll = {"id": row["id"], "question": row["question"], "options": options,
+                    "open": phase == "vote", "phase": phase}
+            if sid is not None:
+                vote = self.s.one("SELECT choice FROM module_votes WHERE poll_id=? AND student_id=?", (row["id"], sid))
+                idea = self.s.one("SELECT topic FROM module_ideas WHERE poll_id=? AND student_id=?", (row["id"], sid))
+                return dict(poll, choice=vote["choice"] if vote else None, idea=idea["topic"] if idea else None)
+            counts = [0] * len(options)
+            for vote in self.s.q("SELECT choice, COUNT(*) AS n FROM module_votes WHERE poll_id=? GROUP BY choice",
+                                 (row["id"],)):
+                counts[vote["choice"]] = vote["n"]
+            ideas = {}
+            for entry in self.s.q("SELECT topic FROM module_ideas WHERE poll_id=? ORDER BY student_id", (row["id"],)):
+                topic = entry["topic"]
+                item = ideas.setdefault(topic.casefold(), {"topic": topic, "count": 0})
+                item["count"] += 1
+            return dict(poll, counts=counts, total=sum(counts), ideas=sorted(ideas.values(), key=lambda i: (-i["count"], i["topic"].casefold())))
+
+    @staticmethod
+    def module_options(options) -> list[str]:
+        if not isinstance(options, list) or not all(isinstance(s, str) for s in options):
+            raise ApiError(400, "Введите темы, по одной на строку")
+        options = [" ".join(s.split()) for s in options if s.strip()]
+        if not 2 <= len(options) <= 8 or any(len(s) > 80 for s in options):
+            raise ApiError(400, "Нужно от 2 до 8 тем, до 80 символов каждая")
+        if len({s.casefold() for s in options}) != len(options):
+            raise ApiError(400, "Темы должны отличаться друг от друга")
+        return options
+
+    def create_module_poll(self, body: dict, collect: bool = False) -> None:
+        question = body.get("question")
+        if not isinstance(question, str) or not question.strip() or len(question.strip()) > 120:
+            raise ApiError(400, "Введите вопрос длиной до 120 символов")
+        options = [] if collect else self.module_options(body.get("options"))
+        with self.s.lock:
+            gid = self.s.get("group_id")
+            if not self.s.get("running") or not gid:
+                raise ApiError(409, "Сначала начните занятие с группой")
+            current = self.module_poll(gid)
+            if current and current["phase"] != "closed":
+                raise ApiError(409, "Сначала завершите текущий опрос")
+            self.s.ex("INSERT INTO module_polls(group_id, question, options, course, is_open, collecting) VALUES(?,?,?,?,?,?)",
+                      (gid, question.strip(), json.dumps(options, ensure_ascii=False), self.s.get("course"), int(not collect), int(collect)))
+            self.s.db.commit()
+
+    def publish_module_poll(self, body: dict) -> None:
+        options = self.module_options(body.get("options"))
+        with self.s.lock:
+            current = self.module_poll(self.s.get("group_id"))
+            if (not self.s.get("running") or not current or current["phase"] != "ideas"
+                    or type(body.get("id")) is not int or current["id"] != body["id"]):
+                raise ApiError(409, "Сбор идей завершён или изменился. Обновите пульт")
+            self.s.ex("UPDATE module_polls SET options=?, is_open=1, collecting=0 WHERE id=?",
+                      (json.dumps(options, ensure_ascii=False), current["id"]))
+            self.s.db.commit()
+
+    def close_module_poll(self, poll_id) -> None:
+        with self.s.lock:
+            gid = self.s.get("group_id")
+            current = self.module_poll(gid)
+            if not current or type(poll_id) is not int or current["id"] != poll_id:
+                raise ApiError(409, "Голосование изменилось. Обновите пульт")
+            self.s.ex("UPDATE module_polls SET is_open=0, collecting=0 WHERE id=?", (poll_id,))
+            self.s.db.commit()
+
+    def propose_module_idea(self, sess, body: dict) -> dict:
+        topic = body.get("topic")
+        topic = " ".join(topic.split()) if isinstance(topic, str) else ""
+        if not topic or len(topic) > 80:
+            raise ApiError(400, "Напиши тему длиной до 80 символов")
+        with self.s.lock:
+            sid = sess["student_id"]
+            poll = self.module_poll(self.s.get("group_id"), sid)
+            if (not self.s.get("running") or not poll or poll["phase"] != "ideas"
+                    or type(body.get("id")) is not int or poll["id"] != body["id"]):
+                raise ApiError(409, "Сбор идей уже завершён или изменился")
+            self.s.ex("INSERT INTO module_ideas(poll_id, student_id, topic) VALUES(?,?,?) "
+                      "ON CONFLICT(poll_id, student_id) DO UPDATE SET topic=excluded.topic", (poll["id"], sid, topic))
+            self.s.db.commit()
+            return dict(poll, idea=topic)
+
+    def vote_module(self, sess, body: dict) -> dict:
+        sid = sess["student_id"]
+        choice = body.get("choice")
+        with self.s.lock:
+            gid = self.s.get("group_id")
+            if not self.s.get("running") or not self.s.one(
+                "SELECT 1 FROM students WHERE id=? AND group_id=? AND archived=0", (sid, gid)
+            ):
+                raise ApiError(409, "Голосование доступно участникам текущей группы")
+            poll = self.module_poll(gid, sid)
+            if not poll or type(body.get("id")) is not int or poll["id"] != body["id"] or not poll["open"]:
+                raise ApiError(409, "Голосование уже закрыто или заменено")
+            if type(choice) is not int or not 0 <= choice < len(poll["options"]):
+                raise ApiError(400, "Выбери один из вариантов")
+            self.s.ex("INSERT INTO module_votes(poll_id, student_id, choice) VALUES(?,?,?) "
+                      "ON CONFLICT(poll_id, student_id) DO UPDATE SET choice=excluded.choice",
+                      (poll["id"], sid, choice))
+            self.s.db.commit()
+            return dict(poll, choice=choice)
 
     def save_group(self, name: str, names: list[str], gid=None) -> dict:
         name = (name or "").strip()[:60]
@@ -1084,6 +1236,8 @@ class Kurs:
         last = self.s.get("last_class")
         if not last:
             raise ApiError(400, "Нечего продолжать: занятие ещё не проводили")
+        if last.get("course") in COURSES and last["course"] != self.s.get("course"):
+            self.set_course(last["course"])
         self.start(int(last["group_id"]), int(last["lesson"]))
         valid = set(self.lib.lessons[int(last["lesson"])]["task_ids"])
         self.s.set("open_tasks", [t for t in last.get("open_tasks") or [] if t in valid])
@@ -1229,9 +1383,86 @@ class Kurs:
         return cfg
 
     def team_task(self) -> dict | None:
-        """Задание «Мои инструменты», если идёт занятие с командами: из его файла товарищи получают инструменты."""
+        """Задание, файл которого видят товарищи по команде."""
         lesson = self.lib.lessons.get(self.s.get("lesson"), {})
         return self.lib.tasks.get((lesson.get("teams") or {}).get("task", ""))
+
+    def game_studio_active(self) -> bool:
+        lesson = self.lib.lessons.get(self.s.get("lesson"), {})
+        return (lesson.get("teams") or {}).get("project") == "game"
+
+    def game_studio(self, tid: int) -> dict:
+        row = self.s.one("SELECT menu, revision, release FROM game_studios WHERE team_id=?", (tid,))
+        return {"menu": json.loads(row["menu"]) if row else dict(GAME_MENU),
+                "revision": row["revision"] if row else 0,
+                "release": json.loads(row["release"]) if row and row["release"] else None}
+
+    def studio_action(self, sess, action: str, body: dict) -> dict:
+        sid = sess["student_id"]
+        with self.s.lock:
+            if not self.s.get("running") or not self.game_studio_active():
+                raise ApiError(409, "Студия доступна на финальном занятии по играм")
+            team = self.team_of(sid)
+            student = self.student(sid)
+            if not team or not student or student["archived"] or team["group_id"] != self.s.get("group_id"):
+                raise ApiError(409, "Сначала вступи в команду")
+            tid = team["id"]
+            studio = self.game_studio(tid)
+            if action == "template":
+                return {"code": self.team_task()["_solution"], "menu": studio["menu"]}
+            if type(body.get("revision")) is not int or body["revision"] != studio["revision"]:
+                raise ApiError(409, "Товарищ изменил меню. Обнови черновик перед сохранением или сдачей")
+            if action == "menu":
+                values = body.get("menu")
+                if not isinstance(values, dict):
+                    raise ApiError(400, "Заполни поля меню")
+                menu = {}
+                for key, limit in GAME_MENU_LIMITS.items():
+                    value = values.get(key)
+                    if not isinstance(value, str) or not value.strip() or len(value.strip()) > limit or any(
+                        not char.isprintable() for char in value
+                    ):
+                        raise ApiError(400, "Заполни все поля меню, соблюдая ограничения по длине")
+                    menu[key] = value.strip()
+                if menu != studio["menu"]:
+                    self.s.ex("INSERT INTO game_studios(team_id, menu, revision) VALUES(?,?,1) "
+                              "ON CONFLICT(team_id) DO UPDATE SET menu=excluded.menu, revision=revision+1",
+                              (tid, json.dumps(menu, ensure_ascii=False)))
+            elif action == "submit":
+                previous = studio["release"]
+                if body.get("expected") != (previous["submitted"] if previous else None):
+                    raise ApiError(409, "Товарищ уже отправил другую сборку. Проверь текущую сдачу")
+                mode = body.get("mode")
+                if mode == "template":
+                    code = self.team_task()["_solution"]
+                    author = None
+                elif mode == "team":
+                    source = body.get("source")
+                    if type(source) is not int or not any(m["id"] == source for m in self.team_members(tid)):
+                        raise ApiError(400, "Выбери файл участника своей команды")
+                    saved = self.team_file(source)
+                    if not saved or not saved[0].strip():
+                        raise ApiError(400, "Сначала сохрани файл проекта")
+                    code, _ = saved
+                    if code.strip() == self.team_task()["_start"].strip():
+                        raise ApiError(400, "В файле пока только заготовка. Выбери рабочий шаблон или допиши игру")
+                    try:
+                        ast.parse(code)
+                    except (SyntaxError, ValueError, RecursionError):
+                        raise ApiError(400, "В файле ошибка Python. Исправь её или сдай рабочий шаблон") from None
+                    author = self.name(source)
+                else:
+                    raise ApiError(400, "Выбери сборку команды или рабочий шаблон")
+                release = {"mode": mode, "author": author, "submitted_by": self.name(sid),
+                           "menu": studio["menu"], "submitted": time.time()}
+                self.s.ex("INSERT INTO game_studios(team_id, menu, release, code) VALUES(?,?,?,?) "
+                          "ON CONFLICT(team_id) DO UPDATE SET release=excluded.release, code=excluded.code",
+                          (tid, json.dumps(studio["menu"], ensure_ascii=False), json.dumps(release, ensure_ascii=False), code))
+            self.s.db.commit()
+        return self.team_view(sess)
+
+    def game_roles(self, tid: int) -> dict:
+        return {r["student_id"]: r["plan"] for r in self.s.q("SELECT student_id, plan FROM game_roles WHERE team_id=?", (tid,))}
 
     def team_rows(self, gid=None):
         return self.s.q("SELECT * FROM teams WHERE group_id=? ORDER BY id", (self.s.get("group_id") if gid is None else gid,))
@@ -1263,7 +1494,7 @@ class Kurs:
         return [n for n in re.findall(r"make_tool\(\s*[\"']([^\"']+)[\"']", code or "") if "___" not in n]
 
     def team_file(self, sid) -> tuple[str, float] | None:
-        """Файл «Мои инструменты» ученика: (текст, когда сохранён)."""
+        """Текст файла задания участника и время записи."""
         t = self.team_task()
         if not t:
             return None
@@ -1295,6 +1526,8 @@ class Kurs:
         out = {"cfg": cfg, "teams": teams, "my": mine["id"] if mine else None, "team": None,
                "notice": (self.s.get("team_notices") or {}).get(str(sid), "")}
         if mine:
+            studio = self.game_studio_active()
+            roles = self.game_roles(mine["id"]) if studio else {}
             members, files, used = [], [], set()
             for m in self.team_members(mine["id"]):
                 f = self.team_file(m["id"])
@@ -1302,14 +1535,18 @@ class Kurs:
                 if base in used:
                     base = f"{base}_{m['id']}"
                 used.add(base)
-                members.append({"id": m["id"], "name": m["name"], "me": m["id"] == sid, "plan": m["plan"],
+                members.append({"id": m["id"], "name": m["name"], "me": m["id"] == sid,
+                                "plan": roles.get(m["id"], "") if studio else m["plan"],
                                 "online": self._online(m["id"], now), "idea": self.idea_of(m["id"]),
                                 "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else [],
+                                "has_file": bool(f),
                                 "file": base + ".py"})
                 if f and m["id"] != sid:
                     files.append({"student_id": m["id"], "author": m["name"], "name": base + ".py", "content": f[0]})
             out["team"] = {"id": mine["id"], "name": mine["name"], "topic": mine["topic"], "bot_name": mine["bot_name"],
                            "persona": mine["persona"], "edited_by": mine["edited_by"], "members": members, "files": files}
+            if studio:
+                out["team"]["studio"] = self.game_studio(mine["id"])
         return out
 
     def team_version(self, sess) -> str:
@@ -1356,9 +1593,16 @@ class Kurs:
         self.s.ex("UPDATE teams SET edited_by=?, updated=? WHERE id=?", (self.name(sess["student_id"]), time.time(), t["id"]))
 
     def team_plan(self, sess, plan: str) -> None:
-        if not self.team_of(sess["student_id"]):
+        sid = sess["student_id"]
+        team = self.team_of(sid)
+        if not team:
             raise ApiError(409, "Сначала вступи в команду")
-        self.s.ex("UPDATE team_members SET plan=? WHERE student_id=?", (str(plan or "").strip()[:200], sess["student_id"]))
+        plan = str(plan or "").strip()[:200]
+        if self.game_studio_active():
+            self.s.ex("INSERT INTO game_roles(team_id, student_id, plan) VALUES(?,?,?) "
+                      "ON CONFLICT(team_id, student_id) DO UPDATE SET plan=excluded.plan", (team["id"], sid, plan))
+        else:
+            self.s.ex("UPDATE team_members SET plan=? WHERE student_id=?", (plan, sid))
 
     def teams_teacher(self) -> dict:
         """Пульт: команды группы, кто без команды и идеи учеников."""
@@ -1369,25 +1613,33 @@ class Kurs:
         in_team = set()
         teams = []
         team_name = {}
+        studio = self.game_studio_active()
         for t in self.team_rows() if gid else []:
             members = []
+            roles = self.game_roles(t["id"]) if studio else {}
             for m in self.team_members(t["id"]):
                 in_team.add(m["id"])
                 f = self.team_file(m["id"])
-                members.append({"id": m["id"], "name": m["name"], "plan": m["plan"], "online": self._online(m["id"], now),
-                                "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else []})
+                members.append({"id": m["id"], "name": m["name"], "plan": roles.get(m["id"], "") if studio else m["plan"],
+                                "online": self._online(m["id"], now),
+                                "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else [],
+                                "has_file": bool(f)})
                 team_name[m["id"]] = t["name"]
             banned = json.loads(t["banned"] or "[]")
             teams.append({"id": t["id"], "name": t["name"], "topic": t["topic"], "bot_name": t["bot_name"],
                           "persona": t["persona"], "edited_by": t["edited_by"], "members": members,
                           "banned": [{"id": b, "name": self.name(b)} for b in banned]})
+            if studio:
+                teams[-1]["studio"] = self.game_studio(t["id"])
         free = [{"id": r["id"], "name": r["name"], "online": self._online(r["id"], now)} for r in students if r["id"] not in in_team]
         ideas = []
         for r in students:
             idea = self.idea_of(r["id"])
             if idea:
                 ideas.append(dict(idea, student_id=r["id"], name=r["name"], team=team_name.get(r["id"])))
+        lesson = self.lib.lessons.get(self.s.get("lesson"), {})
         return {"cfg": cfg, "teams": teams, "free": free, "ideas": ideas, "team_lesson": bool(self.team_task()),
+                "team_project": (lesson.get("teams") or {}).get("project"),
                 "group": bool(gid)}
 
     def teams_create(self, count: int, names: list) -> None:
@@ -1471,11 +1723,14 @@ class Kurs:
         self.play.stop_all("Занятие завершено")
         # запоминаем, где остановились: «Продолжить занятие» вернёт открытые задания и этап
         if self.s.get("running"):
-            self.s.set("last_class", {k: self.s.get(k) for k in ("group_id", "lesson", "open_tasks", "stage")})
-            try:
-                self.export_projects_data()
-            except Exception as e:
-                print("Auto-export projects error:", e)
+            previous = {k: self.s.get(k) for k in ("group_id", "lesson", "course", "open_tasks", "stage")}
+            previous["lesson_title"] = self.lib.lessons.get(previous["lesson"], {}).get("title", "")
+            self.s.set("last_class", previous)
+            if self.s.get("course") == "chatbots":
+                try:
+                    self.export_projects_data()
+                except Exception as e:
+                    print("Auto-export projects error:", e)
         for r in self.s.q("SELECT token FROM sessions WHERE closed IS NULL"):
             self.close_session(r["token"], "Занятие завершено")
         self.s.ex("UPDATE requests SET status='cancelled' WHERE status='pending'")
@@ -1711,6 +1966,35 @@ class Kurs:
             print("Auto-save projects json error:", e)
 
         return out
+
+    def export_games_zip(self) -> bytes:
+        if not self.game_studio_active():
+            raise ApiError(400, "Откройте занятие с проектом бродилки")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+            for team in self.team_rows():
+                team_name = re.sub(r"[^\w-]+", "_", team["name"]).strip("_") or "Команда"
+                folder = f"{team['id']}_{team_name}"
+                with self.s.lock:
+                    studio = self.game_studio(team["id"])
+                    release = studio["release"]
+                    if release:
+                        project = self.s.one("SELECT code FROM game_studios WHERE team_id=?", (team["id"],))
+                        archive.writestr(f"{folder}/Сдано/Бродилка.py", project["code"])
+                        archive.writestr(f"{folder}/Сдано/{GAME_MENU_FILE}", json.dumps(release["menu"], ensure_ascii=False))
+                        archive.writestr(f"{folder}/Сдано/Сдача.json", json.dumps(release, ensure_ascii=False, indent=2))
+                has_drafts = False
+                for member in self.team_members(team["id"]):
+                    saved = self.team_file(member["id"])
+                    if saved:
+                        has_drafts = True
+                        name = re.sub(r"[^\w-]+", "_", member["name"]).strip("_") or "Ученик"
+                        archive.writestr(f"{folder}/Черновики/{name}_{member['id']}.py", saved[0])
+                if has_drafts:
+                    archive.writestr(f"{folder}/Черновики/{GAME_MENU_FILE}", json.dumps(studio["menu"], ensure_ascii=False))
+            if not archive.namelist():
+                raise ApiError(404, "Команды ещё не сохранили файлы")
+        return buf.getvalue()
 
     def export_projects_zip(self, gid: int | None = None) -> bytes:
         """Собирает чистый ZIP-архив строго с проектами 6 занятия: JSON, сводка, готовые папки ботов и код."""
@@ -2093,6 +2377,14 @@ class Handler(BaseHTTPRequestHandler):
                 b = self.body_json()
                 out = k.result(sess, str(b.get("task_id")), bool(b.get("ok")), str(b.get("summary", "")),
                                str(b.get("code", "")))
+            elif method == "POST" and name == "vote":
+                out = k.vote_module(sess, self.body_json())
+            elif method == "POST" and name == "module-idea":
+                out = k.propose_module_idea(sess, self.body_json())
+            elif method == "GET" and name == "studio/template":
+                out = k.studio_action(sess, "template", {})
+            elif method == "POST" and name in ("studio/menu", "studio/submit"):
+                out = k.studio_action(sess, name.split("/")[1], self.body_json())
             elif method == "POST" and name == "rating":
                 b = self.body_json()
                 k.rating(sess, str(b.get("task_id")), str(b.get("rating")))
@@ -2202,6 +2494,9 @@ class Handler(BaseHTTPRequestHandler):
             body = k.export_csv().encode("utf-8")
             return self.send_bytes(body, "text/csv; charset=utf-8", 200,
                                    {"Content-Disposition": 'attachment; filename="results.csv"'})
+        elif method == "GET" and name == "export_games.zip":
+            return self.send_bytes(k.export_games_zip(), "application/zip", 200,
+                                   {"Content-Disposition": 'attachment; filename="team-games.zip"'})
         elif method == "GET" and name in ("export_projects.json", "projects.json"):
             data = k.export_projects_data()
             body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -2219,6 +2514,14 @@ class Handler(BaseHTTPRequestHandler):
             out = {"ok": True}
             if name == "group":
                 out = k.save_group(str(b.get("name", "")), list(b.get("names") or []), b.get("id"))
+            elif name == "poll":
+                k.create_module_poll(b)
+            elif name == "poll/collect":
+                k.create_module_poll(b, collect=True)
+            elif name == "poll/publish":
+                k.publish_module_poll(b)
+            elif name == "poll/close":
+                k.close_module_poll(b.get("id"))
             elif name == "group/delete":
                 gid = int(b.get("id") or 0)
                 if gid == k.s.get("group_id") and k.s.get("running"):

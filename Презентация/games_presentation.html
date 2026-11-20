@@ -19,6 +19,7 @@
   td, th { border: 1px solid #D5DAF0; padding: .55em .8em; vertical-align: top; text-align: left; }
   th { font-weight: 700; }
   .notes { display: none; }
+  .slide > p:last-child { display: none; }
   #notes { position: fixed; left: 0; right: 0; bottom: 0; max-height: 42vh; overflow: auto; padding: 20px 30px;
             background: rgba(11,14,38,.96); color: #E8EBFF; font: 20px/1.5 'Nunito Sans', Arial, sans-serif; white-space: pre-wrap;
             border-top: 2px solid #2F43E8; display: none; z-index: 100; box-shadow: 0 -10px 40px rgba(0,0,0,0.5); }
@@ -35,10 +36,12 @@
   .code-box .com { color: #7E8BBB; font-style: italic; }
   .code-box .op { color: #FFFFFF; font-weight: 600; }
   .code-box .hi { background: rgba(47,67,232,0.35); padding: 2px 6px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { #hint { transition: none; } }
   @page { size: 1920px 1080px; margin: 0; }
   @media print {
     html, body { width: 1920px; height: auto; overflow: visible; background: #fff; }
     .frame { display: block !important; position: relative !important; transform: none !important; page-break-after: always; break-after: page; }
+    .slide > p:last-child { display: block; }
     #notes, #hud, #hint { display: none !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
@@ -93,7 +96,7 @@
       <p>🔹 <b>Урок 5:</b> time.sleep, анимация ➔ <b>«Турбо-трасса 2D»</b></p>
       <p>🔹 <b>Урок 6:</b> 2D сетка, координаты, WASD ➔ <b>«Лабиринт Подземелья»</b></p>
       <p>🔹 <b>Урок 7:</b> Клеточные автоматы Конвея ➔ <b>«Игра в жизнь»</b></p>
-      <p>🔹 <b>Урок 8:</b> Файлы, меню ➔ <b>Финальный Хакатон и Рекорды</b></p>
+      <p>🔹 <b>Урок 8:</b> Карта, ключ и выход ➔ <b>Командная бродилка</b></p>
     </div>
   </div>
 </div>
@@ -3949,17 +3952,17 @@ gen2 = [<span class="str">"· ● ·"</span>, <span class="str">"· ● ·"</spa
   </div>
   <div style="flex:1;display:flex;flex-direction:column;gap:24px">
     <span style="font-size:26px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#A9B5FF;background:#1B2050;padding:8px 18px;border-radius:12px;display:inline-block;width:fit-content">Курс разработки игр</span>
-    <h1 style="font-family:'Rubik', sans-serif;font-size:68px;font-weight:700;color:#FFFFFF;line-height:1.1">Финальный хакатон: меню, рекорды и релиз</h1>
-    <p style="font-size:34px;color:#D5DAFF;line-height:1.35">Главное консольное меню, запись рекорда в файл, хакатон и защита проектов</p>
+    <h1 style="font-family:'Rubik', sans-serif;font-size:68px;font-weight:700;color:#FFFFFF;line-height:1.1">Студия разработки «Бродилка»</h1>
+    <p style="font-size:34px;color:#D5DAFF;line-height:1.35">Придумайте название, настройте меню, соберите игру с ключом и передайте её учителю.</p>
     <div style="display:flex;flex-direction:column;gap:14px;margin-top:10px">
       <div style="background:#1B2050;border:1px solid #2F3876;padding:16px 24px;border-radius:16px;font-size:26px;color:#FFFFFF;display:flex;align-items:center;gap:16px">
-        <span style="font-size:32px">🎯</span> <span><b>Тренировка:</b> «Главное консольное меню», «Запись рекорда в records.txt»</span>
+        <span style="font-size:32px">🎯</span> <span><b>Тренировка:</b> Меню и маршрут по карте</span>
       </div>
       <div style="background:#2F43E8;padding:16px 24px;border-radius:16px;font-size:26px;color:#FFFFFF;display:flex;align-items:center;gap:16px;box-shadow:0 6px 24px rgba(47,67,232,0.4)">
-        <span style="font-size:32px">🎮</span> <span><b>Сборка игры:</b> Финальная авторская игра с Залом Славы</span>
+        <span style="font-size:32px">🎮</span> <span><b>Сборка игры:</b> Одна сданная сборка на команду</span>
       </div>
       <div style="background:#1B2050;border:1px solid #FFDE59;padding:16px 24px;border-radius:16px;font-size:26px;color:#FFDE59;display:flex;align-items:center;gap:16px">
-        <span style="font-size:32px">🌟</span> <span><b>Прокачка игры:</b> 🌟 Заставка и фирменный ASCII-титул игры</span>
+        <span style="font-size:32px">🌟</span> <span><b>Прокачка игры:</b> Свой уровень или счётчик ходов</span>
       </div>
     </div>
   </div>
@@ -3968,43 +3971,9 @@ gen2 = [<span class="str">"· ● ·"</span>, <span class="str">"· ● ·"</spa
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">106</p>
 </section></div>
-<div class="notes">Урок 8: кульминация курса, финализация проектов и презентация.</div></div>
-<div class="frame" data-id="l8-warm"><div class="stage">
-<section class="slide" id="l8-warm" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
-
-<div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Разминка · Урок 8</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что отличает черновик от релизной игры?</h2>
-</div>
-<div style="display:flex;gap:40px;align-items:stretch;margin-top:10px">
-  <div style="flex:1;background:#2F43E8;border-radius:24px;padding:36px;color:#FFFFFF;display:flex;flex-direction:column;gap:20px;justify-content:center">
-    <span style="font-size:64px">🤔</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:38px;font-weight:600">Игровая ситуация:</h3>
-    <p style="font-size:28px;line-height:1.45;color:#E4E8FF">Вы написали отличную игровую механику. Чего не хватает, чтобы игру можно было с гордостью отправить другу или выложить в сеть?</p>
-    <div style="margin-top:10px;background:rgba(255,255,255,0.15);padding:14px 20px;border-radius:14px;font-size:24px">
-      💡 <b>Вопрос залу:</b> Как сохранить лучший счет игрока навсегда?
-    </div>
-  </div>
-  <div style="flex:1.2;display:flex;flex-direction:column;gap:16px;justify-content:center">
-    <div style="display:flex;gap:20px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:20px 28px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <div style="width:48px;height:48px;border-radius:50%;background:#E4E8FF;display:flex;align-items:center;justify-content:center;font-weight:700;color:#2F43E8;font-size:24px">А</div>
-  <p style="font-size:28px;color:#12163A;line-height:1.3">Ничего, черновика достаточно</p>
-</div><div style="display:flex;gap:20px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:20px 28px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <div style="width:48px;height:48px;border-radius:50%;background:#E4E8FF;display:flex;align-items:center;justify-content:center;font-weight:700;color:#2F43E8;font-size:24px">Б</div>
-  <p style="font-size:28px;color:#12163A;line-height:1.3">Главного меню, сохранения рекордов и красивой заставки!</p>
-</div><div style="display:flex;gap:20px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:20px 28px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <div style="width:48px;height:48px;border-radius:50%;background:#E4E8FF;display:flex;align-items:center;justify-content:center;font-weight:700;color:#2F43E8;font-size:24px">В</div>
-  <p style="font-size:28px;color:#12163A;line-height:1.3">Удалить весь код</p>
-</div>
-  </div>
-</div>
-
-<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">107</p>
-</section></div>
-<div class="notes">Разминка о полировке игр и файловой системе.</div></div>
-<div class="frame" data-id="l8-learn"><div class="stage">
-<section class="slide" id="l8-learn" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">45 минут на основной проект. Если есть вторая часть занятия, добавьте 15 минут на свой уровень и взаимное тестирование.</div></div>
+<div class="frame" data-id="l8-plan"><div class="stage">
+<section class="slide" id="l8-plan" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
   <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
@@ -4012,102 +3981,112 @@ gen2 = [<span class="str">"· ● ·"</span>, <span class="str">"· ● ·"</spa
 </div>
 <div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
   <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
-  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">📜</div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Главное меню</h3>
-  <p style="font-size:26px;color:#4A5170;line-height:1.45">Соберем удобное меню запуска: 1 - Играть, 2 - Рекорды, 3 - Выход.</p>
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">1</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">План и меню · 12 мин</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Вступить в команду, записать роли и собрать меню в панели «Студия».</p>
 </div>
 <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
-  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">💾</div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Файлы: with open()</h3>
-  <p style="font-size:26px;color:#4A5170;line-height:1.45">Научимся сохранять имена и очки победителей в файл records.txt на диске.</p>
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">2</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Карта и код · 23 мин</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Пройти по карте на бумаге, дописать ход игрока и проверить три маршрута.</p>
 </div>
 <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
-  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">🏆</div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Хакатон и Защита</h3>
-  <p style="font-size:26px;color:#4A5170;line-height:1.45">Доработаем любимую игру курса и покажем свой проект на большом экране!</p>
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">3</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Сдача и показ · 10 мин</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Отправить сборку, показать игру и выбрать тему следующего модуля.</p>
+</div>
+</div>
+
+<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">107</p>
+</section></div>
+<div class="notes">Тайминг: роли 5 мин, меню 7 мин, карта 6 мин, код с проверкой 17 мин, сдача и показ 10 мин. В последние минуты откройте опрос. При большом числе команд показывайте 2–3 игры, остальные примите из ZIP.</div></div>
+<div class="frame" data-id="l8-roles"><div class="stage">
+<section class="slide" id="l8-roles" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что мы освоим и соберём сегодня</h2>
+</div>
+<div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
+  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">1</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Редактор</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Работает в одном общем Python-файле. Сохраняет его, чтобы товарищи видели копию.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">2</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Дизайнер</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Настраивает название, пункты меню и правила. Рисует карту и проверяет, есть ли маршрут.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">3</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Тестировщик</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Пытается пройти без ключа, удариться о стену и выиграть. Готовит короткий показ.</p>
 </div>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">108</p>
 </section></div>
-<div class="notes">Цели финального занятия.</div></div>
-<div class="frame" data-id="l8-menu"><div class="stage">
-<section class="slide" id="l8-menu" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Учитель открывает «Класс» → «Управлять командами» и создаёт команды по 2–3. Ученики вступают во вкладке «Студия» и сохраняют роли. Если кто-то отсутствует, роли можно совмещать. Код в двух разных копиях сливать не нужно.</div></div>
+<div class="frame" data-id="l8-menu-preview"><div class="stage">
+<section class="slide" id="l8-menu-preview" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Интерфейс игры</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Главное меню в цикле while True</h2>
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">7 минут · Меню</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Сначала решите, что увидит игрок</h2>
 </div>
-<div style="display:flex;gap:36px;align-items:flex-start;margin-top:10px">
-  <div style="flex:1.15;display:flex;flex-direction:column;gap:14px">
-    <div class="code-box">
-<span class="kw">while</span> <span class="kw">True</span>:
-    <span class="fn">print</span>(<span class="str">"=== ГЛАВНОЕ МЕНЮ ==="</span>)
-    <span class="fn">print</span>(<span class="str">"1. Начать игру"</span>)
-    <span class="fn">print</span>(<span class="str">"2. Таблица рекордов"</span>)
-    <span class="fn">print</span>(<span class="str">"3. Выход"</span>)
-    
-    choice = <span class="fn">input</span>(<span class="str">"Выбери пункт (1-3): "</span>)
-    <span class="kw">if</span> choice == <span class="str">"1"</span>:
-        <span class="fn">print</span>(<span class="str">"Запуск игры..."</span>)
-    <span class="kw">elif</span> choice == <span class="str">"3"</span>:
-        <span class="fn">print</span>(<span class="str">"До встречи!"</span>)
-        <span class="kw">break</span>
-    </div>
+<div style="display:grid;grid-template-columns:620px 1fr;gap:52px;align-items:start;margin-top:22px">
+  <div class="code-box" style="font-size:38px;line-height:1.75">
+    <strong>Станция «Север»</strong><br>
+    <span class="num">1.</span> Войти на станцию<br>
+    <span class="num">2.</span> Прочитать инструкцию<br>
+    <span class="num">3.</span> Закрыть игру
   </div>
-  <div style="flex:1;display:flex;flex-direction:column;gap:16px">
-    <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Цикл меню</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">После окончания игры игрок возвращается обратно в меню, а не вылетает из программы.</p>
-</div>
-<div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Проверка выбора</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Каждая цифра запускает соответствующую функцию или режим игры.</p>
-</div>
-<div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Пункт «Выход»</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Единственный способ корректно завершить программу через команду break.</p>
-</div>
+  <div style="font-size:34px;line-height:1.55">
+    <p>Откройте «Студия» → «Конструктор меню».</p>
+    <p>Задайте название, подписи и короткие правила.</p>
+    <p>Попробуйте три кнопки в предпросмотре. Нажмите «Сохранить меню для команды».</p>
   </div>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">109</p>
 </section></div>
-<div class="notes">Архитектура консольного меню для любого программного продукта.</div></div>
-<div class="frame" data-id="l8-files-write"><div class="stage">
-<section class="slide" id="l8-files-write" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Объясните, что подписи свободные, а команды 1, 2, 3 всегда одни и те же. Пусть дизайнер покажет, где появится текст правил. Удобно назначить одного редактора меню. Если другой сохранил правки раньше, панель предложит загрузить его версию.</div></div>
+<div class="frame" data-id="l8-menu-code"><div class="stage">
+<section class="slide" id="l8-menu-code" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Вечная память</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Сохранение рекордов в файл через with open()</h2>
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Меню в Python</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Ввод определяет, какая ветка сработает</h2>
 </div>
 <div style="display:flex;gap:36px;align-items:flex-start;margin-top:10px">
   <div style="flex:1.15;display:flex;flex-direction:column;gap:14px">
     <div class="code-box">
-player_name = <span class="str">"Алекс"</span>
-score = <span class="num">250</span>
+<pre>choice = input("Выбор: ").strip()
 
-<span class="com"># Режим "a" (append) — дописывает новую запись в конец файла:</span>
-<span class="kw">with</span> <span class="fn">open</span>(<span class="str">"records.txt"</span>, <span class="str">"a"</span>, encoding=<span class="str">"utf-8"</span>) <span class="kw">as</span> f:
-    f.<span class="fn">write</span>(<span class="str">f"{player_name}: {score}\n"</span>)
-
-<span class="fn">print</span>(<span class="str">"Рекорд успешно сохранён на диск!"</span>)
+if choice == "1":
+    play(LEVEL)
+elif choice == "2":
+    print(menu["intro"])
+elif choice == "3":
+    print("Игра завершена.")</pre>
     </div>
   </div>
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">with open(...) as f:</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Безопасный менеджер контекста! Сам закроет файл даже при ошибке в коде.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">1</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">Вызов play запускает карту и цикл ходов.</p>
 </div>
 <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Режим 'a' (append)</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Не стирает старые рекорды, а добавляет новую строку в самый конец файла.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">2</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">Показываем правила и даём выбрать ещё раз.</p>
 </div>
 <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Символ переноса \n</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Обязательно ставим в конце строки, чтобы следующий рекорд был на новой строчке.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">3</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">Завершаем программу. Другой ввод просим повторить.</p>
 </div>
   </div>
 </div>
@@ -4115,78 +4094,60 @@ score = <span class="num">250</span>
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">110</p>
 </section></div>
-<div class="notes">Работа с дисковыми файлами в Python через безопасный менеджер контекста with.</div></div>
-<div class="frame" data-id="l8-files-read"><div class="stage">
-<section class="slide" id="l8-files-read" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Это схема ветвления. Полный код меню уже лежит в заготовке. При запуске он читает studio_menu.json рядом с игрой, а при отсутствии файла использует встроенные подписи. Попросите ученика ввести 2, затем 1.</div></div>
+<div class="frame" data-id="l8-map"><div class="stage">
+<section class="slide" id="l8-map" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Зал Славы</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Чтение и показ таблицы рекордов</h2>
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">6 минут · Карта</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Пройдите по карте на бумаге</h2>
 </div>
-<div style="display:flex;gap:36px;align-items:flex-start;margin-top:10px">
-  <div style="flex:1.15;display:flex;flex-direction:column;gap:14px">
-    <div class="code-box">
-<span class="kw">with</span> <span class="fn">open</span>(<span class="str">"records.txt"</span>, <span class="str">"r"</span>, encoding=<span class="str">"utf-8"</span>) <span class="kw">as</span> f:
-    records_data = f.<span class="fn">read</span>()
-
-<span class="fn">print</span>(<span class="str">"🏆 === ЗАЛ СЛАВЫ === 🏆"</span>)
-<span class="fn">print</span>(records_data)
-<span class="fn">print</span>(<span class="str">"======================="</span>)
-    </div>
-  </div>
-  <div style="flex:1;display:flex;flex-direction:column;gap:16px">
-    <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Режим 'r' (read)</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Открывает существующий файл только для чтения данных.</p>
-</div>
-<div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">f.read()</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Считывает весь текст файла в одну строковую переменную.</p>
-</div>
-<div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Вывод на экран</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Игроки могут увидеть все предыдущие победы и рекорды друзей.</p>
-</div>
+<div style="display:grid;grid-template-columns:460px 1fr;gap:72px;align-items:center;margin-top:28px">
+  <pre style="font:84px/1.35 'JetBrains Mono', monospace;background:#12163A;color:#fff;padding:56px;border-radius:28px;margin:0">@...
+.##K
+...E</pre>
+  <div style="font-size:38px;line-height:1.55">
+    <p><b>@</b> игрок · <b>#</b> стена · <b>K</b> ключ · <b>E</b> выход</p>
+    <p>Найдите путь к выходу с ключом.</p>
+    <p>А теперь попробуйте подойти к выходу снизу карты без ключа.</p>
   </div>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">111</p>
 </section></div>
-<div class="notes">Чтение файла с диска и форматированный вывод Зала Славы.</div></div>
-<div class="frame" data-id="l8-ascii"><div class="stage">
-<section class="slide" id="l8-ascii" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">На карте старт в (0, 0). Победа: d, d, d, s, s. Без ключа: s, s, d, d, d — последний ход заблокирован. Попросите проговорить координаты после каждого хода. Напомните, что строка растёт вниз.</div></div>
+<div class="frame" data-id="l8-coordinates"><div class="stage">
+<section class="slide" id="l8-coordinates" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Консольный стиль</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">ASCII-арт заставки и рамки игры</h2>
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Ход игрока</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Проверяем координаты до чтения клетки</h2>
 </div>
 <div style="display:flex;gap:36px;align-items:flex-start;margin-top:10px">
   <div style="flex:1.15;display:flex;flex-direction:column;gap:14px">
     <div class="code-box">
-banner = <span class="str">"""
-+-------------------------------+
-|     🔥 PYTHON GAMES 2026 🔥   |
-|   Финальный Релиз Проекта     |
-+-------------------------------+
-"""</span>
+<pre>row, col = 0, 0
+dr, dc = MOVES[cmd]
+next_row = row + dr
+next_col = col + dc
 
-<span class="fn">print</span>(banner)
-<span class="fn">print</span>(<span class="str">"Разработчик готов к презентации!"</span>)
+# Только если обе координаты допустимы:
+tile = level[next_row][next_col]</pre>
     </div>
   </div>
   <div style="flex:1;display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Тройные кавычки """</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Позволяют писать многострочный текст с любыми переносами строк и рамками.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Строка</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">w уменьшает row, s увеличивает row.</p>
 </div>
 <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Фирменный стиль</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Любая игра выглядит в 10 раз профессиональнее с красивым логотипом при старте.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Столбец</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">a уменьшает col, d увеличивает col.</p>
 </div>
 <div style="display:flex;gap:20px;align-items:flex-start;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:20px;padding:22px 26px;box-shadow:0 4px 16px rgba(18,22,58,.04)">
-  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Символы рамок</span>
-  <p style="font-size:26px;line-height:1.4;color:#12163A">Используйте символы +, -, |, ═, ║ для аккуратного оформления окон.</p>
+  <span style="background:#2F43E8;color:#FFFFFF;padding:4px 14px;border-radius:10px;font-weight:700;font-size:22px;white-space:nowrap">Границы</span>
+  <p style="font-size:26px;line-height:1.4;color:#12163A">Сначала проверяем строку; затем длину именно этой строки.</p>
 </div>
   </div>
 </div>
@@ -4194,13 +4155,71 @@ banner = <span class="str">"""
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">112</p>
 </section></div>
-<div class="notes">ASCII-дизайн для консольных интерфейсов.</div></div>
-<div class="frame" data-id="l8-errors"><div class="stage">
-<section class="slide" id="l8-errors" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">В Python индекс −1 означает последний элемент. Поэтому одной проверки next_row < len(level) мало. Запишите на доске оба неравенства: 0 ≤ next_row < число строк и 0 ≤ next_col < длина строки. Отладочный вопрос: что случится при w в самой верхней строке?</div></div>
+<div class="frame" data-id="l8-state"><div class="stage">
+<section class="slide" id="l8-state" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что мы освоим и соберём сегодня</h2>
+</div>
+<div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
+  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">#</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Запреты до перемещения</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Стена и край карты оставляют игрока на месте. continue начинает новый ход.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">K</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Ключ остаётся с игроком</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Сначала has_key равен False. После клетки K он становится True и сохраняется между ходами.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">E</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Выход проверяет ключ</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Без ключа клетка закрыта. С ключом игрок входит, программа объявляет победу и прекращает цикл.</p>
+</div>
+</div>
+
+<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">113</p>
+</section></div>
+<div class="notes">Дважды проследите один и тот же ход к E, с has_key = False и True. Обратите внимание, что флаг создаётся перед while. Если написать has_key = False внутри while, ключ потеряется на следующем ходу.</div></div>
+<div class="frame" data-id="l8-build"><div class="stage">
+<section class="slide" id="l8-build" data-transition="fade" style="background:#12163A;color:#FFFFFF;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+
+<div style="display:flex;flex-direction:column;gap:24px;height:100%">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <span style="background:#1B2050;color:#A9B5FF;padding:8px 20px;border-radius:12px;font-size:26px;font-weight:700;letter-spacing:3px;text-transform:uppercase">Главная Миссия · Урок 8</span>
+    <span style="background:#FFDE59;color:#12163A;padding:8px 22px;border-radius:12px;font-size:26px;font-weight:800">⏱ 17 минут</span>
+  </div>
+  <h1 style="font-family:'Rubik', sans-serif;font-size:74px;font-weight:700;color:#FFFFFF;line-height:1.1">Соберите ход игрока</h1>
+  <p style="font-size:34px;color:#D5DAFF;line-height:1.4">Откройте «Командная бродилка с ключом». Меню, карта и отрисовка уже в заготовке.</p>
+  <div style="background:#1B2050;border:2px solid #2F3876;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:22px;margin-top:10px">
+    <h3 style="font-family:'Rubik', sans-serif;font-size:34px;color:#7EE0A5">Чек-лист разработчика:</h3>
+    <div style="display:flex;gap:20px;align-items:flex-start">
+  <div style="width:36px;height:36px;border-radius:10px;border:3px solid #7EE0A5;flex:none;margin-top:4px"></div>
+  <p style="font-size:30px;line-height:1.35;color:#FFFFFF">Вычислите новые координаты и проверьте границы.</p>
+</div><div style="display:flex;gap:20px;align-items:flex-start">
+  <div style="width:36px;height:36px;border-radius:10px;border:3px solid #7EE0A5;flex:none;margin-top:4px"></div>
+  <p style="font-size:30px;line-height:1.35;color:#FFFFFF">Отмените ход в стену или к выходу без ключа.</p>
+</div><div style="display:flex;gap:20px;align-items:flex-start">
+  <div style="width:36px;height:36px;border-radius:10px;border:3px solid #7EE0A5;flex:none;margin-top:4px"></div>
+  <p style="font-size:30px;line-height:1.35;color:#FFFFFF">Обновите позицию. Запомните ключ. Объявите победу при входе в выход.</p>
+</div>
+  </div>
+</div>
+
+<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">114</p>
+</section></div>
+<div class="notes">Сначала запустите заготовку: 1 открывает карту, q завершает игру. Дорабатывайте по одному правилу. Нажимайте «Проверить» после каждого этапа. После первой попытки откроется подсказка. За пять минут до сдачи предложите командам с незавершённым кодом перейти на рабочий шаблон.</div></div>
+<div class="frame" data-id="l8-debug"><div class="stage">
+<section class="slide" id="l8-debug" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
   <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Разбор граблей · Урок 8</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Ошибки при работе с файлами и меню</h2>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Три ошибки, которые стоит поймать</h2>
 </div>
 <div style="margin-top:10px;border-radius:20px;overflow:hidden;border:1px solid #D5DAF0;box-shadow:0 6px 24px rgba(18,22,58,.06)">
   <table>
@@ -4214,211 +4233,156 @@ banner = <span class="str">"""
     </thead>
     <tbody>
       <tr>
-  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">FileNotFoundError: [Errno 2]</td>
-  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Файл records.txt еще не создан на диске</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">open("records.txt", "r")</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Сначала открыть в режиме 'a' или создать пустой</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Прыжок за край</td>
+  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Игрок оказывается на другом краю или игра падает.</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">level[-1][0]</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Проверь нижнюю и верхнюю границы перед чтением.</td>
 </tr>
 <tr>
-  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Стерлись все прошлые рекорды</td>
-  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Использовали режим 'w' вместо 'a'</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">open("rec.txt", "w")</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Режим 'w' перезаписывает! Для рекордов нужен 'a'</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Проход сквозь стену</td>
+  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Игрок успел занять запрещённую клетку.</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">row = next_row слишком рано</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Проверь # и закрытый E перед обновлением позиции.</td>
 </tr>
 <tr>
-  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Забыли кодировку encoding='utf-8'</td>
-  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Русские буквы превратились в иероглифы</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">open("rec.txt", "a")</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Всегда писать: encoding="utf-8"</td>
-</tr>
-<tr>
-  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Все записи склеились в одну строчку</td>
-  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Забыли добавить символ \n при записи</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">f.write(f"{name}: {score}")</td>
-  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">f.write(f"{name}: {score}\n")</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-weight:700;color:#D8283B;font-size:24px;background:#FFF0F2">Ключ пропал</td>
+  <td style="font-size:24px;color:#12163A;background:#FFFFFF">Выход снова говорит «Нужен ключ».</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#941E2F;background:#FFF8F9">has_key = False внутри while</td>
+  <td style="font-family:'JetBrains Mono', monospace;font-size:22px;color:#1B7C3F;background:#F0FAF3;font-weight:600">Установи False один раз перед циклом.</td>
 </tr>
     </tbody>
   </table>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">113</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">115</p>
 </section></div>
-<div class="notes">Разбираем главные грабли файлового ввода-вывода.</div></div>
-<div class="frame" data-id="l8-tasks-train"><div class="stage">
-<section class="slide" id="l8-tasks-train" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Пусть тестировщик назовёт первый ввод, после которого видна ошибка. Если урок короткий, покажите этот слайд прямо во время самостоятельной работы.</div></div>
+<div class="frame" data-id="l8-check"><div class="stage">
+<section class="slide" id="l8-check" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Практика в панели · Урок 8</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Блок тренировочных задач (Кирпичики игры)</h2>
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что мы освоим и соберём сегодня</h2>
 </div>
-<div style="display:flex;gap:28px;align-items:stretch;margin-top:14px">
-  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:30px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:16px">
-  <div style="display:flex;align-items:center;justify-content:space-between">
-    <span style="background:#2F43E8;color:#FFFFFF;padding:6px 14px;border-radius:10px;font-weight:700;font-size:22px">g08-01</span>
-    <span style="color:#7E8BBB;font-size:22px;font-weight:600">5–7 мин</span>
-  </div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:32px;font-weight:600;color:#12163A;line-height:1.2">Главное меню</h3>
-  <p style="font-size:24px;color:#4A5170;line-height:1.4;flex:1">Вывести меню с пунктами 1, 2, 3 и обработать выбор игрока через if/elif</p>
-  <div style="background:#F0F3FF;border:1px solid #D5DAFF;padding:14px 18px;border-radius:14px;font-family:'JetBrains Mono', monospace;font-size:20px;color:#2F43E8">
-    choice == "1" -> запуск
-  </div>
+<div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
+  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">1</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Меню</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">2 показывает правила, неизвестная цифра просит повторить, 3 закрывает программу.</p>
 </div>
-<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:30px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:16px">
-  <div style="display:flex;align-items:center;justify-content:space-between">
-    <span style="background:#2F43E8;color:#FFFFFF;padding:6px 14px;border-radius:10px;font-weight:700;font-size:22px">g08-02</span>
-    <span style="color:#7E8BBB;font-size:22px;font-weight:600">5–7 мин</span>
-  </div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:32px;font-weight:600;color:#12163A;line-height:1.2">Запись рекорда в файл</h3>
-  <p style="font-size:24px;color:#4A5170;line-height:1.4;flex:1">Открыть файл records.txt в режиме 'a' и записать строку с именем и очками</p>
-  <div style="background:#F0F3FF;border:1px solid #D5DAFF;padding:14px 18px;border-radius:14px;font-family:'JetBrains Mono', monospace;font-size:20px;color:#2F43E8">
-    with open("records.txt", "a") as f:
-  </div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">2</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Ошибочный путь</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">1 → s → s → d → d → d. Выход закрыт. q завершает игру.</p>
 </div>
-<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:30px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:16px">
-  <div style="display:flex;align-items:center;justify-content:space-between">
-    <span style="background:#2F43E8;color:#FFFFFF;padding:6px 14px;border-radius:10px;font-weight:700;font-size:22px">g08-03</span>
-    <span style="color:#7E8BBB;font-size:22px;font-weight:600">5–7 мин</span>
-  </div>
-  <h3 style="font-family:'Rubik', sans-serif;font-size:32px;font-weight:600;color:#12163A;line-height:1.2">Заставка игры</h3>
-  <p style="font-size:24px;color:#4A5170;line-height:1.4;flex:1">Оформить красивую рамку с названием игры через тройные кавычки</p>
-  <div style="background:#F0F3FF;border:1px solid #D5DAFF;padding:14px 18px;border-radius:14px;font-family:'JetBrains Mono', monospace;font-size:20px;color:#2F43E8">
-    print("+----------------+")
-  </div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">3</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Победный путь</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">1 → d → d → d → s → s. Появятся «Ключ найден!» и «Победа!».</p>
 </div>
-</div>
-
-<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">114</p>
-</section></div>
-<div class="notes">15 минут на тренировочные задачи перед стартом хакатона.</div></div>
-<div class="frame" data-id="l8-hackathon"><div class="stage">
-<section class="slide" id="l8-hackathon" data-transition="fade" style="background:#12163A;color:#FFFFFF;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
-
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#FFDE59">Творческий этап · 35 минут</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:64px;font-weight:700;color:#FFFFFF">Хакатон: прокачка и полировка игры</h2>
-</div>
-<div style="display:flex;gap:36px;align-items:stretch;margin-top:20px">
-  <div style="flex:1;background:#1B2050;border:2px solid #2F43E8;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:20px">
-    <span style="font-size:54px">💡</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:36px;color:#FFFFFF">Что можно сделать:</h3>
-    <ul style="font-size:26px;color:#D5DAFF;line-height:1.5;padding-left:26px;display:flex;flex-direction:column;gap:12px">
-      <li>Выбрать свою самую любимую игру из 8 уроков курса</li>
-      <li>Добавить выбор уровней сложности (легкий / хардкор)</li>
-      <li>Украсить игру крутыми ASCII-баннерами и эмодзи</li>
-      <li>Подключить сохранение очков в Зал Славы records.txt</li>
-      <li>Придумать неожиданные сюжетные повороты и пасхалки</li>
-    </ul>
-  </div>
-  <div style="flex:1;background:#2F43E8;border-radius:24px;padding:36px;color:#FFFFFF;display:flex;flex-direction:column;gap:20px;box-shadow:0 8px 30px rgba(47,67,232,0.4)">
-    <span style="font-size:54px">⏱</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:36px">Тайминг хакатона:</h3>
-    <div style="font-size:28px;line-height:1.6;display:flex;flex-direction:column;gap:14px">
-      <p>🔹 <b>00–25 мин:</b> Доработка механик и кода</p>
-      <p>🔹 <b>25–35 мин:</b> Тестирование и подготовка к показу</p>
-      <p>🔹 <b>Финал:</b> Выступление каждого разработчика!</p>
-    </div>
-    <div style="margin-top:auto;background:rgba(255,255,255,0.2);padding:14px 20px;border-radius:14px;font-size:24px">
-      🚀 Преподаватель помогает каждому воплотить идеи!
-    </div>
-  </div>
-</div>
-
-<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">115</p>
-</section></div>
-<div class="notes">Старт хакатона: даем ребятам свободу творчества на 35 минут с поддержкой преподавателя.</div></div>
-<div class="frame" data-id="l8-criteria"><div class="stage">
-<section class="slide" id="l8-criteria" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
-
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Оценка проектов</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:56px;font-weight:700;color:#12163A">4 Критерия классной игры</h2>
-</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:20px">
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🎮</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Геймплей</h3><p style="font-size:24px;color:#4A5170">В игру интересно играть, есть победа, поражение и понятные правила.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🧼</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Чистота кода</h3><p style="font-size:24px;color:#4A5170">Понятные имена переменных, аккуратные отступы, нет лишнего кода.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🎨</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Атмосфера и дизайн</h3><p style="font-size:24px;color:#4A5170">ASCII-арт, сюжетные реплики, эмодзи, погружение игрока в мир.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">💾</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Зал Славы</h3><p style="font-size:24px;color:#4A5170">Работающее сохранение лучших результатов игроков в файл на диске.</p></div>
-  </div>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">116</p>
 </section></div>
-<div class="notes">Критерии оценки проектов для защиты.</div></div>
-<div class="frame" data-id="l8-defense"><div class="stage">
-<section class="slide" id="l8-defense" data-transition="fade" style="background:#12163A;color:#FFFFFF;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Для стены используйте 1, s, d. Для края — 1, w. В терминале после каждой команды нажимайте Enter. Сравните результат запуска и автопроверки. Автопроверка ориентируется на исходный уровень.</div></div>
+<div class="frame" data-id="l8-fallback"><div class="stage">
+<section class="slide" id="l8-fallback" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#A9B5FF">Кульминация курса</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:64px;font-weight:700;color:#FFFFFF">Презентация и защита проектов 🎤</h2>
+<div style="display:flex;flex-direction:column;gap:12px">
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что мы освоим и соберём сегодня</h2>
 </div>
-<div style="display:flex;gap:36px;align-items:stretch;margin-top:20px">
-  <div style="flex:1.2;background:#1B2050;border:2px solid #2F3876;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:20px">
-    <h3 style="font-family:'Rubik', sans-serif;font-size:34px;color:#FFDE59">План выступления (2–3 минуты на разработчика):</h3>
-    <div style="font-size:26px;color:#FFFFFF;line-height:1.55;display:flex;flex-direction:column;gap:14px">
-      <p>1️⃣ <b>Название и жанр:</b> как называется твоя игра и о чем её сюжет?</p>
-      <p>2️⃣ <b>Демонстрация:</b> запусти игру на экране и покажи один раунд!</p>
-      <p>3️⃣ <b>Гордость разработчика:</b> какая фича получилась круче всего?</p>
-      <p>4️⃣ <b>Главный баг:</b> с какой ошибкой пришлось больше всего повоевать?</p>
-    </div>
-  </div>
-  <div style="flex:0.8;background:#2F43E8;border-radius:24px;padding:36px;color:#FFFFFF;display:flex;flex-direction:column;gap:20px;justify-content:center;text-align:center">
-    <span style="font-size:72px">👏</span>
-    <h3 style="font-family:'Rubik', sans-serif;font-size:38px">Правило зрителей:</h3>
-    <p style="font-size:26px;line-height:1.45;color:#E4E8FF">Поддерживаем каждого аплодисментами! Задаем добрые вопросы и пробуем пройти игры друг друга!</p>
-  </div>
+<div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
+  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">1</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Начните даже вдвоём или в одиночку</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Совместите роли и настройте меню. Товарищ может подключиться позже.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">2</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Если код не готов</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">В «Студии» нажмите «Запустить рабочий шаблон», проверьте меню и пройдите карту.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">3</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Сдайте то, что работает</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Нажмите «Сдать рабочий шаблон». Когда свой код заработает, замените сборку.</p>
+</div>
 </div>
 
-<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">117</p>
+<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">117</p>
 </section></div>
-<div class="notes">Сценарий защиты проектов: каждый ученик получает минуту славы у доски.</div></div>
-<div class="frame" data-id="l8-future"><div class="stage">
-<section class="slide" id="l8-future" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Пометка «Рабочий шаблон» видна в карточке команды и в ZIP. Даже с шаблоном попросите ученика назвать свою правку меню и показать проверку. Сдача относится к команде. Роль каждого видна отдельно и обсуждается на показе.</div></div>
+<div class="frame" data-id="l8-release"><div class="stage">
+<section class="slide" id="l8-release" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
-<div style="display:flex;flex-direction:column;gap:14px">
-  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Твой путь в IT продолжается</p>
-  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:56px;font-weight:700;color:#12163A">Куда двигаться дальше в разработке игр?</h2>
+<div style="display:flex;flex-direction:column;gap:12px">
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Цели занятия · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Что мы освоим и соберём сегодня</h2>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:20px">
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">👾</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Библиотека Pygame</h3><p style="font-size:24px;color:#4A5170">Настоящие окна, спрайты, физика прыжков, музыка и поддержка геймпада.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🌐</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Игровые боты в Telegram</h3><p style="font-size:24px;color:#4A5170">Перенос ваших консольных квестов в чат-боты, в которые могут играть тысячи друзей.</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🕹️</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Движок Godot Engine</h3><p style="font-size:24px;color:#4A5170">Популярный движок с языком GDScript, очень похожим на изученный вами Python!</p></div>
-  </div>
-  <div style="background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:30px;display:flex;gap:20px;align-items:center;box-shadow:0 4px 18px rgba(18,22,58,.05)">
-    <span style="font-size:54px">🥇</span>
-    <div><h3 style="font-size:30px;color:#12163A;font-family:'Rubik'">Олимпиадное программирование</h3><p style="font-size:24px;color:#4A5170">Алгоритмы, сортировки, поиск кратчайших путей и победы на турнирах.</p></div>
-  </div>
+<div style="display:flex;gap:30px;align-items:stretch;margin-top:16px">
+  <div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">1</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Сохраните</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">Сохраните меню в панели и Python-файл редактора. После правок перезапустите игру.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">2</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Отправьте</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">В «Сдать сборку» выберите файл редактора или рабочий шаблон и подтвердите отправку.</p>
+</div>
+<div style="flex:1;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:24px;padding:34px;box-shadow:0 6px 24px rgba(18,22,58,.06);display:flex;flex-direction:column;gap:18px">
+  <div style="width:72px;height:72px;border-radius:20px;background:#2F43E8;display:flex;align-items:center;justify-content:center;font-size:36px;color:#FFFFFF">3</div>
+  <h3 style="font-family:'Rubik', sans-serif;font-size:34px;font-weight:600;color:#12163A;line-height:1.2">Проверьте статус</h3>
+  <p style="font-size:26px;color:#4A5170;line-height:1.45">На панели будет «Сдано». Учитель видит тип сборки и скачивает ZIP по командам.</p>
+</div>
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
 <p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">118</p>
 </section></div>
-<div class="notes">Мотивационный слайд о дальнейших горизонтах развития юных программистов.</div></div>
-<div class="frame" data-id="l8-reflect"><div class="stage">
-<section class="slide" id="l8-reflect" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+<div class="notes">Покажите на пульте «Проекты» → «Сборки и черновики». В папке «Сдано» лежит снимок игры на момент отправки с её меню. Чтобы включить новые правки, нужно пересдать.</div></div>
+<div class="frame" data-id="l8-bonus"><div class="stage">
+<section class="slide" id="l8-bonus" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
+
+<div style="display:flex;flex-direction:column;gap:12px">
+  <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Прокачка игры со звёздочкой 🌟 · Урок 8</p>
+  <h2 style="font-family:'Rubik', Arial, sans-serif;font-size:54px;font-weight:700;line-height:1.15;color:#12163A">Свой уровень</h2>
+</div>
+<div style="display:flex;gap:40px;align-items:stretch;margin-top:14px">
+  <div style="flex:1.1;background:#FFFFFF;border:2px solid #FFDE59;border-radius:24px;padding:36px;box-shadow:0 8px 30px rgba(255,222,89,0.15);display:flex;flex-direction:column;gap:20px">
+    <div style="display:flex;align-items:center;gap:14px">
+      <span style="font-size:48px">🌟</span>
+      <h3 style="font-family:'Rubik', sans-serif;font-size:36px;color:#12163A">Бонусное задание:</h3>
+    </div>
+    <p style="font-size:28px;color:#12163A;line-height:1.45;font-weight:600">После сдачи добавьте один поворот, второй маршрут или счётчик успешных ходов.</p>
+    <div style="margin-top:8px">
+      <h4 style="font-size:26px;color:#2F43E8;margin-bottom:10px">Как подойти к решению:</h4>
+      <ul style="padding-left:26px;display:flex;flex-direction:column;gap:10px">
+        <li style="font-size:26px;color:#4A5170;line-height:1.45">Оставьте свободный старт в левом верхнем углу.</li><li style="font-size:26px;color:#4A5170;line-height:1.45">Проверьте, что достижимы и ключ, и выход.</li><li style="font-size:26px;color:#4A5170;line-height:1.45">Попросите товарища пройти уровень без подсказок. Готовую сборку отправьте повторно.</li>
+      </ul>
+    </div>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;gap:16px">
+    <h3 style="font-family:'Rubik', sans-serif;font-size:32px;color:#12163A">Как выглядит в консоли:</h3>
+    <div class="code-box" style="background:#0F132E;border:1px solid #FFDE59;flex:1">
+@..#..
+.#.K#.
+....#E
+......
+    </div>
+  </div>
+</div>
+
+<p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">119</p>
+</section></div>
+<div class="notes">Дополнительные 15 минут. Работа с новой картой идёт после автопроверки исходной. Вместо новой карты можно считать только разрешённые перемещения.</div></div>
+<div class="frame" data-id="l8-show"><div class="stage">
+<section class="slide" id="l8-show" data-transition="fade" style="background:#F6F7FB;color:#12163A;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
 <div style="display:flex;flex-direction:column;gap:12px">
   <p style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#2F43E8">Рефлексия и финал · Урок 8</p>
@@ -4427,15 +4391,15 @@ banner = <span class="str">"""
 <div style="display:flex;flex-direction:column;gap:18px;margin-top:16px">
   <div style="display:flex;gap:24px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:26px 32px;box-shadow:0 4px 18px rgba(18,22,58,.05)">
   <div style="width:58px;height:58px;border-radius:50%;background:#2F43E8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-family:'Rubik', sans-serif;font-size:32px;font-weight:700">1</div>
-  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">Какой проект из 8 занятий тебе больше всего запомнился и почему?</p>
+  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">Покажите меню, один заблокированный ход и победу.</p>
 </div>
 <div style="display:flex;gap:24px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:26px 32px;box-shadow:0 4px 18px rgba(18,22,58,.05)">
   <div style="width:58px;height:58px;border-radius:50%;background:#2F43E8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-family:'Rubik', sans-serif;font-size:32px;font-weight:700">2</div>
-  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">С какой программной ошибкой за курс было сложнее всего справиться?</p>
+  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">Расскажите, что сделал каждый участник.</p>
 </div>
 <div style="display:flex;gap:24px;align-items:center;background:#FFFFFF;border:1px solid #E1E4F0;border-radius:22px;padding:26px 32px;box-shadow:0 4px 18px rgba(18,22,58,.05)">
   <div style="width:58px;height:58px;border-radius:50%;background:#2F43E8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-family:'Rubik', sans-serif;font-size:32px;font-weight:700">3</div>
-  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">Какую игру ты хочешь разработать следующей?</p>
+  <p style="font-size:30px;color:#12163A;flex:1;line-height:1.35">Предложите тему во вкладке «Идеи модуля». После отбора проголосуйте.</p>
 </div>
 </div>
 <div style="margin-top:20px;background:#2F43E8;border-radius:20px;padding:22px 36px;color:#FFFFFF;font-size:28px;display:flex;align-items:center;gap:20px">
@@ -4444,9 +4408,9 @@ banner = <span class="str">"""
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">119</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#5A6284;font-weight:700;">120</p>
 </section></div>
-<div class="notes">Финальная душевная рефлексия всего курса.</div></div>
+<div class="notes">Запустите сбор идей на пульте до показов, чтобы часть класса могла отправить темы заранее. После показов выберите 2–8 вариантов и нажмите «Открыть голосование». У ученика один голос, его можно изменить до закрытия. Покажите общие итоги с пульта.</div></div>
 <div class="frame" data-id="final"><div class="stage">
 <section class="slide" id="final" data-transition="fade" style="background:#12163A;color:#FFFFFF;font-family:'Nunito Sans', Arial, sans-serif;padding:96px 128px 128px;display:flex;flex-direction:column;gap:32px;">
 
@@ -4460,7 +4424,7 @@ banner = <span class="str">"""
 </div>
 
 <p style="position:absolute;left:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:600;">Разработка консольных игр на Python · 8 занятий</p>
-<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">120</p>
+<p style="position:absolute;right:128px;bottom:48px;font-size:22px;color:#9AA3E0;font-weight:700;">121</p>
 </section></div>
 <div class="notes">Торжественный финал, аплодисменты группе, вручение дипломов.</div></div>
 <div id="notes"></div>
@@ -4504,8 +4468,14 @@ banner = <span class="str">"""
   });
   window.addEventListener('resize', fit);
   fit();
-  var start = parseInt((location.hash || '').slice(1), 10);
-  show(isNaN(start) ? 0 : start - 1);
+  function showAnchor() {
+    var target = location.hash.slice(1);
+    var named = frames.findIndex(function (frame) { return frame.dataset.id === target; });
+    var start = parseInt(target, 10);
+    show(named >= 0 ? named : (isNaN(start) ? 0 : start - 1));
+  }
+  window.addEventListener('hashchange', showAnchor);
+  showAnchor();
   setTimeout(function () { hint.style.opacity = '0'; }, 5000);
 })();
 </script>

@@ -8,6 +8,7 @@ const SAMPLE = "Образец";
 const HIDDEN = ".kurs";
 const TEAM_DIR = "Команда";          // файлы товарищей по команде: приносит панель, только для чтения
 const TEAM_CARD = "команда.json";    // имя бота, характер и тема команды — для Наш_бот.py
+const STUDIO_MENU = "studio_menu.json";
 const SHARED = new Set(["ai.py", "agent.py", "Наш_бот.py"]);   // общие модули класса: их кладёт панель
 const UPLOAD_EXT = new Set([".py", ".txt", ".json", ".md"]);
 const MAX_FILE = 100 * 1024;
@@ -36,7 +37,7 @@ function collectWork(root) {
     for (const e of entries) {
       if (out.length >= MAX_FILES) return;
       // .env с ключом, общие модули класса и файлы товарищей (они и так хранятся у сервера) не копируем
-      if (e.name.startsWith(".") || e.name === "__pycache__" || SHARED.has(e.name) || e.name === TEAM_DIR || e.name === TEAM_CARD) continue;
+      if (e.name.startsWith(".") || e.name === "__pycache__" || SHARED.has(e.name) || e.name === TEAM_DIR || e.name === TEAM_CARD || e.name === STUDIO_MENU) continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else if (UPLOAD_EXT.has(path.extname(e.name).toLowerCase())) {
@@ -81,4 +82,4 @@ function isInside(file, dir) {
   return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
-module.exports = { WORK, SAMPLE, HIDDEN, TEAM_DIR, TEAM_CARD, SHARED, lessonDir, readJson, writeFile, collectWork, restoreWork, wipeWork, isInside };
+module.exports = { WORK, SAMPLE, HIDDEN, TEAM_DIR, TEAM_CARD, STUDIO_MENU, SHARED, lessonDir, readJson, writeFile, collectWork, restoreWork, wipeWork, isInside };

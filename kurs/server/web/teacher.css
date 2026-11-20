@@ -87,11 +87,32 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 @media (max-width: 950px) { .traffic-row { width: 100%; margin: 6px 0 0; } }
 
 /* ---------- вкладки ---------- */
-.nav { display: flex; gap: 4px; padding: 0 22px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 60px; z-index: 5; overflow-x: auto; }
+.nav { display: flex; gap: 4px; padding: 0 22px; background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: var(--teacher-top-height, 60px); z-index: 5; overflow-x: auto; }
 .nav .tab { background: none; color: var(--muted); border-radius: 0; padding: 12px 14px 10px; border-bottom: 3px solid transparent; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .nav .tab:hover { color: var(--text); filter: none; }
 .nav .tab.on { color: var(--blue-ink); border-bottom-color: var(--blue); }
 .nav .tab .ic { font-size: 16px; }
+:is(button, input, textarea, select, summary):focus-visible { outline: 2px solid var(--blue-ink); outline-offset: 2px; }
+.module-poll { overflow-wrap: anywhere; }
+.poll-form { display: grid; gap: 8px; }
+.poll-form :is(input, textarea, button), .module-poll > button { min-width: 0; min-height: 44px; }
+.poll-form textarea { min-height: 110px; resize: vertical; }
+.poll-results { display: grid; gap: 8px; list-style: none; padding: 0; }
+.poll-results li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.poll-ideas li { align-items: center; flex-wrap: wrap; }
+.poll-ideas small { display: block; }
+.poll-ideas button { min-height: 36px; }
+.module-poll .poll-form + :is(details, button) { margin-top: 12px; }
+.poll-error { color: var(--text); background: var(--bad-bg); border-inline-start: 3px solid var(--bad); padding: 8px; }
+.teacher-studio-summary { color: #fff; background: linear-gradient(125deg, #12163a, #27328a); padding: 16px 20px; border-radius: 14px; margin-bottom: 16px; }
+.teacher-studio-summary p { color: #e0e5ff; margin: 4px 0 0; }
+.teacher-studio-build { background: var(--soft); border-radius: 10px; padding: 8px 10px; overflow-wrap: anywhere; }
+.teacher-studio-build p { margin: 3px 0 0; }
+@media (max-width: 640px) {
+  .top, .nav { position: static; }
+  .top .actions { flex-wrap: wrap; }
+  .top .lesson { flex: 1 1 100%; padding-left: 0; border-left: none; }
+}
 .badge.soft { background: var(--soft); color: var(--blue-ink); }
 
 /* ---------- элементы ---------- */

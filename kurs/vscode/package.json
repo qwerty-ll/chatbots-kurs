@@ -1,8 +1,8 @@
 {
   "name": "kurs-panel",
-  "displayName": "Курс «Чат-боты на Python»",
-  "description": "Панель ученика: задания, теория, проверка кода и помощь учителя.",
-  "version": "0.4.3",
+  "displayName": "Курс Python",
+  "description": "Панель ученика: задания, проверка кода, команды и голосования.",
+  "version": "0.4.6",
   "publisher": "kurs",
   "license": "UNLICENSED",
   "private": true,

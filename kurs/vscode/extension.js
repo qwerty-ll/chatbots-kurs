@@ -507,7 +507,8 @@ class Kurs {
   /** Что в папке курса только для чтения: всё — при блокировке; всегда — файлы товарищей и бот команды
    *  (их приносит панель, а меняет каждый только свой файл). */
   async applyReadonly() {
-    const want = { [F.WORK + "/**"]: !!this.locked, [`${F.WORK}/**/${F.TEAM_DIR}/**`]: true, [`${F.WORK}/**/Наш_бот.py`]: true };
+    const want = { [F.WORK + "/**"]: !!this.locked, [`${F.WORK}/**/${F.TEAM_DIR}/**`]: true,
+      [`${F.WORK}/**/Наш_бот.py`]: true, [`${F.WORK}/**/${F.STUDIO_MENU}`]: true };
     const key = JSON.stringify(want);
     if (key === this.readonlyApplied) return;
     this.readonlyApplied = key;
@@ -795,6 +796,11 @@ class Kurs {
       case "reset": return this.resetTask(m.task);
       case "resetLesson": return this.resetLesson(m.lesson);
       case "rate": await this.api("POST", "/api/rating", { task_id: m.task, rating: m.rating }); return this.pollState();
+      case "moduleVote": return this.moduleVote(m);
+      case "moduleIdea": return this.moduleVote(m, true);
+      case "studioMenu":
+      case "studioSubmit":
+      case "studioRunTemplate": return this.studioAction(m);
       case "compareSolution": return this.compareSolution(m.task);
       case "loadSolution": return this.loadSolution(m.task);
       case "help": await this.api("POST", "/api/help", { text: m.text || "" }); return this.pollState();
@@ -809,15 +815,62 @@ class Kurs {
       case "playLeave": return this.playAct("leave", {});
       case "aiChat": return this.handleAiChat(m);
       case "ideaSave": return this.saveIdea(m.idea);
-      case "teamJoin": return this.teamAct("join", { team_id: m.team }, "Ты в команде! Открой задание «Мои инструменты».");
+      case "teamJoin": return this.teamAct("join", { team_id: m.team }, this.v.lesson?.team_project ? "Ты в команде! Запиши свою роль." : "Ты в команде! Открой задание «Мои инструменты».");
       case "teamLeave": return this.teamAct("leave", {}, "Ты вышел из команды.");
       case "teamCard": return this.teamAct("card", m.card, "Карточка команды сохранена — товарищи увидят её через пару секунд.");
-      case "teamPlan": return this.teamAct("plan", { plan: m.plan }, "Записал, что ты делаешь.");
+      case "teamPlan": return this.teamAct("plan", { plan: m.plan }, "Роль сохранена.", m.key
+        ? { type: "gamePlanSaved", key: m.key, plan: m.plan } : null);
       case "teamNoticeOk": return this.teamAct("notice_ok", {});
       case "runTeamBot": return this.runPath(path.join(this.workDir(), "Наш_бот.py"));
       case "openTeamFile": return this.openTeamFile(m.name);
       case "generateFirstTool": return this.handleGenerateFirstTool(m);
       default: return undefined;
+    }
+  }
+
+  async moduleVote(m, idea = false) {
+    const type = idea ? "moduleIdeaResult" : "voteResult";
+    try {
+      const poll = await this.api("POST", idea ? "/api/module-idea" : "/api/vote",
+        idea ? { id: m.id, topic: m.topic } : { id: m.id, choice: m.choice });
+      const current = this.v.state?.poll;
+      if (current?.id === poll.id && current.phase === poll.phase) this.v.state.poll = poll;
+      this.render();
+      this.panel?.webview.postMessage({ type, id: m.id });
+    } catch (e) {
+      this.panel?.webview.postMessage({ type, id: m.id, error: e.message });
+    }
+  }
+
+  async studioAction(m) {
+    try {
+      if (m.cmd === "studioRunTemplate") {
+        const source = await this.api("GET", "/api/studio/template");
+        const dir = path.join(this.root(), F.SAMPLE, "Студия");
+        const file = path.join(dir, "Бродилка.py");
+        F.writeFile(file, source.code);
+        F.writeFile(path.join(dir, F.STUDIO_MENU), JSON.stringify(source.menu));
+        await this.runPath(file);
+      } else {
+        const action = m.cmd === "studioMenu" ? "menu" : "submit";
+        const me = this.teamData?.team?.members.find((member) => member.me);
+        if (action === "submit" && m.mode === "team" && m.source === me?.id) {
+          const task = this.taskById(this.v.lesson.team_task);
+          if (!task) throw new Error("Сначала открой задание бродилки.");
+          const file = this.taskFile(task);
+          await this.saveIfOpen(file);
+          if (!fs.existsSync(file)) throw new Error("Сначала сохрани файл бродилки.");
+          const content = fs.readFileSync(file, "utf8");
+          const saved = await this.api("POST", "/api/files", { files: [{ path: `Занятие_${task.lesson}/${task.file}`, content }] });
+          if (!saved.saved) throw new Error("Не удалось сохранить файл проекта. Проверь размер файла или выбери шаблон.");
+        }
+        this.setTeam(await this.api("POST", "/api/studio/" + action, {
+          revision: m.revision, menu: m.menu, mode: m.mode, source: m.source, expected: m.expected
+        }));
+      }
+      this.panel?.webview.postMessage({ type: "studioResult", cmd: m.cmd, key: m.key });
+    } catch (e) {
+      this.panel?.webview.postMessage({ type: "studioResult", cmd: m.cmd, key: m.key, error: e.message });
     }
   }
 
@@ -833,7 +886,10 @@ class Kurs {
           const taskTitle = `${t.num}. ${t.title}`;
           let currentCode = "";
           const file = this.taskFile(t);
-          if (fs.existsSync(file)) {
+          const doc = vscode.workspace.textDocuments.find((item) => item.uri.fsPath === file);
+          if (doc) {
+            currentCode = doc.getText().slice(0, 3500);
+          } else if (fs.existsSync(file)) {
             currentCode = fs.readFileSync(file, "utf-8").slice(0, 3500);
           }
           const parts = [`[Текущее задание: ${taskTitle}]`];
@@ -856,7 +912,8 @@ class Kurs {
           taskContext = "\n\n" + parts.join("\n\n");
         }
       }
-      const systemPrompt = "Ты — дружелюбный школьный ИИ-наставник по Python курса «Чат-боты». " +
+      const courseTitle = this.v.lesson?.course?.title || "Python";
+      const systemPrompt = `Ты — школьный ИИ-наставник курса «${courseTitle}». ` +
         "Твоя задача — помочь ученику самостоятельно разобраться и решить задачу. " +
         "Объясняй простыми словами на понятных примерах для начинающих. " +
         "ОБЯЗАТЕЛЬНО соблюдай правила:\n" +
@@ -1092,9 +1149,10 @@ class Kurs {
     } catch (e) { this.toast(e.message); }
   }
 
-  async teamAct(action, body, okText) {
+  async teamAct(action, body, okText, reply) {
     try {
       this.setTeam(await this.api("POST", "/api/team/" + action, body || {}));
+      if (reply) this.panel?.webview.postMessage(reply);
       if (okText) this.toast(okText);
     } catch (e) { this.toast(e.message); }
   }
@@ -1125,6 +1183,20 @@ class Kurs {
     let names = [];
     try { names = fs.readdirSync(dir); } catch (e) { /* папки ещё нет */ }
     for (const name of names) if (name.endsWith(".py") && !keep.has(name)) fs.rmSync(path.join(dir, name), { force: true });
+    if (this.v.lesson.team_project === "game") {
+      for (const dest of [this.workDir(), dir]) {
+        const menu = path.join(dest, F.STUDIO_MENU);
+        if (team?.studio) {
+          const text = JSON.stringify(team.studio.menu, null, 2);
+          let old = null;
+          try { old = fs.readFileSync(menu, "utf8"); } catch (e) { /* первая синхронизация */ }
+          if (old !== text) F.writeFile(menu, text);
+        } else {
+          fs.rmSync(menu, { force: true });
+        }
+      }
+      return;
+    }
     const card = path.join(this.workDir(), F.TEAM_CARD);
     if (team) {
       F.writeFile(card, JSON.stringify({ team: team.name, topic: team.topic, bot_name: team.bot_name, persona: team.persona,
