@@ -10,6 +10,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_DIR = os.path.join(ROOT, "kurs", "server")
@@ -174,6 +176,49 @@ class ServerApiTests(unittest.TestCase):
         kurs.s.commit()
         rows = kurs.s.q("SELECT path FROM files WHERE student_id=?", (sid,))
         self.assertEqual([r["path"] for r in rows], ["Занятие_1/ok.py"])
+
+    def test_concurrent_state_polls_and_file_saves(self) -> None:
+        self.login_teacher()
+        names = [f"Student {i}" for i in range(24)]
+        self.assertEqual(self.req("POST", "/tapi/group", {"name": "Class", "names": names})[0], 200)
+
+        kurs = self.srv.RequestHandlerClass.kurs
+        gid = kurs.s.one("SELECT id FROM groups")["id"]
+        self.assertEqual(self.req("POST", "/tapi/start", {"group_id": gid, "lesson": 1})[0], 200)
+        for i, student in enumerate(kurs.s.q("SELECT id FROM students"), 1):
+            status, _, _ = self.req("POST", "/api/login", {"pc": f"pc-{i}", "student_id": student["id"]})
+            self.assertEqual(status, 200)
+        self.assertEqual(self.req("POST", "/tapi/approve_all", {})[0], 200)
+        kurs.s.ex("UPDATE sessions SET seen=0")
+        kurs.s.commit()
+        tokens = [r["token"] for r in kurs.s.q("SELECT token FROM sessions")]
+        self.assertEqual(len(tokens), len(names))
+
+        state_for = kurs.state_for
+
+        def check_state_transaction(sess):
+            self.assertFalse(kurs.s.db.in_transaction, "heartbeat must commit before reading state")
+            return state_for(sess)
+
+        def work(token):
+            headers = {"X-Kurs-Token": token}
+            path = "lesson/main.py"
+            for _ in range(3):
+                status, _, body = self.req("GET", "/api/state", headers=headers)
+                self.assertEqual(status, 200, body)
+                status, _, body = self.req("POST", "/api/files",
+                                           {"files": [{"path": path, "content": "print(42)"}]}, headers)
+                self.assertEqual(status, 200, body)
+                self.assertEqual(json.loads(body)["saved"], 1)
+
+        with patch.object(kurs, "state_for", side_effect=check_state_transaction):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(work, tokens))
+
+        sessions = kurs.s.q("SELECT seen FROM sessions")
+        self.assertTrue(all(r["seen"] > 0 for r in sessions))
+        files = kurs.s.q("SELECT content FROM files")
+        self.assertEqual([r["content"] for r in files], ["print(42)"] * len(names))
 
     def test_negative_content_length_returns_400(self) -> None:
         self.login_teacher()

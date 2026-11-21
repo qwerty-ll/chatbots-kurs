@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import zipfile
+from contextlib import contextmanager
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
@@ -62,6 +63,7 @@ MAX_BODY = 512 * 1024          # байт в одном запросе
 MAX_FILE = 100 * 1024          # байт в одном файле ученика
 MAX_FILES = 60                 # файлов в одной отправке
 ONLINE_SEC = 15                # ученик «на связи», если писал не позже стольких секунд назад
+HEARTBEAT_SEC = 5               # не пишем в SQLite при каждом опросе панели
 LOCAL = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
 SCHEMA = """
@@ -422,6 +424,7 @@ class Store:
 
         with self.lock:
             conn = self.db
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(SCHEMA)
             with conn:
                 conn.execute("BEGIN IMMEDIATE")
@@ -442,7 +445,6 @@ class Store:
         if conn is None:
             conn = sqlite3.connect(self.db_path, timeout=20.0)
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("PRAGMA synchronous=NORMAL;")
             conn.execute("PRAGMA foreign_keys=ON;")
@@ -450,6 +452,21 @@ class Store:
             with self._conns_lock:
                 self._conns.add(conn)
         return conn
+
+    @contextmanager
+    def writing(self):
+        # Удерживаем блокировку до commit/rollback. Иначе соседний поток
+        # может ждать SQLite, не давая текущему закончить транзакцию.
+        with self.lock:
+            if getattr(self._local, "writing", False):
+                yield
+                return
+            self._local.writing = True
+            try:
+                with self.db:
+                    yield
+            finally:
+                self._local.writing = False
 
     def commit(self) -> None:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
@@ -783,9 +800,8 @@ class Kurs:
         self.lib = lib
         self.ai = kurs_ai.Gateway(store.data_dir, log_fn=self.ai_log)
         self.play = kurs_play.Play()
-        with store.lock:
+        with store.writing():
             store.ex("DELETE FROM ai_log WHERE ts < ?", (time.time() - AI_LOG_DAYS * 86400,))
-            store.db.commit()
 
     # ---------- нейросеть ----------
     def ai_log(self, t, ms: int) -> None:
@@ -796,11 +812,10 @@ class Kurs:
         answer = (t.message or {}).get("content") if t.status == "done" else t.error
         if t.status == "done" and (t.message or {}).get("tool_calls"):
             answer = "🔧 " + ", ".join(c["function"]["name"] for c in t.message["tool_calls"])
-        with self.s.lock:
+        with self.s.writing():
             self.s.ex("INSERT INTO ai_log(ts,student_id,pc,question,system,answer,status,ms,cached,flags) VALUES(?,?,?,?,?,?,?,?,?,?)",
                       (time.time(), t.student_id, t.pc, question[:4000], system[:1000], (answer or "")[:4000], t.status, ms,
                        1 if t.cached else 0, ",".join(kurs_ai.flags_for(question))))
-            self.s.db.commit()
 
     def ai_ask(self, sess, body: dict) -> dict:
         today = self.s.one("SELECT COUNT(*) AS n FROM ai_log WHERE student_id=? AND ts>=?", (sess["student_id"], _day_start()))["n"]
@@ -857,7 +872,15 @@ class Kurs:
         r = self.session_by_token(token)
         if r["closed"] is not None:
             raise ApiError(410, r["reason"] or "Сеанс закрыт")
-        self.s.ex("UPDATE sessions SET seen=? WHERE token=?", (time.time(), token))
+        if time.time() - r["seen"] < HEARTBEAT_SEC:
+            return r
+        with self.s.writing():
+            r = self.session_by_token(token)
+            if r["closed"] is not None:
+                raise ApiError(410, r["reason"] or "Сеанс закрыт")
+            now = time.time()
+            if now - r["seen"] >= HEARTBEAT_SEC:
+                self.s.ex("UPDATE sessions SET seen=? WHERE token=?", (now, token))
         return r
 
     def lesson(self) -> dict:
@@ -1964,9 +1987,9 @@ class Kurs:
         data = {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
                 "chars": chars, "text": text[:400],
                 "reason": verdict_reason}
-        self.s.log(sess["student_id"], kind, data)
-        # Блокировка ТОЛЬКО если ИИ подтвердил вставку кода или правку вне редактора!
-        with self.s.lock:
+        with self.s.writing():
+            self.s.log(sess["student_id"], kind, data)
+            # Блокировка ТОЛЬКО если ИИ подтвердил вставку кода или правку вне редактора!
             if self.s.get("lock_on_paste") and kind in ("ai_paste_blocked", "outside_edit"):
                 locks = dict(self.s.get("locks") or {})
                 key = str(sess["student_id"])
@@ -2558,9 +2581,7 @@ class Handler(BaseHTTPRequestHandler):
             if teacher:
                 pkey = kurs_play.TEACHER
             else:
-                with self.kurs.s.lock:
-                    sess = self.kurs.live_session(token)
-                    self.kurs.s.commit()
+                sess = self.kurs.live_session(token)
                 pkey = f"s:{sess['student_id']}"
         except (ApiError, OSError, ValueError, AttributeError):
             try:
@@ -2572,6 +2593,16 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- API ученика ---
     def student_api(self, method: str, name: str, qs: dict) -> None:
+        body = self.body_json() if method == "POST" and name != "logout" else {}
+        # Нейросеть может ждать ответа по сети. Её записи защищены отдельно.
+        if method == "POST" and name not in ("ai/ask", "event"):
+            with self.kurs.s.writing():
+                out = self.student_response(method, name, qs, body)
+        else:
+            out = self.student_response(method, name, qs, body)
+        self.send_json(out)
+
+    def student_response(self, method: str, name: str, qs: dict, body: dict) -> dict:
         k = self.kurs
         token = self.headers.get("X-Kurs-Token")
         auth = self.headers.get("Authorization") or ""
@@ -2580,7 +2611,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and name == "hello":
             out = k.hello(clean_pc(qs.get("pc")))
         elif method == "POST" and name == "login":
-            b = self.body_json()
+            b = body
             out = k.login(clean_pc(b.get("pc")), req_int(b.get("student_id"), "student_id", default=0))
         elif method == "GET" and name == "request":
             out = k.request_status(req_int(qs.get("id"), "id", default=0), qs.get("secret", ""))
@@ -2593,44 +2624,44 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "GET" and name == "task":
                 out = k.lib.public_task(k.task(qs.get("id", "")))
             elif method == "POST" and name == "ai/ask":
-                out = k.ai_ask(sess, self.body_json())
+                out = k.ai_ask(sess, body)
             elif method == "GET" and name == "ai/ticket":
                 out = k.ai_ticket(sess, req_int(qs.get("id"), "id", default=0))
             elif method == "GET" and name == "solution":
                 out = k.solution(sess, qs.get("id", ""))
             elif method == "POST" and name == "hint":
-                b = self.body_json()
+                b = body
                 out = k.hint(sess, str(b.get("task_id") or ""), req_int(b.get("level"), "level", default=0))
             elif method == "POST" and name == "result":
-                b = self.body_json()
+                b = body
                 out = k.result(sess, str(b.get("task_id") or ""), bool(b.get("ok")), str(b.get("summary", "")),
                                str(b.get("code", "")))
             elif method == "POST" and name == "vote":
-                out = k.vote_module(sess, self.body_json())
+                out = k.vote_module(sess, body)
             elif method == "POST" and name == "module-idea":
-                out = k.propose_module_idea(sess, self.body_json())
+                out = k.propose_module_idea(sess, body)
             elif method == "GET" and name == "studio/template":
                 out = k.studio_action(sess, "template", {})
             elif method == "POST" and name in ("studio/menu", "studio/submit"):
-                out = k.studio_action(sess, name.split("/")[1], self.body_json())
+                out = k.studio_action(sess, name.split("/")[1], body)
             elif method == "POST" and name == "rating":
-                b = self.body_json()
+                b = body
                 k.rating(sess, str(b.get("task_id") or ""), str(b.get("rating") or ""))
                 out = {"ok": True}
             elif method == "POST" and name == "reset_lesson":
-                b = self.body_json()
+                b = body
                 active_lesson = int(k.s.get("lesson") or 1)
                 lesson_num = req_int(b.get("lesson"), "lesson", default=active_lesson)
                 if lesson_num != active_lesson:
                     raise ApiError(400, "Можно сбросить только текущее активное занятие")
                 out = k.reset_lesson_progress(lesson_num, student_id=sess["student_id"])
             elif method == "POST" and name == "help":
-                b = self.body_json()
+                b = body
                 out = k.help(sess, str(b.get("text", "")), bool(b.get("cancel")))
             elif method == "POST" and name == "files":
-                out = k.save_files(sess, self.body_json().get("files"))
+                out = k.save_files(sess, body.get("files"))
             elif method == "POST" and name == "event":
-                out = k.student_event(sess, self.body_json())
+                out = k.student_event(sess, body)
             elif method == "GET" and name == "play":
                 ok, why = k.play_allowed(sess["student_id"])
                 if not ok:
@@ -2640,17 +2671,17 @@ class Handler(BaseHTTPRequestHandler):
                 ok, why = k.play_allowed(sess["student_id"])
                 if not ok and name != "play/leave":
                     raise ApiError(403, why)
-                out = k.play_action(f"s:{sess['student_id']}", k.name(sess["student_id"]), name[5:], self.body_json())
+                out = k.play_action(f"s:{sess['student_id']}", k.name(sess["student_id"]), name[5:], body)
             elif method == "GET" and name == "files":
                 out = k.my_files(sess)
             elif method == "GET" and name == "idea":
                 out = {"idea": k.idea_of(sess["student_id"])}
             elif method == "POST" and name == "idea":
-                out = k.idea_save(sess, self.body_json())
+                out = k.idea_save(sess, body)
             elif method == "GET" and name == "team":
                 out = k.team_view(sess)
             elif method == "POST" and name.startswith("team/"):
-                b = self.body_json()
+                b = body
                 if name == "team/join":
                     k.team_join(sess, req_int(b.get("team_id"), "team_id", default=0))
                 elif name == "team/leave":
@@ -2670,8 +2701,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = {"ok": True}
             else:
                 raise ApiError(404, "Нет такой команды")
-        k.s.commit()
-        self.send_json(out)
+        return out
 
     # --- API учителя ---
     def teacher_api(self, method: str, name: str, qs: dict) -> None:
@@ -2751,169 +2781,174 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_bytes(body, "application/zip", 200,
                                    {"Content-Disposition": content_disposition(f"projects_{safe_name}.zip")})
         elif method == "POST":
-            b = self.body_json()
-            out = {"ok": True}
-            if name == "group":
-                raw_names = b.get("names")
-                if raw_names is not None and not isinstance(raw_names, list):
-                    raise ApiError(400, "Неверный список учеников")
-                out = k.save_group(str(b.get("name", "")), raw_names or [], b.get("id"))
-            elif name == "poll":
-                k.create_module_poll(b)
-            elif name == "poll/collect":
-                k.create_module_poll(b, collect=True)
-            elif name == "poll/publish":
-                k.publish_module_poll(b)
-            elif name == "poll/close":
-                k.close_module_poll(b.get("id"))
-            elif name == "group/delete":
-                gid = req_int(b.get("id"), "id", default=0)
-                if gid == k.s.get("group_id") and k.s.get("running"):
-                    raise ApiError(400, "Сначала заверши занятие этой группы")
-                k.s.ex("UPDATE students SET archived=1 WHERE group_id=?", (gid,))
-                k.s.ex("DELETE FROM groups WHERE id=?", (gid,))
-            elif name == "start":
-                k.start(req_int(b.get("group_id"), "group_id", default=0), req_int(b.get("lesson"), "lesson", default=0))
-            elif name == "continue":
-                k.continue_class()
-            elif name == "end":
-                k.end()
-            elif name in ("reset_lesson_progress", "reset_lesson"):
-                lesson_num = req_int(b.get("lesson"), "lesson", default=int(k.s.get("lesson") or 1))
-                sid = req_int(b.get("student_id"), "student_id", default=0) if b.get("student_id") not in (None, "") else None
-                if sid:
-                    gid = None
-                elif b.get("all_groups"):
-                    gid = None
-                elif b.get("group_id") not in (None, ""):
-                    gid = req_int(b.get("group_id"), "group_id")
-                else:
-                    gid = k.s.get("group_id")
-                    if not gid:
-                        raise ApiError(400, "Укажи группу для сброса прогресса")
-                out = k.reset_lesson_progress(lesson_num, group_id=gid, student_id=sid)
-            elif name == "open":
-                raw_ids = b.get("ids")
-                if raw_ids is not None and not isinstance(raw_ids, list):
-                    raise ApiError(400, "Неверный список заданий")
-                ids = list(raw_ids or [])
-                if b.get("step") is not None:
-                    step_val = req_int(b.get("step"), "step")
-                    lesson = k.lesson()
-                    ids = [i for i in lesson["task_ids"] if k.lib.tasks[i]["step"] <= step_val]
-                if b.get("all"):
-                    ids = k.lesson()["task_ids"]
-                k.open_tasks(ids, bool(b.get("open", True)))
-            elif name == "pause":
-                k.s.set("paused", 1 if b.get("paused") else 0)
-                k.s.set("pause_text", str(b.get("text") or "Пауза: смотрим на учителя")[:120])
-            elif name == "timer":
-                with k.s.lock:
-                    if b.get("clear"):
-                        k.s.set("timer_end", None)
-                    elif b.get("add") is not None:
-                        end = k.s.get("timer_end") or time.time()
-                        k.s.set("timer_end", max(end, time.time()) + 60 * req_int(b.get("add"), "add"))
-                    else:
-                        k.s.set("timer_end", time.time() + 60 * req_int(b.get("minutes"), "minutes", default=10))
-                        k.s.set("timer_label", str(b.get("label") or "")[:60])
-            elif name == "stage":
-                n = req_int(b.get("stage"), "stage", default=0)
-                if n < 0 or n > len(k.lesson()["stages"]):
-                    raise ApiError(400, "Нет такого этапа")
-                k.s.set("stage", n)
-            elif name == "request":
-                k.decide(req_int(b.get("id"), "id", default=0), bool(b.get("approve")))
-            elif name == "approve_all":
-                for r in k.s.q("SELECT id FROM requests WHERE status='pending'"):
-                    k.decide(r["id"], True)
-            elif name == "help":
-                k.s.ex("UPDATE help SET status=? WHERE id=?", ("going" if b.get("going") else "done", req_int(b.get("id"), "id", default=0)))
-            elif name == "kick":
-                sess = k.active_session_of(req_int(b.get("student_id"), "student_id", default=0))
-                if sess:
-                    k.close_session(sess["token"], "Учитель завершил твой сеанс")
-            elif name == "reload":
-                k.lib.load()
-            elif name == "set_course":
-                k.set_course(str(b.get("course") or "games"))
-            elif name == "restart_clients":
-                # все панели сохранят работу, обновятся и перезапустят окно VS Code
-                with k.s.lock:
-                    k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
-                    k.s.log(None, "restart_clients")
-            elif name == "play/config":
-                k.play_config(b)
-            elif name == "play/stop_all":
-                k.play.stop_all("Учитель остановил все партии")
-            elif name == "play/end":
-                k.play.end(str(b.get("match", "")), "Учитель остановил партию")
-            elif name in ("play/invite", "play/answer", "play/cancel", "play/leave"):
-                out = k.play_action(kurs_play.TEACHER, "Учитель", name[5:], b)
-            elif name == "teams/create":
-                raw_names = b.get("names")
-                if raw_names is not None and not isinstance(raw_names, list):
-                    raise ApiError(400, "Неверный список названий команд")
-                k.teams_create(req_int(b.get("count"), "count", default=0), list(raw_names or []))
-            elif name == "teams/config":
-                k.teams_config(b)
-            elif name == "teams/rename":
-                k.teams_rename(req_int(b.get("team_id"), "team_id", default=0), str(b.get("name", "")))
-            elif name == "teams/delete":
-                if b.get("all"):
-                    k.teams_delete(None)
-                else:
-                    tid = req_int(b.get("team_id"), "team_id", default=0)
-                    if tid <= 0:
-                        raise ApiError(400, "Укажи команду")
-                    k.teams_delete(tid)
-            elif name == "teams/clear_release":
-                k.teams_clear_release(req_int(b.get("team_id"), "team_id"))
-            elif name == "teams/kick":
-                k.teams_kick(req_int(b.get("student_id"), "student_id", default=0))
-            elif name == "teams/assign":
-                k.teams_assign(req_int(b.get("student_id"), "student_id", default=0), req_int(b.get("team_id"), "team_id", default=0))
-            elif name == "unlock":
-                k.unlock(req_int(b.get("student_id"), "student_id", default=0))
-            elif name == "lock_on_paste":
-                k.s.set("lock_on_paste", 1 if b.get("on") else 0)
-            elif name == "close_clients":
-                # все панели сохранят работу и закроют VS Code курса на компьютерах учеников
-                with k.s.lock:
-                    k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
-                    k.s.log(None, "close_clients")
-            elif name == "restart_student":
-                # то же самое, но только на компьютере одного ученика
-                sid = req_int(b.get("student_id"), "student_id", default=0)
-                if not k.student(sid):
-                    raise ApiError(404, "Нет такого ученика")
-                with k.s.lock:
-                    per = dict(k.s.get("restart_students") or {})
-                    per[str(sid)] = int(per.get(str(sid), 0)) + 1
-                    k.s.set("restart_students", per)
-                    k.s.log(sid, "restart_student")
-            elif name == "toggle_focus":
-                k.toggle_student_flag("focus_all", "focus_students", b.get("student_id"), bool(b.get("on", True)), "focus_mode")
-            elif name == "toggle_block_sites":
-                k.toggle_student_flag("block_sites_all", "block_sites_students", b.get("student_id"), bool(b.get("on", True)), "block_sites")
-            elif name == "ai/config":
-                try:
-                    k.ai.save_config(b)
-                except kurs_ai.AIError as e:
-                    raise ApiError(400, str(e)) from None
-            elif name == "ai/mode":
-                try:
-                    k.ai.set_mode(str(b.get("mode")))
-                except kurs_ai.AIError as e:
-                    raise ApiError(400, str(e)) from None
-            elif name == "ai/clear":
-                k.s.ex("DELETE FROM ai_log")
-            else:
-                raise ApiError(404, "Нет такой команды")
+            body = self.body_json()
+            with k.s.writing():
+                out = self.teacher_action(name, body)
         else:
             raise ApiError(404, "Нет такой команды")
-        k.s.commit()
         self.send_json(out)
+
+    def teacher_action(self, name: str, b: dict) -> dict:
+        k = self.kurs
+        out = {"ok": True}
+        if name == "group":
+            raw_names = b.get("names")
+            if raw_names is not None and not isinstance(raw_names, list):
+                raise ApiError(400, "Неверный список учеников")
+            out = k.save_group(str(b.get("name", "")), raw_names or [], b.get("id"))
+        elif name == "poll":
+            k.create_module_poll(b)
+        elif name == "poll/collect":
+            k.create_module_poll(b, collect=True)
+        elif name == "poll/publish":
+            k.publish_module_poll(b)
+        elif name == "poll/close":
+            k.close_module_poll(b.get("id"))
+        elif name == "group/delete":
+            gid = req_int(b.get("id"), "id", default=0)
+            if gid == k.s.get("group_id") and k.s.get("running"):
+                raise ApiError(400, "Сначала заверши занятие этой группы")
+            k.s.ex("UPDATE students SET archived=1 WHERE group_id=?", (gid,))
+            k.s.ex("DELETE FROM groups WHERE id=?", (gid,))
+        elif name == "start":
+            k.start(req_int(b.get("group_id"), "group_id", default=0), req_int(b.get("lesson"), "lesson", default=0))
+        elif name == "continue":
+            k.continue_class()
+        elif name == "end":
+            k.end()
+        elif name in ("reset_lesson_progress", "reset_lesson"):
+            lesson_num = req_int(b.get("lesson"), "lesson", default=int(k.s.get("lesson") or 1))
+            sid = req_int(b.get("student_id"), "student_id", default=0) if b.get("student_id") not in (None, "") else None
+            if sid:
+                gid = None
+            elif b.get("all_groups"):
+                gid = None
+            elif b.get("group_id") not in (None, ""):
+                gid = req_int(b.get("group_id"), "group_id")
+            else:
+                gid = k.s.get("group_id")
+                if not gid:
+                    raise ApiError(400, "Укажи группу для сброса прогресса")
+            out = k.reset_lesson_progress(lesson_num, group_id=gid, student_id=sid)
+        elif name == "open":
+            raw_ids = b.get("ids")
+            if raw_ids is not None and not isinstance(raw_ids, list):
+                raise ApiError(400, "Неверный список заданий")
+            ids = list(raw_ids or [])
+            if b.get("step") is not None:
+                step_val = req_int(b.get("step"), "step")
+                lesson = k.lesson()
+                ids = [i for i in lesson["task_ids"] if k.lib.tasks[i]["step"] <= step_val]
+            if b.get("all"):
+                ids = k.lesson()["task_ids"]
+            k.open_tasks(ids, bool(b.get("open", True)))
+        elif name == "pause":
+            k.s.set("paused", 1 if b.get("paused") else 0)
+            k.s.set("pause_text", str(b.get("text") or "Пауза: смотрим на учителя")[:120])
+        elif name == "timer":
+            with k.s.lock:
+                if b.get("clear"):
+                    k.s.set("timer_end", None)
+                elif b.get("add") is not None:
+                    end = k.s.get("timer_end") or time.time()
+                    k.s.set("timer_end", max(end, time.time()) + 60 * req_int(b.get("add"), "add"))
+                else:
+                    k.s.set("timer_end", time.time() + 60 * req_int(b.get("minutes"), "minutes", default=10))
+                    k.s.set("timer_label", str(b.get("label") or "")[:60])
+        elif name == "stage":
+            n = req_int(b.get("stage"), "stage", default=0)
+            if n < 0 or n > len(k.lesson()["stages"]):
+                raise ApiError(400, "Нет такого этапа")
+            k.s.set("stage", n)
+        elif name == "request":
+            k.decide(req_int(b.get("id"), "id", default=0), bool(b.get("approve")))
+        elif name == "approve_all":
+            for r in k.s.q("SELECT id FROM requests WHERE status='pending'"):
+                k.decide(r["id"], True)
+        elif name == "help":
+            k.s.ex("UPDATE help SET status=? WHERE id=?", ("going" if b.get("going") else "done", req_int(b.get("id"), "id", default=0)))
+        elif name == "kick":
+            sess = k.active_session_of(req_int(b.get("student_id"), "student_id", default=0))
+            if sess:
+                k.close_session(sess["token"], "Учитель завершил твой сеанс")
+        elif name == "reload":
+            k.lib.load()
+        elif name == "set_course":
+            k.set_course(str(b.get("course") or "games"))
+        elif name == "restart_clients":
+            # все панели сохранят работу, обновятся и перезапустят окно VS Code
+            with k.s.lock:
+                k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
+                k.s.log(None, "restart_clients")
+        elif name == "play/config":
+            k.play_config(b)
+        elif name == "play/stop_all":
+            k.play.stop_all("Учитель остановил все партии")
+        elif name == "play/end":
+            k.play.end(str(b.get("match", "")), "Учитель остановил партию")
+        elif name in ("play/invite", "play/answer", "play/cancel", "play/leave"):
+            out = k.play_action(kurs_play.TEACHER, "Учитель", name[5:], b)
+        elif name == "teams/create":
+            raw_names = b.get("names")
+            if raw_names is not None and not isinstance(raw_names, list):
+                raise ApiError(400, "Неверный список названий команд")
+            k.teams_create(req_int(b.get("count"), "count", default=0), list(raw_names or []))
+        elif name == "teams/config":
+            k.teams_config(b)
+        elif name == "teams/rename":
+            k.teams_rename(req_int(b.get("team_id"), "team_id", default=0), str(b.get("name", "")))
+        elif name == "teams/delete":
+            if b.get("all"):
+                k.teams_delete(None)
+            else:
+                tid = req_int(b.get("team_id"), "team_id", default=0)
+                if tid <= 0:
+                    raise ApiError(400, "Укажи команду")
+                k.teams_delete(tid)
+        elif name == "teams/clear_release":
+            k.teams_clear_release(req_int(b.get("team_id"), "team_id"))
+        elif name == "teams/kick":
+            k.teams_kick(req_int(b.get("student_id"), "student_id", default=0))
+        elif name == "teams/assign":
+            k.teams_assign(req_int(b.get("student_id"), "student_id", default=0), req_int(b.get("team_id"), "team_id", default=0))
+        elif name == "unlock":
+            k.unlock(req_int(b.get("student_id"), "student_id", default=0))
+        elif name == "lock_on_paste":
+            k.s.set("lock_on_paste", 1 if b.get("on") else 0)
+        elif name == "close_clients":
+            # все панели сохранят работу и закроют VS Code курса на компьютерах учеников
+            with k.s.lock:
+                k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
+                k.s.log(None, "close_clients")
+        elif name == "restart_student":
+            # то же самое, но только на компьютере одного ученика
+            sid = req_int(b.get("student_id"), "student_id", default=0)
+            if not k.student(sid):
+                raise ApiError(404, "Нет такого ученика")
+            with k.s.lock:
+                per = dict(k.s.get("restart_students") or {})
+                per[str(sid)] = int(per.get(str(sid), 0)) + 1
+                k.s.set("restart_students", per)
+                k.s.log(sid, "restart_student")
+        elif name == "toggle_focus":
+            k.toggle_student_flag("focus_all", "focus_students", b.get("student_id"), bool(b.get("on", True)), "focus_mode")
+        elif name == "toggle_block_sites":
+            k.toggle_student_flag("block_sites_all", "block_sites_students", b.get("student_id"), bool(b.get("on", True)), "block_sites")
+        elif name == "ai/config":
+            try:
+                k.ai.save_config(b)
+            except kurs_ai.AIError as e:
+                raise ApiError(400, str(e)) from None
+        elif name == "ai/mode":
+            try:
+                k.ai.set_mode(str(b.get("mode")))
+            except kurs_ai.AIError as e:
+                raise ApiError(400, str(e)) from None
+        elif name == "ai/clear":
+            k.s.ex("DELETE FROM ai_log")
+        else:
+            raise ApiError(404, "Нет такой команды")
+        return out
 
     def teacher_login_ok(self) -> None:
         tok = secrets.token_hex(24)
