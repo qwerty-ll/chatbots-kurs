@@ -131,7 +131,32 @@ def tool_files():
     return out
 
 
-def load_tools(cards=None):
+def load_extra_tools(module, author, tools, functions, owners, extras):
+    entries = getattr(module, "EXTRA_TOOLS", {})
+    if not isinstance(entries, dict):
+        print(f"  ⚠ {author}: EXTRA_TOOLS должен быть словарём")
+        return
+    for title, entry in entries.items():
+        if (not isinstance(title, str) or not title.strip()
+                or not isinstance(entry, tuple) or len(entry) != 2
+                or not callable(entry[0]) or not isinstance(entry[1], str)
+                or not entry[1].strip()):
+            print(f"  ⚠ {author}: у инструмента нужны название, функция и описание")
+            continue
+        name = f"course_extra_{len(extras) + 1}"
+        while name in owners:
+            name += "_"
+        fn, description = entry
+        title = title.strip()
+        tools.append(make_tool(name, f"{title}. {description.strip()}"))
+        functions[name] = lambda args, fn=fn: card_answer(fn)
+        owners[name] = author
+        extras[name] = title
+
+
+def load_tools(cards=None, extras=None):
+    if extras is None:
+        extras = {}
     tools, functions, owners = [], {}, {}
     for n, (author, path) in enumerate(tool_files()):
         with open(path, encoding="utf-8") as f:
@@ -150,21 +175,22 @@ def load_tools(cards=None):
         except Exception as error:
             print(f"  ⚠ {author}: ошибка в файле ({type(error).__name__}: {error}) — инструменты пока выключены")
             continue
+        load_extra_tools(module, author, tools, functions, owners, extras)
         if hasattr(module, "CARD_TITLE"):
             title = module.CARD_TITLE
             get_card = getattr(module, "get_card", None)
             if not isinstance(title, str) or not title.strip() or not callable(get_card):
                 print(f"  ⏳ {author}: заполни название и текст карточки в своём файле")
-                continue
-            name = f"course_card_{n + 1}"
-            while name in owners:
-                name += "_"
-            title = title.strip()
-            tools.append(make_tool(name, f'Выдать карточку команды «{title}» по просьбе пользователя.'))
-            functions[name] = lambda args, fn=get_card: card_answer(fn)
-            owners[name] = author
-            if cards is not None:
-                cards[name] = title
+            else:
+                name = f"course_card_{n + 1}"
+                while name in owners:
+                    name += "_"
+                title = title.strip()
+                tools.append(make_tool(name, f'Выдать карточку команды «{title}» по просьбе пользователя.'))
+                functions[name] = lambda args, fn=get_card: card_answer(fn)
+                owners[name] = author
+                if cards is not None:
+                    cards[name] = title
             continue
         their_tools = getattr(module, "TOOLS", [])
         their_functions = getattr(module, "FUNCTIONS", {})
@@ -216,10 +242,12 @@ def main():
                "Говоришь по-русски, коротко. Если подходит инструмент — используй его, а не выдумывай.")
     print(f"🤖 {bot_name} — бот команды «{team}»")
     cards = {}
-    tools, functions, owners = load_tools(cards)
-    show_tools(owners, cards)
+    extras = {}
+    tools, functions, owners = load_tools(cards, extras)
+    tool_numbers = {str(i): name for i, name in enumerate(extras, 1)}
+    show_tools(owners, {**cards, **extras})
     history = load_history()
-    print(f"{bot_name} на связи! /demo — показать карточки, /tools — список, /exit — выйти.")
+    print(f"{bot_name} на связи! /demo — показать карточки, /tools — список команд, /exit — выйти.")
     if history:
         print(f"(помню наш прошлый разговор: {len(history)} реплик)")
     while True:
@@ -231,7 +259,16 @@ def main():
         if text.lower() == "/exit":
             break
         if text.lower() == "/tools":
-            show_tools(owners, cards)
+            show_tools(owners, {**cards, **extras})
+            for number, name in tool_numbers.items():
+                print(f"  /tool {number} — {extras[name]} ({owners[name]})")
+            continue
+        if text.lower() == "/tool" or text.lower().startswith("/tool "):
+            name = tool_numbers.get(text[5:].strip())
+            if name is None:
+                print("Введи /tools, чтобы увидеть номера инструментов.")
+            else:
+                print(f"{extras[name]}: {run_tool(functions, name, {})}")
             continue
         if text.lower() == "/demo":
             if not cards:
