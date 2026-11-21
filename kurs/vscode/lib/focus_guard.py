@@ -87,7 +87,8 @@ LINUX_BROWSER_EXES = {
 LINUX_HARD_BLOCK_EXES = LINUX_BROWSER_EXES | {
     "telegram-desktop", "telegram-deskto", "telegram", "discord", "steam",
     "steamwebhelper", "minetest", "luanti", "supertux", "supertux2",
-    "supertuxkart", "tlauncher", "minecraft-launcher", "minecraft-launc",
+    "supertuxkart", "tlauncher", "minecraft", "minecraft-launcher", "minecraft-launc",
+    "mcpelauncher-client", "mcpelauncher-ui", "modrinth-app", "gdlauncher-carbon",
     "klauncher", "prismlauncher", "polymc", "multimc", "gdlauncher",
     "atlauncher", "lutris", "heroic", "bottles", "robloxplayerbeta", "sober",
 }
@@ -105,6 +106,12 @@ JAVA_GAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+MINECRAFT_FLATPAK_RE = re.compile(
+    r"\brun\b.*\b(?:com\.mojang\.Minecraft|org\.prismlauncher\.PrismLauncher|"
+    r"io\.mrarm\.mcpelauncher|com\.modrinth\.ModrinthApp)(?=\s|$)",
+    re.IGNORECASE,
+)
+
 WINE_GAME_RE = re.compile(
     r"(?:roblox|minecraft|tlauncher|steam|genshin|brawl|cs2|csgo|dota|valorant)",
     re.IGNORECASE,
@@ -116,7 +123,7 @@ WIN_BROWSER_EXES = {
 }
 
 WIN_HARD_BLOCK_EXES = WIN_BROWSER_EXES | {
-    "minecraft.exe", "minecraftlauncher.exe", "tlauncher.exe",
+    "minecraft.exe", "minecraft.windows.exe", "minecraftlauncher.exe", "tlauncher.exe",
     "telegram.exe", "discord.exe", "steam.exe", "robloxplayerbeta.exe",
 }
 
@@ -161,6 +168,11 @@ def _linux_read_procs() -> list[tuple[int, str, str, str]]:
             if not parts:
                 continue
             exe_base = os.path.basename(parts[0]).lower()
+            try:
+                process_exe = os.path.basename(os.readlink(f"{pdir}/exe")).lower()
+                exe_base = process_exe.removesuffix(" (deleted)") or exe_base
+            except OSError:
+                pass
             cmd_str = " ".join(parts)
             # Никогда не трогаем Python курса, сам редактор VS Code и терминал
             if exe_base in ("python", "python3") or exe_base.startswith(("python3.", "code", "codium")):
@@ -194,7 +206,9 @@ def _linux_kill_games_and_browsers(procs: list[tuple[int, str, str, str]]) -> No
             should_kill = True
         elif exe_base.startswith("chromium") or exe_base.startswith("yandex") or exe_base.startswith("firefox"):
             should_kill = True
-        elif exe_base in ("java", "javaw") and JAVA_GAME_RE.search(cmd_str):
+        elif {"java", "javaw"}.intersection((exe_base, comm)) and JAVA_GAME_RE.search(cmd_str):
+            should_kill = True
+        elif exe_base == "flatpak" and MINECRAFT_FLATPAK_RE.search(cmd_str):
             should_kill = True
         elif exe_base in ("wine", "wine64", "wine-preloader", "wine64-preloader") and WINE_GAME_RE.search(cmd_str):
             should_kill = True
