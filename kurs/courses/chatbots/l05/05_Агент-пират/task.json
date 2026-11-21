@@ -1,10 +1,10 @@
 {
   "id": "tools-05",
   "lesson": 5,
-  "num": 5,
+  "num": 6,
   "title": "Агент-пират: переводчик",
   "level": 2,
-  "step": 4,
+  "step": 6,
   "minutes": 10,
   "topics": [
     "инструмент с текстом",
@@ -98,5 +98,6 @@
     "make_tool(\"to_pirate\", \"Перевести фразу на пиратский язык.\", {\"text\": {\"type\": \"string\", \"description\": \"Фраза\"}}, [\"text\"])",
     "FUNCTIONS = {\"to_pirate\": lambda args: to_pirate(args[\"text\"])}"
   ],
-  "starter": "empty"
+  "starter": "empty",
+  "optional": true
 }

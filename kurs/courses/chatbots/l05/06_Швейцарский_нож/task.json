@@ -1,10 +1,10 @@
 {
   "id": "tools-06",
   "lesson": 5,
-  "num": 6,
+  "num": 7,
   "title": "Агент «Швейцарский нож»",
   "level": 3,
-  "step": 4,
+  "step": 6,
   "minutes": 15,
   "topics": [
     "несколько инструментов",
@@ -126,5 +126,6 @@
     "calculate описывается с тремя параметрами: a и b — \"number\", op — \"string\".",
     "FUNCTIONS = {\n    \"coin_flip\": lambda args: coin_flip(),\n    \"roll_dice\": lambda args: roll_dice(args.get(\"sides\", 6)),\n    \"calculate\": lambda args: calculate(args[\"a\"], args[\"op\"], args[\"b\"]),\n}"
   ],
-  "starter": "empty"
+  "starter": "empty",
+  "optional": true
 }

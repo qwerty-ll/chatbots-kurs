@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import ast
+import io
 import importlib.util
 import sys
+import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHECKER_DIR = REPO_ROOT / "kurs" / "checker"
@@ -149,6 +153,34 @@ class TestNashBotSandbox(unittest.TestCase):
             'FUNCTIONS = {"roll": roll}\n'
         )
         self.assertIsNone(self.bot_mod.problem_in(code))
+
+    def test_team_demo_uses_cards_without_ai(self) -> None:
+        with tempfile.TemporaryDirectory() as work:
+            folder = Path(work)
+            first = folder / "first.py"
+            second = folder / "second.py"
+            unfinished = folder / "unfinished.py"
+            template = 'CARD_TITLE = "Миссия"\ndef get_card():\n    return {}\n'
+            first.write_text(template.format('"Найди круг."'), encoding="utf-8")
+            second.write_text(template.format('"Найди квадрат."'), encoding="utf-8")
+            unfinished.write_text(template.format('""'), encoding="utf-8")
+            files = [("Аня", first), ("Коля", second), ("Ира", unfinished)]
+            cards = {}
+            with patch.object(self.bot_mod, "tool_files", return_value=files):
+                _, functions, _ = self.bot_mod.load_tools(cards)
+                self.assertEqual(list(cards.values()), ["Миссия", "Миссия", "Миссия"])
+                self.assertEqual(functions[next(iter(cards))]({}), "Найди круг.")
+                output = io.StringIO()
+                with (
+                    patch.object(self.bot_mod, "load_card", return_value={}),
+                    patch.object(self.bot_mod, "load_history", return_value=[]),
+                    patch.object(self.bot_mod, "agent_answer", side_effect=AssertionError("Демо должно работать без ИИ")),
+                    patch("builtins.input", side_effect=["/demo", "/exit"]),
+                    redirect_stdout(output),
+                ):
+                    self.bot_mod.main()
+                self.assertIn("Миссия (Аня): Найди круг.", output.getvalue())
+                self.assertIn("Миссия (Коля): Найди квадрат.", output.getvalue())
 
     def test_has_blanks_tokenize(self) -> None:
         self.assertFalse(self.bot_mod.has_blanks('# ___\nx = "___"\n'))

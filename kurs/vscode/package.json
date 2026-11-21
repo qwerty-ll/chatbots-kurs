@@ -2,7 +2,7 @@
   "name": "kurs-panel",
   "displayName": "Курс Python",
   "description": "Панель ученика: задания, проверка кода, команды и голосования.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "publisher": "kurs",
   "license": "UNLICENSED",
   "private": true,

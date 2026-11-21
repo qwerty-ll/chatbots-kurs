@@ -17,7 +17,7 @@ import os
 import re
 import tokenize
 
-from agent import agent_answer
+from agent import agent_answer, card_answer, make_tool, run_tool
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CARD_FILE = os.path.join(HERE, "команда.json")
@@ -131,7 +131,7 @@ def tool_files():
     return out
 
 
-def load_tools():
+def load_tools(cards=None):
     tools, functions, owners = [], {}, {}
     for n, (author, path) in enumerate(tool_files()):
         with open(path, encoding="utf-8") as f:
@@ -149,6 +149,22 @@ def load_tools():
             spec.loader.exec_module(module)
         except Exception as error:
             print(f"  ⚠ {author}: ошибка в файле ({type(error).__name__}: {error}) — инструменты пока выключены")
+            continue
+        if hasattr(module, "CARD_TITLE"):
+            title = module.CARD_TITLE
+            get_card = getattr(module, "get_card", None)
+            if not isinstance(title, str) or not title.strip() or not callable(get_card):
+                print(f"  ⏳ {author}: заполни название и текст карточки в своём файле")
+                continue
+            name = f"course_card_{n + 1}"
+            while name in owners:
+                name += "_"
+            title = title.strip()
+            tools.append(make_tool(name, f'Выдать карточку команды «{title}» по просьбе пользователя.'))
+            functions[name] = lambda args, fn=get_card: card_answer(fn)
+            owners[name] = author
+            if cards is not None:
+                cards[name] = title
             continue
         their_tools = getattr(module, "TOOLS", [])
         their_functions = getattr(module, "FUNCTIONS", {})
@@ -180,13 +196,13 @@ def save_history(history):
         json.dump(clean[-MAX_HISTORY:], f, ensure_ascii=False, indent=2)
 
 
-def show_tools(owners):
+def show_tools(owners, cards):
     if not owners:
         print("  Инструментов пока нет: напишите их в Мои_инструменты.py и сохраните (Ctrl+S).")
         return
     by_author = {}
     for name, author in owners.items():
-        by_author.setdefault(author, []).append(name)
+        by_author.setdefault(author, []).append(cards.get(name, name))
     for author, names in by_author.items():
         print(f"  🔧 {author}: {', '.join(names)}")
 
@@ -199,10 +215,11 @@ def main():
                f"{('Тема: ' + card['topic'] + '. ') if card.get('topic') else ''}"
                "Говоришь по-русски, коротко. Если подходит инструмент — используй его, а не выдумывай.")
     print(f"🤖 {bot_name} — бот команды «{team}»")
-    tools, functions, owners = load_tools()
-    show_tools(owners)
+    cards = {}
+    tools, functions, owners = load_tools(cards)
+    show_tools(owners, cards)
     history = load_history()
-    print(f"{bot_name} на связи! /tools — инструменты, /reset — забыть разговор, /exit — выйти.")
+    print(f"{bot_name} на связи! /demo — показать карточки, /tools — список, /exit — выйти.")
     if history:
         print(f"(помню наш прошлый разговор: {len(history)} реплик)")
     while True:
@@ -214,7 +231,13 @@ def main():
         if text.lower() == "/exit":
             break
         if text.lower() == "/tools":
-            show_tools(owners)
+            show_tools(owners, cards)
+            continue
+        if text.lower() == "/demo":
+            if not cards:
+                print("Сначала сохрани хотя бы одну карточку в Мои_инструменты.py и перезапусти бота.")
+            for name, title in cards.items():
+                print(f"{title} ({owners[name]}): {run_tool(functions, name, {})}")
             continue
         if text.lower() == "/reset":
             history = []

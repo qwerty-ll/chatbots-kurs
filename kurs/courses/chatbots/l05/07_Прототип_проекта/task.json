@@ -1,10 +1,10 @@
 {
   "id": "tools-07",
   "lesson": 5,
-  "num": 7,
+  "num": 8,
   "title": "Прототип моего проекта",
   "level": 3,
-  "step": 4,
+  "step": 6,
   "minutes": 15,
   "topics": [
     "свои инструменты",
@@ -95,5 +95,6 @@
     "Сначала характер: PERSONA = \"Ты Шеф — весёлый повар. Отвечаешь коротко...\". Потом первый инструмент: def compliment(): return \"Ты молодец!\".",
     "Инструмент — три вещи с одним именем: def compliment(): ..., make_tool(\"compliment\", \"Сказать комплимент\") в TOOLS и \"compliment\": lambda args: compliment() в FUNCTIONS.",
     "Инструмент с параметром: def advice(topic): ..., make_tool(\"advice\", \"Дать совет по теме\", {\"topic\": {\"type\": \"string\", \"description\": \"Тема\"}}, [\"topic\"]), \"advice\": lambda args: advice(args[\"topic\"])."
-  ]
+  ],
+  "optional": true
 }

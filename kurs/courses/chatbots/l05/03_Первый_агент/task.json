@@ -1,10 +1,10 @@
 {
   "id": "tools-03",
   "lesson": 5,
-  "num": 3,
+  "num": 4,
   "title": "Первый агент: монетка",
   "level": 2,
-  "step": 3,
+  "step": 6,
   "minutes": 10,
   "topics": [
     "make_tool",
@@ -100,5 +100,6 @@
     "messages = [{\"role\": \"system\", \"content\": \"Ты помощник...\"}, {\"role\": \"user\", \"content\": input(\"Ты: \")}]",
     "TOOLS = [make_tool(\"coin_flip\", \"Подбросить монетку: орёл или решка.\")]\nFUNCTIONS = {\"coin_flip\": lambda args: coin_flip()}\nprint(\"Агент:\", agent_answer(messages, TOOLS, FUNCTIONS))"
   ],
-  "starter": "empty"
+  "starter": "empty",
+  "optional": true
 }

@@ -1,10 +1,10 @@
 {
   "id": "tools-04",
   "lesson": 5,
-  "num": 4,
+  "num": 5,
   "title": "Инструмент с параметром: кубик",
   "level": 2,
-  "step": 3,
+  "step": 6,
   "minutes": 10,
   "topics": [
     "параметры инструмента"
@@ -114,5 +114,6 @@
     "Третий аргумент make_tool — словарь параметров: {\"sides\": {\"type\": \"integer\", \"description\": \"Число граней\"}}.",
     "FUNCTIONS = {\"roll_dice\": lambda args: roll_dice(args.get(\"sides\", 6))}"
   ],
-  "starter": "empty"
+  "starter": "empty",
+  "optional": true
 }

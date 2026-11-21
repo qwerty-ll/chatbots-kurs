@@ -382,7 +382,7 @@
   const isOpen = (id) => view.state.open_tasks.includes(id);
 
   function nextTask(exclude = null) {
-    return view.lesson.tasks.find((t) => t.id !== exclude && isOpen(t.id) && statusOf(t.id) !== "passed") || null;
+    return view.lesson.tasks.find((t) => !t.optional && t.id !== exclude && isOpen(t.id) && statusOf(t.id) !== "passed") || null;
   }
 
   function inside() {
@@ -398,7 +398,8 @@
     menu.push(["help", "Помощь"]);
     const inSupport = SUPPORT_TABS.includes(ui.tab) || (ui.tab === "games" && playOn());
     if (!inSupport && !menu.some(([id]) => id === ui.tab)) ui.tab = "tasks";
-    const progress = tasks.length ? ` · ${tasks.filter((task) => statusOf(task.id) === "passed").length}/${tasks.length} готово` : "";
+    const required = tasks.filter((task) => !task.optional);
+    const progress = required.length ? ` · ${required.filter((task) => statusOf(task.id) === "passed").length}/${required.length} готово` : "";
     out.push(h("div", { class: "top" },
       h("div", { class: "top-row" },
         h("span", { class: "avatar" }, (view.me.name || "?")[0]),
@@ -535,6 +536,7 @@
         h("button", { class: "secondary", onclick: () => go({ tab: "theory" }) }, "Открыть учебник")));
     }
     if (lesson.teams) out.push(h("h2", { class: "task-list-heading" }, "Задания"));
+    const optional = [];
     for (const task of tasks) {
       const status = statusOf(task.id);
       const open = isOpen(task.id) || Boolean(status);
@@ -542,15 +544,16 @@
       const label = status === "passed" ? "Готово" : status === "failed" ? "Исправить" : status === "started" ? "Начато"
         : !open ? "Закрыто" : suggested ? "Начни здесь" : "";
       const style = status === "passed" || status === "failed" ? status : suggested ? "next" : status || "";
-      out.push(h("button", { id: "task-" + task.id, class: "task-card" + (suggested ? " next" : ""),
+      (task.optional ? optional : out).push(h("button", { id: "task-" + task.id, class: "task-card" + (suggested ? " next" : ""),
         disabled: !open, onclick: () => openTask(task) },
         h("span", { class: "num " + (status || (open ? "" : "locked")), "aria-hidden": "true" }, status === "passed" ? "✓" : task.num),
         h("span", { class: "t" }, h("b", {}, task.title), label ? h("small", { class: "task-state " + style }, label) : null),
         open ? h("span", { class: "task-arrow", "aria-hidden": "true" }, "→") : null));
     }
+    if (optional.length) out.push(h("section", { class: "card" }, details("advanced-tasks", "Дополнительные задания", optional)));
     if (lesson.project_idea && !lesson.teams) {
       out.push(h("section", { class: "card" }, h("h2", {}, "Мой проект"),
-        h("p", {}, view.idea?.title || "Придумай, кому и чем может помочь твой бот."),
+        h("p", {}, view.idea?.title || (lesson.card_project ? "Придумай тему бота и одну карточку для него." : "Придумай, кому и чем может помочь твой бот.")),
         h("button", { class: "secondary", onclick: () => go({ tab: "idea" }) }, view.idea ? "Посмотреть идею" : "Записать идею")));
     }
     return out;
@@ -577,12 +580,14 @@
     const dirty = ["title", "about", "tools"].some((k) => val(k) !== (saved[k] || ""));
     const set = (k) => (v) => { ui.ideaDraft[k] = v; };
     const body = [
-      compact ? null : h("p", { class: "muted" }, "На следующем занятии вы соберёте бота-агента командой. Запиши идею — учитель увидит идеи всех, а команда выберет одну."),
+      compact ? null : h("p", { class: "muted" }, view.lesson.card_project
+        ? "Придумай тему для бота команды и одну карточку: миссию, загадку или факт."
+        : "На следующем занятии вы соберёте бота-агента командой. Запиши идею — учитель увидит идеи всех, а команда выберет одну."),
       field("idea-title", "Кто твой бот", val("title"), set("title"), { placeholder: "Шеф Бонапетти — весёлый бот-кулинар", max: 80 }),
       field("idea-about", "Что он делает для человека", val("about"), set("about"), { multi: true, max: 400, placeholder: "Подбирает рецепт по продуктам, шутит про еду, подсказывает, как готовить." }),
-      field("idea-tools", "Инструменты (2–3): что точно сделает программа", val("tools"), set("tools"), { multi: true, max: 400,
-        placeholder: "find_recipe(product) — блюдо по продукту\nconvert(grams) — граммы в стаканы\ntip_of_day() — совет дня",
-        hint: "Инструмент — то, что программа сделает точнее нейросети: посчитает, выберет случайно, найдёт в своём списке." }),
+      field("idea-tools", view.lesson.card_project ? "Пример одной карточки" : "Инструменты (2–3): что точно сделает программа", val("tools"), set("tools"), { multi: true, max: 400,
+        placeholder: view.lesson.card_project ? "Миссия: за 30 секунд найди три круглых предмета." : "find_recipe(product) — блюдо по продукту\nconvert(grams) — граммы в стаканы\ntip_of_day() — совет дня",
+        hint: view.lesson.card_project ? "" : "Инструмент — то, что программа сделает точнее нейросети: посчитает, выберет случайно, найдёт в своём списке." }),
       h("div", { class: "row", style: "margin-top:8px" },
         h("button", { onclick: () => { send("ideaSave", { idea: { title: val("title"), about: val("about"), tools: val("tools") } }); ui.ideaDraft = {}; save(); } },
           saved.updated && !dirty ? "Сохранено ✓" : "💾 Сохранить идею"),
@@ -817,6 +822,7 @@
   }
 
   function myTeam(d) {
+    const cards = view.lesson.card_project;
     const t = d.team;
     const cfg = d.cfg;
     const out = [];
@@ -838,8 +844,8 @@
     const val = (k) => (drafts[dkey(k)] !== undefined ? drafts[dkey(k)] : t[k] || "");
     const set = (k) => (v) => { drafts[dkey(k)] = v; };
     const dirty = ["topic", "bot_name", "persona"].some((k) => val(k) !== (t[k] || ""));
-    out.push(h("div", { class: "card" }, h("h2", {}, "🤖 Наш бот"),
-      !t.bot_name ? h("p", { class: "muted small-text" }, "Договоритесь, чью идею берёте, и впишите имя и характер бота. Печатает кто-то один.") : null,
+    out.push(h("div", { class: "card" }, h("h2", {}, "Имя и тема бота"),
+      !t.bot_name ? h("p", { class: "muted small-text" }, "Выберите тему и имя бота. Один участник заполняет общую карточку.") : null,
       field("team-topic", "Тема проекта", val("topic"), set("topic"), { placeholder: "Бот-кулинар: рецепты по продуктам", max: 120 }),
       field("team-bot", "Имя бота", val("bot_name"), set("bot_name"), { placeholder: "Шеф Бонапетти", max: 40 }),
       field("team-persona", "Характер: как бот говорит", val("persona"), set("persona"), { multi: true, max: 400, placeholder: "Весёлый повар, отвечает коротко и с шутками про еду." }),
@@ -856,15 +862,17 @@
     // кто что делает: каждый пишет только свою строку
     const plan = ui.planDraft !== null && ui.planDraft !== undefined ? ui.planDraft : me.plan || "";
     const rows = t.members.map((m) => {
-      const mark = TASK_MARK[m.status] || [m.tools && m.tools.length ? "файл сохранён" : "ещё нет файла", ""];
+      const mark = cards && m.status === "passed" ? ["Карточка проверена", "passed"]
+        : TASK_MARK[m.status] || [m.card_title || m.tools?.length ? "файл сохранён" : "ещё нет файла", ""];
       return h("div", { class: "player", style: "align-items:flex-start" },
         h("div", { class: "grow" }, h("b", {}, m.name + (m.me ? " (ты)" : "")),
           h("div", { class: "small-text" }, m.me ? null : (m.plan || h("span", { class: "muted" }, "ещё не написал(а), что делает"))),
+          m.card_title ? h("div", { class: "small-text" }, m.card_title) : null,
           m.tools && m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (dups.has(x) ? " bad" : ""), title: dups.has(x) ? "Такое имя уже есть у товарища — переименуйте" : "" }, "🔧 " + x))) : null),
         h("span", { class: "status " + mark[1] }, mark[0]));
     });
-    out.push(h("div", { class: "card" }, h("h2", {}, "📝 Кто что делает"),
-      field("team-plan", "Мои инструменты (имена и что делают)", plan, (v) => { ui.planDraft = v; }, { max: 200, placeholder: "find_recipe — блюдо по продукту, tip_of_day — совет дня" }),
+    out.push(h("div", { class: "card" }, h("h2", {}, "Кто что делает"),
+      field("team-plan", cards ? "Мой вклад" : "Мои инструменты (имена и что делают)", plan, (v) => { ui.planDraft = v; }, { max: 200, placeholder: cards ? "Пишу загадку или проверяю демо" : "find_recipe — блюдо по продукту, tip_of_day — совет дня" }),
       h("div", { class: "row", style: "margin:6px 0 10px" },
         h("button", { class: "secondary small", onclick: () => { send("teamPlan", { plan: ui.planDraft !== null && ui.planDraft !== undefined ? ui.planDraft : me.plan || "" }); ui.planDraft = null; save(); } }, "Записать")),
       rows,
@@ -874,10 +882,10 @@
     const task = teamTask();
     out.push(h("div", { class: "card" }, h("h2", {}, "📂 Файлы команды"),
       h("div", { class: "steps" },
-        h("div", { class: "step now" }, h("span", { class: "n" }, "1"), h("div", { class: "body" }, h("b", {}, "Мои_инструменты.py — пишешь только ты"),
-          h("span", { class: "muted small-text" }, "Сохранил (Ctrl+S) — через несколько секунд файл у товарищей."),
+        h("div", { class: "step now" }, h("span", { class: "n" }, "1"), h("div", { class: "body" }, h("b", {}, cards ? "Добавь карточку" : "Мои_инструменты.py — пишешь только ты"),
+          h("span", { class: "muted small-text" }, cards ? "Заполни название и текст. Сохрани файл, чтобы команда увидела твою карточку." : "Сохранил (Ctrl+S) — через несколько секунд файл у товарищей."),
           task ? h("div", { class: "row", style: "margin-top:4px;gap:6px" },
-            h("button", { class: "small", onclick: () => openTask(task) }, view.files[task.id] ? "Открыть задание" : "Начать задание"),
+            h("button", { class: "small", onclick: () => openTask(task) }, cards ? "Открыть мою карточку" : view.files[task.id] ? "Открыть задание" : "Начать задание"),
             h("button", { class: "ghost small", disabled: ui.toolGenerating, onclick: () => { ui.toolGenerating = true; render(); send("generateFirstTool", { taskId: task.id }); } },
               ui.toolGenerating ? "⏳ ИИ пишет…" : "✨ 1-й инструмент от ИИ")) : null)),
         h("div", { class: "step now" }, h("span", { class: "n" }, "2"), h("div", { class: "body" }, h("b", {}, "Папка «Команда» — файлы товарищей"),
@@ -886,10 +894,10 @@
             h("button", { class: "secondary small", onclick: () => send("openTeamFile", { name: f.name }) }, "📄 " + f.author)))
             : h("div", { class: "muted small-text" }, "Пока никто из товарищей не сохранил свой файл."))),
         h("div", { class: "step now" }, h("span", { class: "n" }, "3"), h("div", { class: "body" }, h("b", {}, "Наш_бот.py — бот всей команды"),
-          h("span", { class: "muted small-text" }, "Сам собирает инструменты всех. Ошибка у кого-то — его инструменты выключатся, остальные работают."),
+          h("span", { class: "muted small-text" }, cards ? "Введи /demo в консоли. Хватит одной рабочей карточки, даже если ИИ недоступен." : "Сам собирает инструменты всех. Ошибка у кого-то — его инструменты выключатся, остальные работают."),
           h("div", { style: "margin-top:4px" }, h("button", { class: "ok small", onclick: () => send("runTeamBot") }, "▶ Запустить бота команды")))))));
 
-    out.push(h("div", { class: "card" }, details("team-rules", "🤝 Как не мешать друг другу",
+    if (!cards) out.push(h("div", { class: "card" }, details("team-rules", "🤝 Как не мешать друг другу",
       h("ol", {},
         h("li", {}, "Каждый пишет только свой файл Мои_инструменты.py. Чужие файлы — только для чтения."),
         h("li", {}, "Сначала запиши в «Кто что делает» имена своих инструментов: одинаковых имён в команде быть не должно."),
@@ -924,7 +932,7 @@
       h("div", { class: "statement", html: md(t.statement) }),
       t.dialog?.length ? details("example-" + id, "Пример диалога", chat(t.dialog))
         : t.example ? details("example-" + id, "Пример запуска", h("pre", {}, t.example)) : null));
-    if (t.id === "team-01" || t.file === "Мои_инструменты.py") {
+    if (!t.card && (t.id === "team-01" || t.file === "Мои_инструменты.py")) {
       out.push(h("section", { class: "card" }, details("team-ai-" + id, "Нужен пример инструмента?",
         h("p", {}, "ИИ добавит первый инструмент без параметров в твой файл. Второй, с параметром, напиши сам."),
         h("button", { class: "secondary", disabled: ui.toolGenerating, onclick: () => {

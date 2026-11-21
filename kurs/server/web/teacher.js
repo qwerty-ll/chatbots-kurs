@@ -344,7 +344,7 @@ async function refresh() {
 const currentLesson = () => data.lessons.find((l) => l.lesson === data.state.lesson) || data.lessons[0];
 function openSlides() {
   const lesson = data.state.running ? data.state.lesson : pick.lesson;
-  const anchor = data.course.id === "games" && lesson ? "#l" + lesson + "-divider" : "";
+  const anchor = lesson ? "#l" + lesson + "-divider" : "";
   window.open("/presentation" + anchor, "_blank");
 }
 const currentGroup = () => data.groups.find((g) => g.id === data.state.group_id);
@@ -1208,7 +1208,7 @@ function projectTab() {
       !game && t.members.length < cfg.min ? h("p", { class: "small", style: "color:var(--bad)" }, `Мало участников: нужно минимум ${cfg.min}`) : null);
     if (!t.members.length) card.append(h("p", { class: "muted small" }, "Пока никого."));
     for (const m of t.members) {
-      const st = mark[m.status] || [m.has_file ? "файл сохранён" : "нет файла", ""];
+      const st = mark[m.status] || [m.card_title || m.has_file ? "файл сохранён" : "нет файла", ""];
       card.append(h("div", { class: "member" },
         h("div", { class: "row" },
           h("span", { class: "dot" + (m.online ? " on" : "") }),
@@ -1217,6 +1217,7 @@ function projectTab() {
           h("span", { class: "actions" }, assignSelect(m.id, t.id, "перевести…"),
             h("button", { class: "ghost small", title: "Убрать из команды: сам вернуться не сможет", onclick: () => { if (confirm(`Убрать ${m.name} из команды «${t.name}»? Вернуться в неё сам ученик не сможет — только вы его переведёте.`)) act("teams/kick", { student_id: m.id }); } }, "Выгнать"))),
         m.plan ? h("div", { class: "small muted" }, "📝 " + m.plan) : null,
+        m.card_title ? h("div", { class: "small" }, "Карточка: " + m.card_title) : null,
         !game && m.tools.length ? h("div", {}, m.tools.map((x) => h("span", { class: "chip" + (owners[x].length > 1 ? " bad" : ""), title: owners[x].length > 1 ? "Такое же имя у товарища" : "" }, "🔧 " + x))) : null));
     }
     if (t.banned.length) {

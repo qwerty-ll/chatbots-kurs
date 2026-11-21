@@ -865,7 +865,7 @@ class Kurs {
       case "playLeave": return this.playAct("leave", {});
       case "aiChat": return this.handleAiChat(m);
       case "ideaSave": return this.saveIdea(m.idea);
-      case "teamJoin": return this.teamAct("join", { team_id: m.team }, this.v.lesson?.team_project ? "Ты в команде! Запиши свою роль." : "Ты в команде! Открой задание «Мои инструменты».");
+      case "teamJoin": return this.teamAct("join", { team_id: m.team }, this.v.lesson?.team_project ? "Ты в команде! Запиши свою роль." : this.v.lesson?.card_project ? "Ты в команде! Открой свою карточку." : "Ты в команде! Открой задание «Мои инструменты».");
       case "teamLeave": return this.teamAct("leave", {}, "Ты вышел из команды.");
       case "teamCard": return this.teamAct("card", m.card, "Карточка команды сохранена — товарищи увидят её через пару секунд.");
       case "teamPlan": return this.teamAct("plan", { plan: m.plan }, "Роль сохранена.", m.key

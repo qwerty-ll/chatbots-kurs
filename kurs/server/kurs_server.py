@@ -325,42 +325,14 @@ def training_template(lesson: dict, course: str = "chatbots") -> str:
             'fact = ask("Сколько океанов на Земле?", temperature=0.1)',
             'print("Точный факт:", fact)',
         ]
-    elif n == 5:
+    elif n in (5, 6):
         body = [
-            "# 1. Функция: def создаёт, return отдаёт результат:",
-            'import random',
+            "# Придумай свою загадку, факт или короткое задание.",
+            'def get_card():',
+            '    return "Найди три предмета на букву К."',
             "",
             "",
-            'def roll_dice(sides=6):',
-            '    return random.randint(1, sides)',
-            "",
-            "",
-            'print("Кубик:", roll_dice(), "· кубик на 20:", roll_dice(20))',
-            "",
-            "# 2. Инструмент = функция + описание для нейросети + строчка в словаре функций:",
-            'from agent import agent_answer, make_tool',
-            "",
-            'TOOLS = [make_tool("roll_dice", "Бросить игральный кубик.",',
-            '                   {"sides": {"type": "integer", "description": "Число граней"}})]',
-            'FUNCTIONS = {"roll_dice": lambda args: roll_dice(args.get("sides", 6))}',
-            "",
-            "# 3. Агент сам решает, когда звать инструмент (строки 🔧 — вызовы):",
-            'messages = [{"role": "user", "content": "Брось кубик на 12 граней"}]',
-            'print("Агент:", agent_answer(messages, TOOLS, FUNCTIONS))',
-        ]
-    elif n == 6:
-        body = [
-            "# Здесь можно пробовать идеи для своих инструментов, не трогая Мои_инструменты.py.",
-            'import random',
-            "",
-            "",
-            'def fact():',
-            '    return random.choice(["У осьминога три сердца.", "Мёд не портится тысячи лет."])',
-            "",
-            "",
-            'print(fact())',
-            "",
-            "# Весь бот команды — файл Наш_бот.py: он сам соберёт инструменты всех участников.",
+            'print(get_card())',
         ]
     else:
         body = [
@@ -623,6 +595,23 @@ def req_int(val, name: str = "id", default: int | None = None) -> int:
         raise ApiError(400, f"Неверное значение параметра {name}") from None
 
 
+def card_title(tree: ast.Module) -> str:
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "CARD_TITLE" for t in node.targets):
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                return node.value.value.strip()[:120]
+    return ""
+
+
+def saved_card_title(code: str) -> str:
+    if "CARD_TITLE" not in code:
+        return ""
+    try:
+        return card_title(ast.parse(code))
+    except (SyntaxError, ValueError):
+        return ""
+
+
 def parse_student_tools(code: str) -> dict:
     """Глубокий парсинг файла «Мои_инструменты.py» ученика (функции, параметры, docstring, make_tool)."""
     has_blanks = bool(re.search(r"\b___\b|[\"']___[\"']", code or ""))
@@ -675,6 +664,10 @@ def parse_student_tools(code: str) -> dict:
                             "description": t_desc
                         })
 
+    title = card_title(tree)
+    if title:
+        result["tool_names"].append(title)
+        result["tools"].append({"name": title, "description": "Карточка бота"})
     return result
 
 
@@ -1029,6 +1022,7 @@ class Kurs:
                 "notebook_template": training,
                 "files": lesson.get("_files", {}), "uses_ai": bool(lesson.get("uses_ai")), "note": lesson.get("note", ""),
                 "project_idea": bool(lesson.get("project_idea")), "teams": bool(lesson.get("teams")),
+                "card_project": bool(lesson.get("card_project")),
                 "team_task": (lesson.get("teams") or {}).get("task"),
                 "team_project": (lesson.get("teams") or {}).get("project"),
                 "tasks": [self.lib.public_task(self.lib.tasks[i], with_start=False) for i in lesson["task_ids"]],
@@ -1697,7 +1691,7 @@ class Kurs:
                                 "plan": roles.get(m["id"], "") if studio else m["plan"],
                                 "online": self._online(m["id"], now), "idea": self.idea_of(m["id"]),
                                 "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else [],
-                                "has_file": bool(f),
+                                "has_file": bool(f), "card_title": saved_card_title(f[0]) if f else "",
                                 "file": base + ".py"})
                 if f and m["id"] != sid:
                     files.append({"student_id": m["id"], "author": m["name"], "name": base + ".py", "content": f[0]})
@@ -1781,7 +1775,7 @@ class Kurs:
                 members.append({"id": m["id"], "name": m["name"], "plan": roles.get(m["id"], "") if studio else m["plan"],
                                 "online": self._online(m["id"], now),
                                 "status": self._task_status(m["id"]), "tools": self.tool_names(f[0]) if f else [],
-                                "has_file": bool(f)})
+                                "has_file": bool(f), "card_title": saved_card_title(f[0]) if f else ""})
                 team_name[m["id"]] = t["name"]
             banned = json.loads(t["banned"] or "[]")
             teams.append({"id": t["id"], "name": t["name"], "topic": t["topic"], "bot_name": t["bot_name"],
@@ -2140,7 +2134,7 @@ class Kurs:
         out = {
             "version": "2.0",
             "lesson": 6,
-            "lesson_title": "Проект в командах «Наш ИИ-агент»",
+            "lesson_title": "Командный финал: бот-квест",
             "group_id": gid,
             "group_name": group_name,
             "exported_at": now,

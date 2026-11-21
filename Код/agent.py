@@ -24,6 +24,28 @@ def make_tool(name, description, properties=None, required=None):
     }}
 
 
+def card_answer(get_card):
+    """Проверяет текст, который вернула учебная функция."""
+    text = get_card()
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Впиши текст карточки после return.")
+    return text.strip()
+
+
+def preview_card(title, get_card):
+    """Показывает карточку в терминале без подключения к ИИ."""
+    if not isinstance(title, str) or not title.strip():
+        print("Впиши название карточки после CARD_TITLE =.")
+        return
+    try:
+        text = card_answer(get_card)
+    except ValueError as error:
+        print(error)
+        return
+    print(f"Карточка готова: {title.strip()}")
+    print(text)
+
+
 def run_tool(functions, name, args):
     """Запускает инструмент по имени. Ошибки превращаем в текст для модели."""
     if name not in functions:
