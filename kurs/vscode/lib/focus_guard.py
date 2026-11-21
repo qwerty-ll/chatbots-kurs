@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import ctypes.util
+import errno
 import os
 import re
 import shutil
@@ -198,25 +199,96 @@ def _linux_kill_pwa_apps(procs: list[tuple[int, str, str, str]]) -> None:
                 pass
 
 
+MINECRAFT_EXES = {
+    "minecraft", "minecraft-launcher", "minecraft-launc", "mcpelauncher-client",
+    "mcpelauncher-ui", "prismlauncher", "tlauncher", "klauncher", "polymc",
+    "multimc", "modrinth-app", "gdlauncher", "gdlauncher-carbon", "atlauncher",
+}
+MINECRAFT_JAR_RE = re.compile(
+    r"/(?:\.minecraft/versions|net/minecraft/client|com/mojang/minecraft|"
+    r"net/(?:minecraftforge|neoforged)/[^/]+)/.+\.jar(?: \(deleted\))?$",
+    re.IGNORECASE,
+)
+_MINECRAFT_GRACE_SEC = 2.0
+_linux_closing_minecraft: dict[int, tuple[str, float]] = {}
+
+
+def _linux_minecraft_jar_open(pid: int) -> bool:
+    # JVM может получить главный класс через @argfile. Ищем открытый игровой JAR.
+    try:
+        with os.scandir(f"/proc/{pid}/fd") as files:
+            for entry in files:
+                try:
+                    if MINECRAFT_JAR_RE.search(os.readlink(entry.path)):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return False
+
+
+def _linux_process_start(pid: int) -> str | None:
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as fh:
+            fields = fh.read().rsplit(")", 1)[-1].split()
+        return fields[19]  # starttime, поле 22. Первые два поля уже отброшены.
+    except (OSError, IndexError):
+        return None
+
+
+def _linux_stop_minecraft(pid: int, now: float) -> None:
+    identity = _linux_process_start(pid)
+    if identity is None:
+        return
+    attempt = _linux_closing_minecraft.get(pid)
+    retry = attempt is not None and attempt[0] == identity
+    if retry and now - attempt[1] < _MINECRAFT_GRACE_SEC:
+        return
+    try:
+        sig = signal.SIGKILL if retry else signal.SIGTERM
+        if retry and hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
+            try:
+                fd = os.pidfd_open(pid)
+                try:
+                    if _linux_process_start(pid) == identity:
+                        signal.pidfd_send_signal(fd, sig)
+                finally:
+                    os.close(fd)
+                return
+            except OSError as error:
+                if error.errno not in (errno.ENOSYS, errno.EINVAL):
+                    raise
+        if _linux_process_start(pid) == identity:
+            os.kill(pid, sig)
+        if not retry:
+            _linux_closing_minecraft[pid] = (identity, now)
+    except OSError:
+        pass
+
+
 def _linux_kill_games_and_browsers(procs: list[tuple[int, str, str, str]]) -> None:
-    """Жёсткий режим: закрывает игры, лаунчеры, мессенджеры и все браузеры."""
+    """Закрывает программы режима урока и повторно проверяет процессы Minecraft."""
+    now = time.monotonic()
+    minecraft_pids = set()
     for pid, comm, exe_base, cmd_str in procs:
-        should_kill = False
-        if exe_base in LINUX_HARD_BLOCK_EXES or comm in LINUX_HARD_BLOCK_EXES:
-            should_kill = True
-        elif exe_base.startswith("chromium") or exe_base.startswith("yandex") or exe_base.startswith("firefox"):
-            should_kill = True
-        elif {"java", "javaw"}.intersection((exe_base, comm)) and JAVA_GAME_RE.search(cmd_str):
-            should_kill = True
-        elif exe_base == "flatpak" and MINECRAFT_FLATPAK_RE.search(cmd_str):
-            should_kill = True
-        elif exe_base in ("wine", "wine64", "wine-preloader", "wine64-preloader") and WINE_GAME_RE.search(cmd_str):
-            should_kill = True
-        if should_kill:
+        is_java = exe_base in ("java", "javaw") or comm in ("java", "javaw")
+        is_minecraft = (exe_base in MINECRAFT_EXES or comm in MINECRAFT_EXES
+                        or (is_java and (JAVA_GAME_RE.search(cmd_str) or _linux_minecraft_jar_open(pid)))
+                        or (exe_base == "flatpak" and MINECRAFT_FLATPAK_RE.search(cmd_str)))
+        if is_minecraft:
+            minecraft_pids.add(pid)
+            _linux_stop_minecraft(pid, now)
+        elif (exe_base in LINUX_HARD_BLOCK_EXES or comm in LINUX_HARD_BLOCK_EXES
+              or exe_base.startswith(("chromium", "yandex", "firefox"))
+              or (exe_base in ("wine", "wine64", "wine-preloader", "wine64-preloader")
+                  and WINE_GAME_RE.search(cmd_str))):
             try:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
+    for pid in _linux_closing_minecraft.keys() - minecraft_pids:
+        del _linux_closing_minecraft[pid]
 
 
 class _X11Helper:
