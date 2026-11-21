@@ -11,8 +11,11 @@
 import ast
 import glob
 import importlib.util
+import io
 import json
 import os
+import re
+import tokenize
 
 from agent import agent_answer
 
@@ -26,7 +29,34 @@ MAX_HISTORY = 20
 # Инструменты товарищей запускаются на твоём компьютере, поэтому сначала проверяем их файлы:
 # только безопасные модули и никакого eval/exec (как на занятии про безопасные инструменты).
 SAFE_MODULES = {"random", "datetime", "math", "time", "string", "json", "re", "agent"}
-FORBIDDEN_CALLS = {"eval", "exec", "compile", "__import__", "input"}
+FORBIDDEN_CALLS = {
+    "eval", "exec", "compile", "__import__", "input",
+    "open", "getattr", "setattr", "delattr", "globals", "locals", "vars", "dir",
+}
+
+_IGNORED_BLANK_TOKENS = {tokenize.STRING, tokenize.COMMENT}
+for _tok_name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END"):
+    if hasattr(tokenize, _tok_name):
+        _IGNORED_BLANK_TOKENS.add(getattr(tokenize, _tok_name))
+
+
+def has_blanks(code):
+    """Есть ли в коде незаполненный пропуск ___ вне строк и комментариев."""
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            if tok.type in _IGNORED_BLANK_TOKENS:
+                continue
+            if "___" in tok.string:
+                return True
+        return False
+    except (tokenize.TokenError, IndentationError):
+        for line in code.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            no_str = re.sub(r'(""".*?"""|\'\'\'.*?\'\'\'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')', "", line)
+            if "___" in no_str.split("#", 1)[0]:
+                return True
+        return False
 
 
 def load_card():
@@ -37,6 +67,27 @@ def load_card():
         return {}
 
 
+def _is_main_if(node):
+    if not isinstance(node, ast.If):
+        return False
+    if hasattr(ast, "unparse"):
+        return ast.unparse(node.test).replace("'", '"') == '__name__ == "__main__"'
+    return (isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__"
+            and len(node.test.ops) == 1 and isinstance(node.test.ops[0], ast.Eq)
+            and len(node.test.comparators) == 1
+            and isinstance(node.test.comparators[0], ast.Constant)
+            and node.test.comparators[0].value == "__main__")
+
+
+def _in_main_block(tree, target):
+    """Лежит ли узел внутри блока «if __name__ == "__main__":»."""
+    for node in tree.body:
+        if _is_main_if(node) and any(sub is target for sub in ast.walk(node)):
+            return True
+    return False
+
+
 def problem_in(code):
     """Почему файл с инструментами нельзя подключить (или None, если можно)."""
     try:
@@ -45,11 +96,14 @@ def problem_in(code):
         return f"Python не может прочитать файл (строка {error.lineno})"
     for node in tree.body:
         if isinstance(node, ast.If):
-            test = ast.unparse(node.test).replace("'", '"') if hasattr(ast, "unparse") else ""
-            if test and test != '__name__ == "__main__"':
+            if not _is_main_if(node):
                 return f"строка {node.lineno}: код вне функций — перенеси его в функцию"
+        elif isinstance(node, ast.Expr):
+            # допускаем только строковый docstring на верхнем уровне
+            if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                return f"строка {node.lineno}: вызов или выражение вне функций — перенеси в функцию или в if __name__ == \"__main__\""
         elif not isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.Assign,
-                                   ast.AnnAssign, ast.AugAssign, ast.Expr)):
+                                   ast.AnnAssign, ast.AugAssign)):
             return f"строка {node.lineno}: цикл или другой код вне функций — перенеси его в функцию"
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -57,22 +111,14 @@ def problem_in(code):
             for name in names:
                 if name.split(".")[0] not in SAFE_MODULES:
                     return f"строка {node.lineno}: модуль {name} инструментам не нужен (можно: {', '.join(sorted(SAFE_MODULES))})"
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            return f"строка {node.lineno}: обращение к служебному атрибуту {node.attr} в инструментах запрещено"
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
             # input() внутри «if __name__ == "__main__":» не страшен — этот кусок здесь не запускается
-            if node.func.id == "input" and not _top_level(tree, node):
+            if node.func.id == "input" and _in_main_block(tree, node):
                 continue
             return f"строка {node.lineno}: {node.func.id}() в инструментах нельзя"
     return None
-
-
-def _top_level(tree, target):
-    """Лежит ли вызов в коде, который выполнится при подключении файла (не в функции и не под if __main__)."""
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.If)):
-            continue
-        if any(sub is target for sub in ast.walk(node)):
-            return True
-    return False
 
 
 def tool_files():
@@ -90,7 +136,7 @@ def load_tools():
     for n, (author, path) in enumerate(tool_files()):
         with open(path, encoding="utf-8") as f:
             code = f.read()
-        if any("___" in line and not line.lstrip().startswith("#") for line in code.splitlines()):
+        if has_blanks(code):
             print(f"  ⏳ {author}: в файле ещё есть пропуски ___ — инструменты пока выключены")
             continue
         problem = problem_in(code)
@@ -160,7 +206,11 @@ def main():
     if history:
         print(f"(помню наш прошлый разговор: {len(history)} реплик)")
     while True:
-        text = input("Ты: ").strip()
+        try:
+            text = input("Ты: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nДо встречи!")
+            break
         if text.lower() == "/exit":
             break
         if text.lower() == "/tools":
@@ -183,4 +233,5 @@ def main():
         save_history(history)
 
 
-main()
+if __name__ == "__main__":
+    main()

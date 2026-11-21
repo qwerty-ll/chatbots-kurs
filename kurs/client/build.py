@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import zipfile
+from xml.sax.saxutils import escape as xml_escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KURS = os.path.dirname(HERE)
@@ -31,23 +32,36 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="utf-8"?>
 <Default Extension=".css" ContentType="text/css"/>
 <Default Extension=".html" ContentType="text/html"/>
 <Default Extension=".svg" ContentType="image/svg+xml"/>
+<Default Extension=".png" ContentType="image/png"/>
+<Default Extension=".ico" ContentType="image/x-icon"/>
+<Default Extension=".jpg" ContentType="image/jpeg"/>
 <Default Extension=".py" ContentType="text/plain"/>
 <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>
 """
 
 
+def _esc_attr(value: str) -> str:
+    return xml_escape(str(value), {'"': "&quot;", "'": "&apos;"})
+
+
 def manifest_xml(pkg: dict) -> str:
+    name = _esc_attr(pkg["name"])
+    version = _esc_attr(pkg["version"])
+    publisher = _esc_attr(pkg["publisher"])
+    display_name = xml_escape(str(pkg["displayName"]))
+    description = xml_escape(str(pkg["description"]))
+    engine = _esc_attr(pkg["engines"]["vscode"])
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Language="en-US" Id="{pkg['name']}" Version="{pkg['version']}" Publisher="{pkg['publisher']}"/>
-    <DisplayName>{pkg['displayName']}</DisplayName>
-    <Description xml:space="preserve">{pkg['description']}</Description>
+    <Identity Language="en-US" Id="{name}" Version="{version}" Publisher="{publisher}"/>
+    <DisplayName>{display_name}</DisplayName>
+    <Description xml:space="preserve">{description}</Description>
     <Categories>Education</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>
-      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="{pkg['engines']['vscode']}"/>
+      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="{engine}"/>
       <Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value=""/>
       <Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value=""/>
       <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace"/>
@@ -63,6 +77,12 @@ def manifest_xml(pkg: dict) -> str:
   </Assets>
 </PackageManifest>
 """
+
+
+def _atomic_copy(src: str, dst: str) -> None:
+    tmp = dst + ".tmp"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
 
 
 def _walk(rel: str):
@@ -96,13 +116,16 @@ def build() -> dict:
         with open(CHECKER, "rb") as fh:
             add("extension/bundled/kurs_check.py", fh.read())
     os.replace(tmp, vsix)
-    shutil.copy(CHECKER, os.path.join(DIST, "kurs_check.py"))
-    shutil.copy(os.path.join(HERE, "kurs_start.py"), os.path.join(DIST, "kurs_start.py"))
+    _atomic_copy(CHECKER, os.path.join(DIST, "kurs_check.py"))
+    _atomic_copy(os.path.join(HERE, "kurs_start.py"), os.path.join(DIST, "kurs_start.py"))
     with open(vsix, "rb") as fh:
         sha = hashlib.sha256(fh.read()).hexdigest()
     man = {"version": pkg["version"], "vsix": "kurs-panel.vsix", "sha256": sha, "extension_id": f"{pkg['publisher']}.{pkg['name']}"}
-    with open(os.path.join(DIST, "manifest.json"), "w", encoding="utf-8") as fh:
+    man_path = os.path.join(DIST, "manifest.json")
+    man_tmp = man_path + ".tmp"
+    with open(man_tmp, "w", encoding="utf-8") as fh:
         json.dump(man, fh, ensure_ascii=False, indent=2)
+    os.replace(man_tmp, man_path)
     return man
 
 

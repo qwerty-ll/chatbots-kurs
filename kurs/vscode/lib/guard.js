@@ -28,7 +28,14 @@ class Guard {
     this.snapshots = new Map();   // путь → текст документа до последнего изменения
     this.seen = new Set();        // все строки, которые когда-либо были в своих файлах (squash)
     this.removed = [];            // недавно удалённые куски (squash)
-    this.allowed = [];            // разрешённые тексты: условие задания, пример диалога, заготовка (squash)
+    this.allowed = new Set();     // разрешённые тексты: условие задания, пример диалога, заготовка (squash)
+  }
+
+  reset() {
+    this.snapshots.clear();
+    this.seen.clear();
+    this.removed = [];
+    this.allowed.clear();
   }
 
   remember(text) {
@@ -51,13 +58,13 @@ class Guard {
   /** Разрешить вставку этого текста (условие задания, заготовка, которую вставляет сама панель). */
   allow(text) {
     const s = squash(text);
-    if (s) this.allowed.push(s);
+    if (s) this.allowed.add(s);
   }
 
   /** Сколько во вставке чужого: непробельные символы строк, которых нет ни в своём, ни в разрешённом. */
   foreign(text, sources) {
     const whole = squash(text);
-    const pools = this.removed.concat(this.allowed, sources.map(squash));
+    const pools = this.removed.concat([...this.allowed], sources.map(squash));
     if (pools.some((p) => p.includes(whole))) return { chars: 0, lines: 0 };
     let chars = 0;
     let lines = 0;
@@ -96,13 +103,13 @@ class Guard {
             rangeOffset: c.rangeOffset,
             rangeLength: c.rangeLength,
             text: c.text,
-            originalText: old.substr(c.rangeOffset, c.rangeLength),
+            originalText: old.slice(c.rangeOffset, c.rangeOffset + c.rangeLength),
           });
         }
       }
       if (!blocked.length) {
         for (const c of changes) {
-          const gone = squash(old.substr(c.rangeOffset, c.rangeLength));
+          const gone = squash(old.slice(c.rangeOffset, c.rangeOffset + c.rangeLength));
           if (gone.length >= 10) {
             this.removed.push(gone);
             if (this.removed.length > KEEP_REMOVED) this.removed.shift();

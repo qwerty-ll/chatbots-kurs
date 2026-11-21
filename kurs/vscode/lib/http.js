@@ -28,6 +28,12 @@ function request(base, method, path, body, token, timeoutMs) {
     const req = lib.request(url, { method, headers, timeout: timeoutMs || 6000 }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
+      res.on("error", (e) => {
+        const err = new Error("Нет связи с сервером");
+        err.network = true;
+        err.cause = e;
+        reject(err);
+      });
       res.on("end", () => {
         const text = Buffer.concat(chunks).toString("utf8");
         let data = {};
@@ -57,7 +63,7 @@ class ApiError extends Error {
 
 async function call(base, method, path, body, token) {
   const r = await request(base, method, path, body, token);
-  if (r.status >= 400) throw new ApiError(r.status, (r.data && r.data.error) || "Ошибка " + r.status);
+  if (r.status < 200 || r.status >= 300) throw new ApiError(r.status, (r.data && r.data.error) || "Ошибка " + r.status);
   return r.data;
 }
 

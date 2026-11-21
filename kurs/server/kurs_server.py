@@ -24,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import socket
 import sqlite3
 import sys
@@ -171,38 +172,40 @@ class Library:
         self.load()
 
     def load(self) -> None:
-        self.lessons: dict[int, dict] = {}
-        self.tasks: dict[str, dict] = {}
-        if not os.path.isdir(self.tasks_dir):
-            return
-        for name in sorted(os.listdir(self.tasks_dir)):
-            ldir = os.path.join(self.tasks_dir, name)
-            lfile = os.path.join(ldir, "lesson.json")
-            if not os.path.isfile(lfile):
-                continue
-            lesson = _read_json(lfile)
-            lesson["task_ids"] = []
-            for sub in sorted(os.listdir(ldir)):
-                tfile = os.path.join(ldir, sub, "task.json")
-                if not os.path.isfile(tfile):
+        lessons: dict[int, dict] = {}
+        tasks: dict[str, dict] = {}
+        if os.path.isdir(self.tasks_dir):
+            for name in sorted(os.listdir(self.tasks_dir)):
+                ldir = os.path.join(self.tasks_dir, name)
+                lfile = os.path.join(ldir, "lesson.json")
+                if not os.path.isfile(lfile):
                     continue
-                t = _read_json(tfile)
-                t["_dir"] = os.path.join(ldir, sub)
-                t["_start"] = _read(os.path.join(ldir, sub, "start.py"))
-                t["_solution"] = _read(os.path.join(ldir, sub, "solution.py"))
-                self.tasks[t["id"]] = t
-                lesson["task_ids"].append(t["id"])
-            lesson["_files"] = {}
-            for name, rel in (lesson.get("files") or {}).items():
-                path = os.path.normpath(os.path.join(REPO, rel))
-                if path.startswith(REPO + os.sep) and os.path.isfile(path):
-                    lesson["_files"][name] = _read(path)
-            nb = os.path.join(ldir, "notebook.py")
-            lesson["_notebook"] = _read(nb) if os.path.isfile(nb) else ""
-            lesson["stages"] = notebook_stages(lesson["_notebook"])
-            self.lessons[lesson["lesson"]] = lesson
+                lesson = _read_json(lfile)
+                lesson["task_ids"] = []
+                for sub in sorted(os.listdir(ldir)):
+                    tfile = os.path.join(ldir, sub, "task.json")
+                    if not os.path.isfile(tfile):
+                        continue
+                    t = _read_json(tfile)
+                    t["_dir"] = os.path.join(ldir, sub)
+                    t["_start"] = _read(os.path.join(ldir, sub, "start.py"))
+                    t["_solution"] = _read(os.path.join(ldir, sub, "solution.py"))
+                    tasks[t["id"]] = t
+                    lesson["task_ids"].append(t["id"])
+                lesson["_files"] = {}
+                for fname, rel in (lesson.get("files") or {}).items():
+                    path = os.path.normpath(os.path.join(REPO, rel))
+                    if path.startswith(REPO + os.sep) and os.path.isfile(path):
+                        lesson["_files"][fname] = _read(path)
+                nb = os.path.join(ldir, "notebook.py")
+                lesson["_notebook"] = _read(nb) if os.path.isfile(nb) else ""
+                lesson["stages"] = notebook_stages(lesson["_notebook"])
+                lessons[lesson["lesson"]] = lesson
         cs = os.path.join(self.content_dir, "cheatsheet.json")
-        self.cheatsheet = _read_json(cs) if os.path.isfile(cs) else {"sections": []}
+        cheatsheet = _read_json(cs) if os.path.isfile(cs) else {"sections": []}
+        self.lessons = lessons
+        self.tasks = tasks
+        self.cheatsheet = cheatsheet
 
     def public_task(self, t: dict, with_start: bool = True) -> dict:
         d = {k: v for k, v in t.items() if not k.startswith("_") and k != "hints"}
@@ -382,6 +385,50 @@ def _read_json(path: str):
     return json.loads(_read(path))
 
 
+def atomic_write_bytes(path: str, data: bytes, mode: int | None = None) -> None:
+    """Атомарная запись бинарного файла через временный файл в той же директории и os.replace."""
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if mode is not None:
+            try:
+                os.chmod(tmp, mode)
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def atomic_write_text(path: str, content: str, mode: int | None = None) -> None:
+    """Атомарная запись текстового файла (UTF-8) через временный файл и os.replace."""
+    atomic_write_bytes(path, content.encode("utf-8"), mode=mode)
+
+
+def _clean_rel_path(raw) -> str | None:
+    """Строго валидирует относительный путь файла ученика, защищая от path traversal."""
+    if not isinstance(raw, str):
+        return None
+    path = raw[:200]
+    if not path or "\\" in path or path.startswith("/") or ":" in path:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in path):
+        return None
+    parts = path.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return None
+    return "/".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Хранилище
 # ---------------------------------------------------------------------------
@@ -393,28 +440,109 @@ class Store:
         except OSError:
             pass
         self.data_dir = data_dir
-        self.db = sqlite3.connect(os.path.join(data_dir, "kurs.sqlite3"), check_same_thread=False, timeout=20.0)
-        self.db.row_factory = sqlite3.Row
+        self.db_path = os.path.join(data_dir, "kurs.sqlite3")
         self.lock = threading.RLock()
+        self._local = threading.local()
+        self._conns_lock = threading.Lock()
+        self._conns: set[sqlite3.Connection] = set()
+        self.teacher_tokens: dict[str, float] = {}
+        self._tokens_lock = threading.Lock()
+
         with self.lock:
-            self.db.execute("PRAGMA journal_mode=WAL;")
-            self.db.execute("PRAGMA busy_timeout=15000;")
-            self.db.execute("PRAGMA synchronous=NORMAL;")
-            self.db.execute("PRAGMA foreign_keys=ON;")
-            self.db.executescript(SCHEMA)
-            with self.db:
-                self.db.execute("BEGIN IMMEDIATE")
-                columns = {row["name"] for row in self.db.execute("PRAGMA table_info(module_polls)")}
+            conn = self.db
+            conn.executescript(SCHEMA)
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(module_polls)")}
                 if "course" not in columns:
                     # В старой базе курс опроса отдельно не хранился.
-                    self.db.execute("ALTER TABLE module_polls ADD COLUMN course TEXT NOT NULL DEFAULT 'games'")
+                    conn.execute("ALTER TABLE module_polls ADD COLUMN course TEXT NOT NULL DEFAULT 'games'")
                     course = self.get("course")
                     if course in COURSES:
-                        self.db.execute("UPDATE module_polls SET course=?", (course,))
+                        conn.execute("UPDATE module_polls SET course=?", (course,))
                 if "collecting" not in columns:
-                    self.db.execute("ALTER TABLE module_polls ADD COLUMN collecting INTEGER NOT NULL DEFAULT 0")
-                self.db.execute("CREATE INDEX IF NOT EXISTS idx_module_polls_course ON module_polls(group_id, course, id)")
-        self.teacher_tokens: dict[str, float] = {}
+                    conn.execute("ALTER TABLE module_polls ADD COLUMN collecting INTEGER NOT NULL DEFAULT 0")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_module_polls_course ON module_polls(group_id, course, id)")
+
+    @property
+    def db(self) -> sqlite3.Connection:
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.db_path, timeout=20.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA foreign_keys=ON;")
+            self._local.conn = conn
+            with self._conns_lock:
+                self._conns.add(conn)
+        return conn
+
+    def commit(self) -> None:
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.commit()
+
+    def rollback(self) -> None:
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.rollback()
+
+    def close_current(self) -> None:
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            self._local.conn = None
+            with self._conns_lock:
+                self._conns.discard(conn)
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+    def close_all(self) -> None:
+        with self._conns_lock:
+            conns = list(self._conns)
+            self._conns.clear()
+        self._local.conn = None
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+    # --- токены учителя ---
+    def _prune_tokens_locked(self, now: float) -> None:
+        expired = [tok for tok, exp in self.teacher_tokens.items() if exp <= now]
+        for tok in expired:
+            del self.teacher_tokens[tok]
+
+    def add_teacher_token(self, tok: str, ttl: float = 12 * 3600) -> None:
+        now = time.time()
+        with self._tokens_lock:
+            self._prune_tokens_locked(now)
+            self.teacher_tokens[tok] = now + ttl
+
+    def valid_teacher_token(self, tok: str) -> bool:
+        now = time.time()
+        with self._tokens_lock:
+            exp = self.teacher_tokens.get(tok)
+            if exp is None:
+                return False
+            if exp <= now:
+                self.teacher_tokens.pop(tok, None)
+                return False
+            if len(self.teacher_tokens) > 64:
+                self._prune_tokens_locked(now)
+            return True
+
+    def remove_teacher_token(self, tok: str) -> None:
+        with self._tokens_lock:
+            self.teacher_tokens.pop(tok, None)
+
+    def clear_teacher_tokens(self) -> None:
+        with self._tokens_lock:
+            self.teacher_tokens.clear()
 
     # --- state ---
     def get(self, key: str, default=None):
@@ -460,12 +588,7 @@ class Store:
     def set_password(self, pw: str) -> None:
         salt = secrets.token_bytes(16)
         h = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 200_000)
-        with open(self.password_file(), "w", encoding="utf-8") as fh:
-            json.dump({"salt": salt.hex(), "hash": h.hex()}, fh)
-        try:
-            os.chmod(self.password_file(), 0o600)
-        except OSError:
-            pass
+        atomic_write_text(self.password_file(), json.dumps({"salt": salt.hex(), "hash": h.hex()}), mode=0o600)
 
     def check_password(self, pw: str) -> bool:
         if not self.has_password():
@@ -484,6 +607,20 @@ class ApiError(Exception):
         self.status = status
         self.message = message
         self.extra = extra or {}
+
+
+def req_int(val, name: str = "id", default: int | None = None) -> int:
+    """Безопасное приведение входного параметра к int с возвратом HTTP 400 при ошибке."""
+    if val is None or val == "":
+        if default is not None:
+            return default
+        raise ApiError(400, f"Не указан параметр {name}")
+    if isinstance(val, bool):
+        raise ApiError(400, f"Неверное значение параметра {name}")
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"Неверное значение параметра {name}") from None
 
 
 def parse_student_tools(code: str) -> dict:
@@ -751,27 +888,28 @@ class Kurs:
         return bool(st.get(all_key) or (student_id is not None and str(student_id) in students))
 
     def toggle_student_flag(self, all_key: str, map_key: str, sid, on: bool, log_kind: str) -> None:
-        if sid is not None:
-            sid = int(sid)
-            if not on and self.s.get(all_key):
-                gid = self.s.get("group_id")
-                rows = (self.s.q("SELECT id FROM students WHERE group_id=? AND archived=0", (gid,))
-                        if gid is not None else [])
-                selected = {str(r["id"]): 1 for r in rows if int(r["id"]) != sid}
-                self.s.set(all_key, 0)
-            else:
-                selected = dict(self.s.get(map_key) or {})
-                if on:
-                    selected[str(sid)] = 1
+        with self.s.lock:
+            if sid is not None:
+                sid = req_int(sid, "student_id")
+                if not on and self.s.get(all_key):
+                    gid = self.s.get("group_id")
+                    rows = (self.s.q("SELECT id FROM students WHERE group_id=? AND archived=0", (gid,))
+                            if gid is not None else [])
+                    selected = {str(r["id"]): 1 for r in rows if int(r["id"]) != sid}
+                    self.s.set(all_key, 0)
                 else:
-                    selected.pop(str(sid), None)
-            self.s.set(map_key, selected)
-            self.s.log(sid, log_kind, {"on": on})
-        else:
-            self.s.set(all_key, 1 if on else 0)
-            if not on:
-                self.s.set(map_key, {})
-            self.s.log(None, f"{log_kind}_all", {"on": on})
+                    selected = dict(self.s.get(map_key) or {})
+                    if on:
+                        selected[str(sid)] = 1
+                    else:
+                        selected.pop(str(sid), None)
+                self.s.set(map_key, selected)
+                self.s.log(sid, log_kind, {"on": on})
+            else:
+                self.s.set(all_key, 1 if on else 0)
+                if not on:
+                    self.s.set(map_key, {})
+                self.s.log(None, f"{log_kind}_all", {"on": on})
 
     def hello(self, pc: str) -> dict:
         st = self.s.state()
@@ -992,9 +1130,11 @@ class Kurs:
             raise ApiError(400, "Слишком много файлов")
         n = 0
         for f in files:
-            path = str(f.get("path", ""))[:200]
+            if not isinstance(f, dict):
+                continue
+            path = _clean_rel_path(f.get("path"))
             content = str(f.get("content", ""))
-            if not path or ".." in path.split("/") or len(content.encode()) > MAX_FILE:
+            if not path or len(content.encode("utf-8")) > MAX_FILE:
                 continue
             self.s.ex("INSERT INTO files(student_id,path,content,updated) VALUES(?,?,?,?) "
                       "ON CONFLICT(student_id,path) DO UPDATE SET content=excluded.content, updated=excluded.updated",
@@ -1196,9 +1336,15 @@ class Kurs:
         name = (name or "").strip()[:60]
         if not name:
             raise ApiError(400, "Нужно название группы")
-        names = [n.strip()[:40] for n in names if n and n.strip()]
-        if gid:
-            self.s.ex("UPDATE groups SET name=? WHERE id=?", (name, gid))
+        if not isinstance(names, list):
+            raise ApiError(400, "Неверный список учеников")
+        names = [str(n).strip()[:40] for n in names if n and str(n).strip()]
+        if gid is not None and gid != "":
+            gid = req_int(gid, "id")
+            try:
+                self.s.ex("UPDATE groups SET name=? WHERE id=?", (name, gid))
+            except sqlite3.IntegrityError:
+                raise ApiError(400, "Группа с таким названием уже есть") from None
         else:
             try:
                 gid = self.s.ex("INSERT INTO groups(name) VALUES(?)", (name,)).lastrowid
@@ -1345,21 +1491,29 @@ class Kurs:
         return out
 
     def play_config(self, b: dict) -> None:
-        cfg = self.play_cfg()
-        if "mode" in b:
-            if b["mode"] not in self.PLAY_MODES:
-                raise ApiError(400, "Неизвестный режим")
-            cfg["mode"] = b["mode"]
-        if "games" in b:
-            cfg["games"] = [g for g in b["games"] if g in kurs_play.GAMES]
-        if "teacher" in b:
-            cfg["teacher"] = bool(b["teacher"])
-        if "allow" in b:
-            sid, on = int(b["allow"].get("student_id") or 0), bool(b["allow"].get("on"))
-            allow = [x for x in cfg["allow"] if x != sid]
-            cfg["allow"] = allow + ([sid] if on else [])
-        self.s.set("play", cfg)
-        if cfg["mode"] == "off" and not cfg["allow"]:
+        stop_all = False
+        with self.s.lock:
+            cfg = self.play_cfg()
+            if "mode" in b:
+                if b["mode"] not in self.PLAY_MODES:
+                    raise ApiError(400, "Неизвестный режим")
+                cfg["mode"] = b["mode"]
+            if "games" in b:
+                if not isinstance(b["games"], list):
+                    raise ApiError(400, "Неверный список игр")
+                cfg["games"] = [g for g in b["games"] if g in kurs_play.GAMES]
+            if "teacher" in b:
+                cfg["teacher"] = bool(b["teacher"])
+            if "allow" in b:
+                if not isinstance(b["allow"], dict):
+                    raise ApiError(400, "Неверные параметры допуска")
+                sid = req_int(b["allow"].get("student_id"), "student_id", default=0)
+                on = bool(b["allow"].get("on"))
+                allow = [x for x in cfg["allow"] if x != sid]
+                cfg["allow"] = allow + ([sid] if on else [])
+            self.s.set("play", cfg)
+            stop_all = cfg["mode"] == "off" and not cfg["allow"]
+        if stop_all:
             self.play.stop_all("Учитель закрыл игры")
 
     # ---------- проект: идеи учеников и команды ----------
@@ -1402,6 +1556,9 @@ class Kurs:
         with self.s.lock:
             if not self.s.get("running") or not self.game_studio_active():
                 raise ApiError(409, "Студия доступна на финальном занятии по играм")
+            team_task = self.team_task()
+            if not team_task:
+                raise ApiError(400, "Задание проекта не найдено")
             team = self.team_of(sid)
             student = self.student(sid)
             if not team or not student or student["archived"] or team["group_id"] != self.s.get("group_id"):
@@ -1409,7 +1566,7 @@ class Kurs:
             tid = team["id"]
             studio = self.game_studio(tid)
             if action == "template":
-                return {"code": self.team_task()["_solution"], "menu": studio["menu"]}
+                return {"code": team_task["_solution"], "menu": studio["menu"]}
             if type(body.get("revision")) is not int or body["revision"] != studio["revision"]:
                 raise ApiError(409, "Товарищ изменил меню. Обнови черновик перед сохранением или сдачей")
             if action == "menu":
@@ -1434,7 +1591,7 @@ class Kurs:
                     raise ApiError(409, "Товарищ уже отправил другую сборку. Проверь текущую сдачу")
                 mode = body.get("mode")
                 if mode == "template":
-                    code = self.team_task()["_solution"]
+                    code = team_task["_solution"]
                     author = None
                 elif mode == "team":
                     source = body.get("source")
@@ -1444,7 +1601,7 @@ class Kurs:
                     if not saved or not saved[0].strip():
                         raise ApiError(400, "Сначала сохрани файл проекта")
                     code, _ = saved
-                    if code.strip() == self.team_task()["_start"].strip():
+                    if code.strip() == team_task["_start"].strip():
                         raise ApiError(400, "В файле пока только заготовка. Выбери рабочий шаблон или допиши игру")
                     try:
                         ast.parse(code)
@@ -1458,7 +1615,7 @@ class Kurs:
                 self.s.ex("INSERT INTO game_studios(team_id, menu, release, code) VALUES(?,?,?,?) "
                           "ON CONFLICT(team_id) DO UPDATE SET release=excluded.release, code=excluded.code",
                           (tid, json.dumps(studio["menu"], ensure_ascii=False), json.dumps(release, ensure_ascii=False), code))
-            self.s.db.commit()
+            self.s.commit()
         return self.team_view(sess)
 
     def game_roles(self, tid: int) -> dict:
@@ -1481,12 +1638,13 @@ class Kurs:
                         "WHERE m.team_id=? AND s.archived=0 ORDER BY m.joined", (tid,))
 
     def team_notice(self, sid, text: str | None) -> None:
-        notices = dict(self.s.get("team_notices") or {})
-        if text:
-            notices[str(sid)] = text
-        else:
-            notices.pop(str(sid), None)
-        self.s.set("team_notices", notices)
+        with self.s.lock:
+            notices = dict(self.s.get("team_notices") or {})
+            if text:
+                notices[str(sid)] = text
+            else:
+                notices.pop(str(sid), None)
+            self.s.set("team_notices", notices)
 
     @staticmethod
     def tool_names(code: str) -> list[str]:
@@ -1663,19 +1821,54 @@ class Kurs:
         self.s.log(None, "teams_create", {"count": count})
 
     def teams_config(self, b: dict) -> None:
-        cfg = self.teams_cfg()
-        if "open" in b:
-            cfg["open"] = bool(b["open"])
-        for k in ("min", "max"):
-            if k in b:
-                cfg[k] = max(0, min(int(b[k] or 0), 50))
-        self.s.set("teams", cfg)
+        with self.s.lock:
+            cfg = self.teams_cfg()
+            if "open" in b:
+                cfg["open"] = bool(b["open"])
+            for k in ("min", "max"):
+                if k in b:
+                    cfg[k] = max(0, min(req_int(b[k], k, default=0), 50))
+            self.s.set("teams", cfg)
 
     def teams_delete(self, tid: int | None) -> None:
-        ids = [self.team_row(tid)["id"]] if tid else [t["id"] for t in self.team_rows()]
+        if tid is None:
+            ids = [t["id"] for t in self.team_rows()]
+        else:
+            if tid <= 0:
+                raise ApiError(400, "Укажи команду")
+            ids = [self.team_row(tid)["id"]]
         for i in ids:
             self.s.ex("DELETE FROM team_members WHERE team_id=?", (i,))
             self.s.ex("DELETE FROM teams WHERE id=?", (i,))
+
+    def teams_studio_code(self, tid: int) -> dict:
+        """Возвращает сданную сборку команды (код, меню, метаданные релиза) для просмотра учителем."""
+        team = self.team_row(tid)
+        with self.s.lock:
+            row = self.s.one("SELECT menu, revision, release, code FROM game_studios WHERE team_id=?", (tid,))
+            studio = self.game_studio(tid)
+            code = row["code"] if row and row["code"] else ""
+            release = studio["release"]
+            menu = release.get("menu") if isinstance(release, dict) and release.get("menu") else studio["menu"]
+            safe_name = re.sub(r"[^\w-]+", "_", team["name"]).strip("_") or f"team_{tid}"
+            filename = f"{safe_name}_Бродилка.py"
+            return {
+                "ok": True,
+                "team_id": tid,
+                "name": team["name"],
+                "release": release,
+                "code": code,
+                "filename": filename,
+                "menu": menu,
+            }
+
+    def teams_clear_release(self, tid: int) -> None:
+        """Сбрасывает сданную сборку игры команды, чтобы команда могла пересдать её заново."""
+        team = self.team_row(tid)
+        with self.s.lock:
+            self.s.ex("UPDATE game_studios SET release=NULL, code=NULL WHERE team_id=?", (tid,))
+            self.s.log(None, "team_clear_release", {"team_id": tid, "team": team["name"]})
+            self.s.commit()
 
     def teams_kick(self, sid: int) -> None:
         """Учитель убирает ученика из команды: вернуться в неё сам он уже не сможет (перевести может учитель)."""
@@ -1741,17 +1934,18 @@ class Kurs:
         self.s.log(None, "lesson_end")
 
     def open_tasks(self, ids: list[str], is_open: bool) -> None:
-        cur = list(self.s.get("open_tasks") or [])
-        lesson = self.lesson()
-        for i in ids:
-            if i not in lesson["task_ids"]:
-                continue
-            if is_open and i not in cur:
-                cur.append(i)
-            if not is_open and i in cur:
-                cur.remove(i)
-        cur.sort(key=lambda i: self.lib.tasks[i]["num"])
-        self.s.set("open_tasks", cur)
+        with self.s.lock:
+            cur = list(self.s.get("open_tasks") or [])
+            lesson = self.lesson()
+            for i in ids:
+                if i not in lesson["task_ids"]:
+                    continue
+                if is_open and i not in cur:
+                    cur.append(i)
+                if not is_open and i in cur:
+                    cur.remove(i)
+            cur.sort(key=lambda i: self.lib.tasks[i]["num"])
+            self.s.set("open_tasks", cur)
 
     GUARD_EVENTS = ("paste_blocked", "ai_paste_blocked", "outside_edit")
 
@@ -1772,28 +1966,31 @@ class Kurs:
             if is_ai:
                 kind = "ai_paste_blocked"
 
+        chars = req_int(body.get("chars"), "chars", default=0)
         data = {"pc": sess["pc"], "file": str(body.get("file", ""))[:80],
-                "chars": int(body.get("chars") or 0), "text": text[:400],
+                "chars": chars, "text": text[:400],
                 "reason": verdict_reason}
         self.s.log(sess["student_id"], kind, data)
         # Блокировка ТОЛЬКО если ИИ подтвердил вставку кода или правку вне редактора!
-        if self.s.get("lock_on_paste") and kind in ("ai_paste_blocked", "outside_edit"):
-            locks = dict(self.s.get("locks") or {})
-            key = str(sess["student_id"])
-            if key not in locks:
-                locks[key] = dict(data, kind=kind, ts=time.time())
-                self.s.set("locks", locks)
-            return {"ok": True, "locked": True, "is_ai": is_ai, "reason": verdict_reason}
+        with self.s.lock:
+            if self.s.get("lock_on_paste") and kind in ("ai_paste_blocked", "outside_edit"):
+                locks = dict(self.s.get("locks") or {})
+                key = str(sess["student_id"])
+                if key not in locks:
+                    locks[key] = dict(data, kind=kind, ts=time.time())
+                    self.s.set("locks", locks)
+                return {"ok": True, "locked": True, "is_ai": is_ai, "reason": verdict_reason}
         return {"ok": True, "locked": False, "is_ai": is_ai, "reason": verdict_reason}
 
     def lock_of(self, sid):
         return (self.s.get("locks") or {}).get(str(sid))
 
     def unlock(self, sid: int) -> None:
-        locks = dict(self.s.get("locks") or {})
-        if locks.pop(str(sid), None) is not None:
-            self.s.set("locks", locks)
-            self.s.log(sid, "unlock")
+        with self.s.lock:
+            locks = dict(self.s.get("locks") or {})
+            if locks.pop(str(sid), None) is not None:
+                self.s.set("locks", locks)
+                self.s.log(sid, "unlock")
 
     def lesson_started_at(self) -> float:
         r = self.s.one("SELECT MAX(ts) AS ts FROM events WHERE kind='lesson_start'")
@@ -1957,11 +2154,9 @@ class Kurs:
         # Автоматическое сохранение на диск учительского ПК
         try:
             proj_dir = os.path.join(self.s.data_dir, "projects")
-            os.makedirs(proj_dir, exist_ok=True)
-            safe_grp = re.sub(r"[^\w\-]", "_", group_name)
+            safe_grp = re.sub(r"[^\w\-]", "_", group_name) or "class"
             save_path = os.path.join(proj_dir, f"projects_{safe_grp}.json")
-            with open(save_path, "w", encoding="utf-8") as fh:
-                json.dump(out, fh, ensure_ascii=False, indent=2)
+            atomic_write_text(save_path, json.dumps(out, ensure_ascii=False, indent=2))
         except Exception as e:
             print("Auto-save projects json error:", e)
 
@@ -1980,7 +2175,8 @@ class Kurs:
                     release = studio["release"]
                     if release:
                         project = self.s.one("SELECT code FROM game_studios WHERE team_id=?", (team["id"],))
-                        archive.writestr(f"{folder}/Сдано/Бродилка.py", project["code"])
+                        if project and project["code"]:
+                            archive.writestr(f"{folder}/Сдано/Бродилка.py", project["code"])
                         archive.writestr(f"{folder}/Сдано/{GAME_MENU_FILE}", json.dumps(release["menu"], ensure_ascii=False))
                         archive.writestr(f"{folder}/Сдано/Сдача.json", json.dumps(release, ensure_ascii=False, indent=2))
                 has_drafts = False
@@ -1996,11 +2192,12 @@ class Kurs:
                 raise ApiError(404, "Команды ещё не сохранили файлы")
         return buf.getvalue()
 
-    def export_projects_zip(self, gid: int | None = None) -> bytes:
+    def export_projects_zip(self, gid: int | None = None, data: dict | None = None) -> bytes:
         """Собирает чистый ZIP-архив строго с проектами 6 занятия: JSON, сводка, готовые папки ботов и код."""
-        data = self.export_projects_data(gid)
-        group_name = data.get("group_name", "class")
-        safe_grp = re.sub(r"[^\w\-]", "_", group_name)
+        if data is None:
+            data = self.export_projects_data(gid)
+        group_name = data.get("group_name") or "class"
+        safe_grp = re.sub(r"[^\w\-]", "_", group_name) or "class"
 
         code_candidates = [
             os.path.join(REPO, "Код"),
@@ -2066,8 +2263,17 @@ class Kurs:
                                 z.writestr(f"{folder}/{mod}", fh.read())
 
                 # Код участников (в корне папки и внутри Команда/ для автоимпорта в Наш_бот.py)
+                used_member_names: set[str] = set()
                 for m in team.get("members", []):
-                    m_clean = re.sub(r"[^\w\-]", "_", m["name"]) or f"ученик_{m['student_id']}"
+                    base = re.sub(r"[^\w\-]", "_", m["name"]).strip("_") or f"ученик_{m['student_id']}"
+                    m_clean = base
+                    if m_clean in used_member_names:
+                        m_clean = f"{base}_{m['student_id']}"
+                    suffix = 2
+                    while m_clean in used_member_names:
+                        m_clean = f"{base}_{m['student_id']}_{suffix}"
+                        suffix += 1
+                    used_member_names.add(m_clean)
                     code = m.get("code") or "# Ученик пока не сохранил файл Мои_инструменты.py\n"
                     code_bytes = code.encode("utf-8")
                     z.writestr(f"{folder}/{m_clean}.py", code_bytes)
@@ -2075,8 +2281,17 @@ class Kurs:
 
             # 5. Ученики без команды, написавшие код
             if data.get("students_without_team"):
+                used_free_names: set[str] = set()
                 for s in data["students_without_team"]:
-                    s_clean = re.sub(r"[^\w\-]", "_", s["name"]) or f"ученик_{s['student_id']}"
+                    base = re.sub(r"[^\w\-]", "_", s["name"]).strip("_") or f"ученик_{s['student_id']}"
+                    s_clean = base
+                    if s_clean in used_free_names:
+                        s_clean = f"{base}_{s['student_id']}"
+                    suffix = 2
+                    while s_clean in used_free_names:
+                        s_clean = f"{base}_{s['student_id']}_{suffix}"
+                        suffix += 1
+                    used_free_names.add(s_clean)
                     code = s.get("code") or ""
                     if code:
                         z.writestr(f"_Без_команды/{s_clean}.py", code.encode("utf-8"))
@@ -2086,10 +2301,8 @@ class Kurs:
         # Сохраняем копию архива на диск учительского ПК
         try:
             proj_dir = os.path.join(self.s.data_dir, "projects")
-            os.makedirs(proj_dir, exist_ok=True)
             zip_save_path = os.path.join(proj_dir, f"projects_{safe_grp}.zip")
-            with open(zip_save_path, "wb") as fh:
-                fh.write(zip_bytes)
+            atomic_write_bytes(zip_save_path, zip_bytes)
         except Exception as e:
             print("Auto-save projects zip error:", e)
 
@@ -2206,16 +2419,31 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(body, STATIC_TYPES.get(os.path.splitext(path)[1], "application/octet-stream"), 200, headers)
 
     # --- разбор запроса ---
-    def body_json(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
+    def body_raw(self) -> bytes:
+        raw_len = self.headers.get("Content-Length")
+        if raw_len is None or raw_len == "":
+            return b""
+        try:
+            n = int(raw_len)
+        except ValueError:
+            raise ApiError(400, "Неверный Content-Length") from None
+        if n < 0:
+            raise ApiError(400, "Неверный Content-Length")
         if n > MAX_BODY:
             raise ApiError(413, "Слишком большой запрос")
         if n == 0:
-            return {}
-        if "application/json" not in (self.headers.get("Content-Type") or ""):
+            return b""
+        return self.rfile.read(n)
+
+    def body_json(self, require_ct: bool = False) -> dict:
+        raw = self.body_raw()
+        ct = (self.headers.get("Content-Type") or "").lower()
+        if (raw or require_ct) and "application/json" not in ct:
             raise ApiError(415, "Нужен JSON")
+        if not raw:
+            return {}
         try:
-            data = json.loads(self.rfile.read(n).decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             raise ApiError(400, "Неверный JSON") from None
         if not isinstance(data, dict):
@@ -2228,12 +2456,14 @@ class Handler(BaseHTTPRequestHandler):
     def teacher_ok(self) -> bool:
         if not self.is_local():
             return False
-        c = cookies.SimpleCookie(self.headers.get("Cookie") or "")
+        try:
+            c = cookies.SimpleCookie(self.headers.get("Cookie") or "")
+        except cookies.CookieError:
+            return False
         tok = c.get("kurs_teacher")
         if not tok:
             return False
-        exp = self.kurs.s.teacher_tokens.get(tok.value)
-        return bool(exp and exp > time.time())
+        return self.kurs.s.valid_teacher_token(tok.value)
 
     def do_GET(self):
         self.route("GET")
@@ -2282,6 +2512,8 @@ class Handler(BaseHTTPRequestHandler):
                 # короткая команда для ПК ученика: wget -qO- http://IP:8000/k | python3 - --shortcut
                 # отдаём запуск курса с уже вписанным адресом этого сервера
                 host = re.sub(r"[^A-Za-z0-9.:\-\[\]]", "", self.headers.get("Host") or "")
+                if not host:
+                    host = f"localhost:{self.server.server_port}"
                 try:
                     with open(os.path.join(self.client_dir, "kurs_start.py"), encoding="utf-8") as fh:
                         src = fh.read()
@@ -2295,13 +2527,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         except ApiError as e:
             try:
-                self.kurs.s.db.rollback()
+                self.kurs.s.rollback()
             except Exception:
                 pass
             return self.send_json(dict(e.extra, error=e.message), e.status)
         except Exception as e:  # noqa: BLE001
             try:
-                self.kurs.s.db.rollback()
+                self.kurs.s.rollback()
             except Exception:
                 pass
             sys.stderr.write(f"Ошибка сервера: {e!r}\n")
@@ -2309,6 +2541,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Ошибка сервера"}, 500)
             except Exception:
                 self.close_connection = True
+        finally:
+            self.kurs.s.close_current()
 
     # --- партия по WebSocket ---
     def ws_play(self, qs: dict) -> None:
@@ -2332,7 +2566,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 with self.kurs.s.lock:
                     sess = self.kurs.live_session(token)
-                    self.kurs.s.db.commit()
+                    self.kurs.s.commit()
                 pkey = f"s:{sess['student_id']}"
         except (ApiError, OSError, ValueError, AttributeError):
             try:
@@ -2353,9 +2587,9 @@ class Handler(BaseHTTPRequestHandler):
             out = k.hello(clean_pc(qs.get("pc")))
         elif method == "POST" and name == "login":
             b = self.body_json()
-            out = k.login(clean_pc(b.get("pc")), int(b.get("student_id") or 0))
+            out = k.login(clean_pc(b.get("pc")), req_int(b.get("student_id"), "student_id", default=0))
         elif method == "GET" and name == "request":
-            out = k.request_status(int(qs.get("id") or 0), qs.get("secret", ""))
+            out = k.request_status(req_int(qs.get("id"), "id", default=0), qs.get("secret", ""))
         else:
             sess = k.live_session(token)
             if method == "GET" and name == "state":
@@ -2367,15 +2601,15 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "POST" and name == "ai/ask":
                 out = k.ai_ask(sess, self.body_json())
             elif method == "GET" and name == "ai/ticket":
-                out = k.ai_ticket(sess, int(qs.get("id") or 0))
+                out = k.ai_ticket(sess, req_int(qs.get("id"), "id", default=0))
             elif method == "GET" and name == "solution":
                 out = k.solution(sess, qs.get("id", ""))
             elif method == "POST" and name == "hint":
                 b = self.body_json()
-                out = k.hint(sess, str(b.get("task_id")), int(b.get("level") or 0))
+                out = k.hint(sess, str(b.get("task_id") or ""), req_int(b.get("level"), "level", default=0))
             elif method == "POST" and name == "result":
                 b = self.body_json()
-                out = k.result(sess, str(b.get("task_id")), bool(b.get("ok")), str(b.get("summary", "")),
+                out = k.result(sess, str(b.get("task_id") or ""), bool(b.get("ok")), str(b.get("summary", "")),
                                str(b.get("code", "")))
             elif method == "POST" and name == "vote":
                 out = k.vote_module(sess, self.body_json())
@@ -2387,11 +2621,14 @@ class Handler(BaseHTTPRequestHandler):
                 out = k.studio_action(sess, name.split("/")[1], self.body_json())
             elif method == "POST" and name == "rating":
                 b = self.body_json()
-                k.rating(sess, str(b.get("task_id")), str(b.get("rating")))
+                k.rating(sess, str(b.get("task_id") or ""), str(b.get("rating") or ""))
                 out = {"ok": True}
             elif method == "POST" and name == "reset_lesson":
                 b = self.body_json()
-                lesson_num = int(b.get("lesson") or k.s.get("lesson") or 1)
+                active_lesson = int(k.s.get("lesson") or 1)
+                lesson_num = req_int(b.get("lesson"), "lesson", default=active_lesson)
+                if lesson_num != active_lesson:
+                    raise ApiError(400, "Можно сбросить только текущее активное занятие")
                 out = k.reset_lesson_progress(lesson_num, student_id=sess["student_id"])
             elif method == "POST" and name == "help":
                 b = self.body_json()
@@ -2401,8 +2638,9 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "POST" and name == "event":
                 out = k.student_event(sess, self.body_json())
             elif method == "GET" and name == "play":
-                if not k.play_allowed(sess["student_id"])[0]:
-                    raise ApiError(403, k.play_allowed(sess["student_id"])[1])
+                ok, why = k.play_allowed(sess["student_id"])
+                if not ok:
+                    raise ApiError(403, why)
                 out = k.play_lobby(f"s:{sess['student_id']}", k.name(sess["student_id"]))
             elif method == "POST" and name.startswith("play/"):
                 ok, why = k.play_allowed(sess["student_id"])
@@ -2420,7 +2658,7 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "POST" and name.startswith("team/"):
                 b = self.body_json()
                 if name == "team/join":
-                    k.team_join(sess, int(b.get("team_id") or 0))
+                    k.team_join(sess, req_int(b.get("team_id"), "team_id", default=0))
                 elif name == "team/leave":
                     k.team_leave(sess)
                 elif name == "team/card":
@@ -2438,7 +2676,7 @@ class Handler(BaseHTTPRequestHandler):
                 out = {"ok": True}
             else:
                 raise ApiError(404, "Нет такой команды")
-        k.s.db.commit()
+        k.s.commit()
         self.send_json(out)
 
     # --- API учителя ---
@@ -2463,33 +2701,42 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(403, "Неверный пароль")
             return self.teacher_login_ok()
         if method == "POST" and name == "reset_password":
+            self.body_json(require_ct=True)
             p = k.s.password_file()
             if os.path.isfile(p):
                 os.remove(p)
+            k.s.clear_teacher_tokens()
             return self.send_json({"ok": True})
         if not self.teacher_ok():
             raise ApiError(401, "Нужно войти")
         if method == "POST" and name == "logout":
-            c = cookies.SimpleCookie(self.headers.get("Cookie") or "")
-            k.s.teacher_tokens.pop(c["kurs_teacher"].value, None)
+            try:
+                c = cookies.SimpleCookie(self.headers.get("Cookie") or "")
+                tok = c.get("kurs_teacher")
+                if tok:
+                    k.s.remove_teacher_token(tok.value)
+            except cookies.CookieError:
+                pass
             return self.send_json({"ok": True}, headers={"Set-Cookie": "kurs_teacher=; Path=/; Max-Age=0"})
         if method == "GET" and name == "overview":
             out = k.overview()
         elif method == "GET" and name == "student":
-            out = k.student_detail(int(qs.get("id") or 0))
+            out = k.student_detail(req_int(qs.get("id"), "id", default=0))
         elif method == "GET" and name == "task":
             t = k.lib.tasks.get(qs.get("id", ""))
             if not t:
                 raise ApiError(404, "Нет такого задания")
             out = dict(k.lib.public_task(t), hints=t.get("hints", []), solution=t["_solution"])
         elif method == "GET" and name == "ai":
-            out = k.ai_overview(int(qs["student"]) if qs.get("student") else None)
+            out = k.ai_overview(req_int(qs.get("student"), "student") if qs.get("student") else None)
         elif method == "GET" and name == "play":
             out = k.play_teacher()
         elif method == "GET" and name == "teams":
             out = k.teams_teacher()
+        elif method == "GET" and name == "teams/studio_code":
+            out = k.teams_studio_code(req_int(qs.get("team_id"), "team_id"))
         elif method == "GET" and name == "stage_code":
-            out = k.stage_code(int(qs.get("n") or 0))
+            out = k.stage_code(req_int(qs.get("n"), "n", default=0))
         elif method == "GET" and name == "export.csv":
             body = k.export_csv().encode("utf-8")
             return self.send_bytes(body, "text/csv; charset=utf-8", 200,
@@ -2500,20 +2747,23 @@ class Handler(BaseHTTPRequestHandler):
         elif method == "GET" and name in ("export_projects.json", "projects.json"):
             data = k.export_projects_data()
             body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
+            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group_name") or "class")) or "class"
             return self.send_bytes(body, "application/json; charset=utf-8", 200,
                                    {"Content-Disposition": content_disposition(f"projects_{safe_name}.json")})
         elif method == "GET" and name in ("export_projects.zip", "projects.zip"):
-            body = k.export_projects_zip()
             data = k.export_projects_data()
-            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group") or "class"))
+            body = k.export_projects_zip(data=data)
+            safe_name = re.sub(r"[^\w\-]", "_", str(data.get("group_name") or "class")) or "class"
             return self.send_bytes(body, "application/zip", 200,
                                    {"Content-Disposition": content_disposition(f"projects_{safe_name}.zip")})
         elif method == "POST":
             b = self.body_json()
             out = {"ok": True}
             if name == "group":
-                out = k.save_group(str(b.get("name", "")), list(b.get("names") or []), b.get("id"))
+                raw_names = b.get("names")
+                if raw_names is not None and not isinstance(raw_names, list):
+                    raise ApiError(400, "Неверный список учеников")
+                out = k.save_group(str(b.get("name", "")), raw_names or [], b.get("id"))
             elif name == "poll":
                 k.create_module_poll(b)
             elif name == "poll/collect":
@@ -2523,27 +2773,40 @@ class Handler(BaseHTTPRequestHandler):
             elif name == "poll/close":
                 k.close_module_poll(b.get("id"))
             elif name == "group/delete":
-                gid = int(b.get("id") or 0)
+                gid = req_int(b.get("id"), "id", default=0)
                 if gid == k.s.get("group_id") and k.s.get("running"):
                     raise ApiError(400, "Сначала заверши занятие этой группы")
                 k.s.ex("UPDATE students SET archived=1 WHERE group_id=?", (gid,))
                 k.s.ex("DELETE FROM groups WHERE id=?", (gid,))
             elif name == "start":
-                k.start(int(b.get("group_id") or 0), int(b.get("lesson") or 0))
+                k.start(req_int(b.get("group_id"), "group_id", default=0), req_int(b.get("lesson"), "lesson", default=0))
             elif name == "continue":
                 k.continue_class()
             elif name == "end":
                 k.end()
-            elif name == "reset_lesson_progress":
-                lesson_num = int(b.get("lesson") or k.s.get("lesson") or 1)
-                gid = int(b.get("group_id") or k.s.get("group_id") or 0) if b.get("group_id") else None
-                sid = int(b.get("student_id") or 0) if b.get("student_id") else None
+            elif name in ("reset_lesson_progress", "reset_lesson"):
+                lesson_num = req_int(b.get("lesson"), "lesson", default=int(k.s.get("lesson") or 1))
+                sid = req_int(b.get("student_id"), "student_id", default=0) if b.get("student_id") not in (None, "") else None
+                if sid:
+                    gid = None
+                elif b.get("all_groups"):
+                    gid = None
+                elif b.get("group_id") not in (None, ""):
+                    gid = req_int(b.get("group_id"), "group_id")
+                else:
+                    gid = k.s.get("group_id")
+                    if not gid:
+                        raise ApiError(400, "Укажи группу для сброса прогресса")
                 out = k.reset_lesson_progress(lesson_num, group_id=gid, student_id=sid)
             elif name == "open":
-                ids = list(b.get("ids") or [])
+                raw_ids = b.get("ids")
+                if raw_ids is not None and not isinstance(raw_ids, list):
+                    raise ApiError(400, "Неверный список заданий")
+                ids = list(raw_ids or [])
                 if b.get("step") is not None:
+                    step_val = req_int(b.get("step"), "step")
                     lesson = k.lesson()
-                    ids = [i for i in lesson["task_ids"] if k.lib.tasks[i]["step"] <= int(b["step"])]
+                    ids = [i for i in lesson["task_ids"] if k.lib.tasks[i]["step"] <= step_val]
                 if b.get("all"):
                     ids = k.lesson()["task_ids"]
                 k.open_tasks(ids, bool(b.get("open", True)))
@@ -2551,28 +2814,29 @@ class Handler(BaseHTTPRequestHandler):
                 k.s.set("paused", 1 if b.get("paused") else 0)
                 k.s.set("pause_text", str(b.get("text") or "Пауза: смотрим на учителя")[:120])
             elif name == "timer":
-                if b.get("clear"):
-                    k.s.set("timer_end", None)
-                elif b.get("add"):
-                    end = k.s.get("timer_end") or time.time()
-                    k.s.set("timer_end", max(end, time.time()) + 60 * int(b["add"]))
-                else:
-                    k.s.set("timer_end", time.time() + 60 * int(b.get("minutes") or 10))
-                    k.s.set("timer_label", str(b.get("label") or "")[:60])
+                with k.s.lock:
+                    if b.get("clear"):
+                        k.s.set("timer_end", None)
+                    elif b.get("add") is not None:
+                        end = k.s.get("timer_end") or time.time()
+                        k.s.set("timer_end", max(end, time.time()) + 60 * req_int(b.get("add"), "add"))
+                    else:
+                        k.s.set("timer_end", time.time() + 60 * req_int(b.get("minutes"), "minutes", default=10))
+                        k.s.set("timer_label", str(b.get("label") or "")[:60])
             elif name == "stage":
-                n = int(b.get("stage") or 0)
+                n = req_int(b.get("stage"), "stage", default=0)
                 if n < 0 or n > len(k.lesson()["stages"]):
                     raise ApiError(400, "Нет такого этапа")
                 k.s.set("stage", n)
             elif name == "request":
-                k.decide(int(b.get("id") or 0), bool(b.get("approve")))
+                k.decide(req_int(b.get("id"), "id", default=0), bool(b.get("approve")))
             elif name == "approve_all":
                 for r in k.s.q("SELECT id FROM requests WHERE status='pending'"):
                     k.decide(r["id"], True)
             elif name == "help":
-                k.s.ex("UPDATE help SET status=? WHERE id=?", ("going" if b.get("going") else "done", int(b.get("id") or 0)))
+                k.s.ex("UPDATE help SET status=? WHERE id=?", ("going" if b.get("going") else "done", req_int(b.get("id"), "id", default=0)))
             elif name == "kick":
-                sess = k.active_session_of(int(b.get("student_id") or 0))
+                sess = k.active_session_of(req_int(b.get("student_id"), "student_id", default=0))
                 if sess:
                     k.close_session(sess["token"], "Учитель завершил твой сеанс")
             elif name == "reload":
@@ -2581,8 +2845,9 @@ class Handler(BaseHTTPRequestHandler):
                 k.set_course(str(b.get("course") or "games"))
             elif name == "restart_clients":
                 # все панели сохранят работу, обновятся и перезапустят окно VS Code
-                k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
-                k.s.log(None, "restart_clients")
+                with k.s.lock:
+                    k.s.set("restart_seq", (k.s.get("restart_seq") or 0) + 1)
+                    k.s.log(None, "restart_clients")
             elif name == "play/config":
                 k.play_config(b)
             elif name == "play/stop_all":
@@ -2592,40 +2857,56 @@ class Handler(BaseHTTPRequestHandler):
             elif name in ("play/invite", "play/answer", "play/cancel", "play/leave"):
                 out = k.play_action(kurs_play.TEACHER, "Учитель", name[5:], b)
             elif name == "teams/create":
-                k.teams_create(int(b.get("count") or 0), list(b.get("names") or []))
+                raw_names = b.get("names")
+                if raw_names is not None and not isinstance(raw_names, list):
+                    raise ApiError(400, "Неверный список названий команд")
+                k.teams_create(req_int(b.get("count"), "count", default=0), list(raw_names or []))
             elif name == "teams/config":
                 k.teams_config(b)
             elif name == "teams/rename":
-                k.teams_rename(int(b.get("team_id") or 0), str(b.get("name", "")))
+                k.teams_rename(req_int(b.get("team_id"), "team_id", default=0), str(b.get("name", "")))
             elif name == "teams/delete":
-                k.teams_delete(None if b.get("all") else int(b.get("team_id") or 0))
+                if b.get("all"):
+                    k.teams_delete(None)
+                else:
+                    tid = req_int(b.get("team_id"), "team_id", default=0)
+                    if tid <= 0:
+                        raise ApiError(400, "Укажи команду")
+                    k.teams_delete(tid)
+            elif name == "teams/clear_release":
+                k.teams_clear_release(req_int(b.get("team_id"), "team_id"))
             elif name == "teams/kick":
-                k.teams_kick(int(b.get("student_id") or 0))
+                k.teams_kick(req_int(b.get("student_id"), "student_id", default=0))
             elif name == "teams/assign":
-                k.teams_assign(int(b.get("student_id") or 0), int(b.get("team_id") or 0))
+                k.teams_assign(req_int(b.get("student_id"), "student_id", default=0), req_int(b.get("team_id"), "team_id", default=0))
             elif name == "unlock":
-                k.unlock(int(b.get("student_id") or 0))
+                k.unlock(req_int(b.get("student_id"), "student_id", default=0))
             elif name == "lock_on_paste":
                 k.s.set("lock_on_paste", 1 if b.get("on") else 0)
             elif name == "close_clients":
                 # все панели сохранят работу и закроют VS Code курса на компьютерах учеников
-                k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
-                k.s.log(None, "close_clients")
+                with k.s.lock:
+                    k.s.set("close_seq", (k.s.get("close_seq") or 0) + 1)
+                    k.s.log(None, "close_clients")
             elif name == "restart_student":
                 # то же самое, но только на компьютере одного ученика
-                sid = int(b.get("student_id") or 0)
+                sid = req_int(b.get("student_id"), "student_id", default=0)
                 if not k.student(sid):
                     raise ApiError(404, "Нет такого ученика")
-                per = dict(k.s.get("restart_students") or {})
-                per[str(sid)] = int(per.get(str(sid), 0)) + 1
-                k.s.set("restart_students", per)
-                k.s.log(sid, "restart_student")
+                with k.s.lock:
+                    per = dict(k.s.get("restart_students") or {})
+                    per[str(sid)] = int(per.get(str(sid), 0)) + 1
+                    k.s.set("restart_students", per)
+                    k.s.log(sid, "restart_student")
             elif name == "toggle_focus":
                 k.toggle_student_flag("focus_all", "focus_students", b.get("student_id"), bool(b.get("on", True)), "focus_mode")
             elif name == "toggle_block_sites":
                 k.toggle_student_flag("block_sites_all", "block_sites_students", b.get("student_id"), bool(b.get("on", True)), "block_sites")
             elif name == "ai/config":
-                k.ai.save_config(b)
+                try:
+                    k.ai.save_config(b)
+                except kurs_ai.AIError as e:
+                    raise ApiError(400, str(e)) from None
             elif name == "ai/mode":
                 try:
                     k.ai.set_mode(str(b.get("mode")))
@@ -2637,12 +2918,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(404, "Нет такой команды")
         else:
             raise ApiError(404, "Нет такой команды")
-        k.s.db.commit()
+        k.s.commit()
         self.send_json(out)
 
     def teacher_login_ok(self) -> None:
         tok = secrets.token_hex(24)
-        self.kurs.s.teacher_tokens[tok] = time.time() + 12 * 3600
+        self.kurs.s.add_teacher_token(tok, ttl=12 * 3600)
         self.send_json({"ok": True}, headers={
             "Set-Cookie": f"kurs_teacher={tok}; Path=/; HttpOnly; SameSite=Strict; Max-Age={12 * 3600}"})
 
@@ -2670,7 +2951,7 @@ def make_server(host: str, port: int, data_dir: str, tasks_dir: str | None = Non
     course_id = st.get("course", "games")
     if course_id not in COURSES:
         course_id = "games"
-    default_dir = COURSES[course_id]["dir"] if os.path.isdir(COURSES[course_id]["dir"]) else os.path.join(KURS, "tasks")
+    default_dir = COURSES[course_id]["dir"]
     lib = Library(tasks_dir or default_dir, os.path.join(KURS, "content"))
     if tasks_dir:
         lib.is_custom = True
@@ -2717,13 +2998,14 @@ def main() -> None:
                   f"Порт занят другой программой — запустите на другом: --port {a.port + 80}")
             sys.exit(1)
         raise
+    kurs: Kurs = srv.RequestHandlerClass.kurs
     ips = local_addresses()
     ip_str = f"http://{ips[0]}:{a.port}" if ips else f"http://localhost:{a.port}"
-    bridge = srv.RequestHandlerClass.kurs.ai.check_bridge(force_fetch=True)
+    bridge = kurs.ai.check_bridge(force_fetch=True)
     if bridge and bridge.get("active"):
         ai_banner = f"🟢 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Активен ({bridge.get('models', 'Gemini 3 Flash')}, прямой туннель)"
-    elif srv.RequestHandlerClass.kurs.ai._configured():
-        ai_banner = f"🟢 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Активен ({srv.RequestHandlerClass.kurs.ai.cfg.get('provider')})"
+    elif kurs.ai._configured():
+        ai_banner = f"🟢 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Активен ({kurs.ai.public_config().get('provider')})"
     else:
         ai_banner = "🟡 [3] МОСТ ИИ / НЕЙРОСЕТЬ: Запасной режим (настройте ключ в пульте при необходимости)"
 
@@ -2738,15 +3020,52 @@ def main() -> None:
     print(f"🟢 [4] ПУЛЬТ УЧИТЕЛЯ    : http://localhost:{a.port}/teacher")
     print("=" * 66)
     print("  Остановить сервер: нажмите Ctrl+C в этом окне\n")
-    while True:
+
+    stop_requested = threading.Event()
+
+    def _handle_signal(signum, _frame) -> None:
+        if stop_requested.is_set():
+            return
+        stop_requested.set()
+        threading.Thread(target=srv.shutdown, name="kurs-shutdown", daemon=True).start()
+
+    for sig in (signal.SIGINT, getattr(signal, "SIGTERM", None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, _handle_signal)
+            except (OSError, ValueError):
+                pass
+
+    try:
+        while not stop_requested.is_set():
+            try:
+                srv.serve_forever()
+            except KeyboardInterrupt:
+                stop_requested.set()
+                break
+            except Exception as e:  # noqa: BLE001
+                if stop_requested.is_set():
+                    break
+                sys.stderr.write(f"\n[Критическая ошибка цикла сервера, автовосстановление]: {e!r}\n")
+                time.sleep(0.5)
+    finally:
+        print("\nСервер остановлен учителем.")
         try:
-            srv.serve_forever()
-        except KeyboardInterrupt:
-            print("\nСервер остановлен учителем.")
-            break
-        except Exception as e:
-            sys.stderr.write(f"\n[Критическая ошибка цикла сервера, автовосстановление]: {e!r}\n")
-            time.sleep(0.5)
+            srv.server_close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kurs.play.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kurs.ai.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kurs.s.close_all()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":

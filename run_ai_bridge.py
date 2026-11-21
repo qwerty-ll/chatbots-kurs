@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -55,6 +57,9 @@ def ensure_antigravity_tools() -> None:
     if is_port_open(PORT):
         log("OK", "Antigravity Tools уже работает на порту 8045.", GREEN)
         return
+    if sys.platform != "darwin":
+        log("WARN", f"Порт {PORT} не отвечает. Запустите Antigravity Tools вручную.", YELLOW)
+        return
     log("INFO", "Antigravity Tools не запущен. Запускаю приложение…", BLUE)
     subprocess.run(["open", "-a", "Antigravity Tools"], check=False)
     for _ in range(25):
@@ -77,20 +82,25 @@ def get_class_key() -> str:
     return DEFAULT_KEY
 
 
-def _drain_pipe(proc: subprocess.Popen) -> None:
-    """Фоновый сброс stdout/stderr, чтобы 64КБ буфер пайпа ОС не переполнялся и не вешал туннель."""
-    try:
-        while proc.poll() is None:
-            line = (proc.stdout.readline() if proc.stdout else "") or (proc.stderr.readline() if proc.stderr else "")
-            if not line:
-                break
-    except Exception:
-        pass
+def _start_reader_thread(proc: subprocess.Popen) -> queue.Queue[str | None]:
+    """Читает stdout в фоновом потоке в очередь (и продолжает дренировать после старта, чтобы буфер не переполнился)."""
+    q: queue.Queue[str | None] = queue.Queue()
 
+    def _reader() -> None:
+        try:
+            if proc.stdout:
+                for line in proc.stdout:
+                    try:
+                        q.put_nowait(line)
+                    except queue.Full:
+                        pass
+        except Exception:
+            pass
+        finally:
+            q.put(None)
 
-def _start_drain_thread(proc: subprocess.Popen) -> None:
-    import threading
-    threading.Thread(target=_drain_pipe, args=(proc,), daemon=True).start()
+    threading.Thread(target=_reader, daemon=True).start()
+    return q
 
 
 def _stop_proc(proc: subprocess.Popen | None) -> None:
@@ -116,57 +126,78 @@ def _wait_dns(url: str, timeout: float = 10.0) -> bool:
     return False
 
 
+def _read_url_with_timeout(proc: subprocess.Popen, q: queue.Queue[str | None],
+                           pattern: re.Pattern[str], timeout: float) -> str | None:
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            line = q.get(timeout=min(remaining, 0.5))
+        except queue.Empty:
+            if proc.poll() is not None:
+                return None
+            continue
+        if line is None:
+            return None
+        m = pattern.search(line)
+        if m:
+            return m.group(0)
+
+
 def start_tunnel() -> tuple[subprocess.Popen, str]:
     """Поднимает интернет-туннель (Pinggy SSH, затем cloudflared) и проверяет DNS до публикации."""
     # 1. Нативный SSH Pinggy (стабильно резолвится и работает в РФ через порт 443)
     ssh = shutil.which("ssh")
     if ssh:
+        proc = None
         try:
             log("TUNNEL", f"Запускаю Pinggy туннель для http://127.0.0.1:{PORT}…", BLUE)
-            cmd = [ssh, "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=20",
-                   "-o", "ServerAliveCountMax=3", "-p", "443", f"-R0:localhost:{PORT}", "a.pinggy.io"]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            cmd = [
+                ssh,
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=20",
+                "-o", "ServerAliveCountMax=3",
+                "-p", "443",
+                f"-R0:localhost:{PORT}",
+                "a.pinggy.io",
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace")
+            q = _start_reader_thread(proc)
             pattern = re.compile(r"https://[a-zA-Z0-9.-]+\.(?:pinggy-free\.link|pinggy\.net)")
-            start = time.time()
-            while time.time() - start < 15:
-                line = proc.stdout.readline() if proc.stdout else ""
-                if not line and proc.poll() is not None:
-                    break
-                m = pattern.search(line)
-                if m:
-                    url = m.group(0)
-                    _start_drain_thread(proc)
-                    if _wait_dns(url, timeout=8.0):
-                        return proc, url
-                    log("WARN", f"Домен {url} не резолвится в DNS, пробую другой способ…", YELLOW)
-                    break
+            url = _read_url_with_timeout(proc, q, pattern, timeout=15.0)
+            if url:
+                if _wait_dns(url, timeout=8.0):
+                    return proc, url
+                log("WARN", f"Домен {url} не резолвится в DNS, пробую другой способ…", YELLOW)
             _stop_proc(proc)
         except Exception as e:
+            _stop_proc(proc)
             log("WARN", f"Pinggy туннель не запустился: {e}", YELLOW)
 
     # 2. Резервный вариант через cloudflared (если не заблокирован провайдером)
-    cpath = shutil.which("cloudflared") or "/opt/homebrew/bin/cloudflared"
-    if os.path.isfile(cpath):
+    cpath = shutil.which("cloudflared") or ("/opt/homebrew/bin/cloudflared" if sys.platform == "darwin" else "")
+    if cpath and os.path.isfile(cpath):
+        proc = None
         try:
             log("TUNNEL", f"Запускаю Cloudflare туннель для http://127.0.0.1:{PORT}…", BLUE)
             cmd = [cpath, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{PORT}"]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace")
+            q = _start_reader_thread(proc)
             pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
-            start = time.time()
-            while time.time() - start < 20:
-                line = proc.stdout.readline() if proc.stdout else ""
-                if not line and proc.poll() is not None:
-                    break
-                m = pattern.search(line)
-                if m:
-                    url = m.group(0)
-                    _start_drain_thread(proc)
-                    if _wait_dns(url, timeout=8.0):
-                        return proc, url
-                    log("WARN", f"Домен {url} не резолвится в DNS (возможна блокировка провайдера).", YELLOW)
-                    break
+            url = _read_url_with_timeout(proc, q, pattern, timeout=20.0)
+            if url:
+                if _wait_dns(url, timeout=8.0):
+                    return proc, url
+                log("WARN", f"Домен {url} не резолвится в DNS (возможна блокировка провайдера).", YELLOW)
             _stop_proc(proc)
         except Exception as e:
+            _stop_proc(proc)
             log("WARN", f"Cloudflare туннель не запустился: {e}", YELLOW)
 
     raise RuntimeError("Не удалось поднять рабочий туннель (Pinggy и cloudflared недоступны)")
@@ -233,20 +264,27 @@ def save_bridge_config(tunnel_url: str, key: str, enabled: bool = True) -> dict:
     return conf
 
 
-def sync_git(tunnel_url: str) -> None:
-    log("GIT", "Синхронизирую новый адрес туннеля с GitHub…", CYAN)
+def sync_git(tunnel_url: str, *, message: str | None = None, timeout: int = 25) -> None:
+    log("GIT", "Синхронизирую конфигурацию туннеля с GitHub…", CYAN)
     try:
-        subprocess.run(["git", "-C", HERE, "pull", "--rebase", "--autostash", "origin", "main"],
-                       capture_output=True, timeout=25, check=False)
-        subprocess.run(["git", "-C", HERE, "add", "kurs/server/ai_bridge.json"], timeout=10, check=True)
-        status = subprocess.run(["git", "-C", HERE, "diff", "--cached", "--quiet"], timeout=10, check=False)
+        pull_res = subprocess.run(
+            ["git", "-C", HERE, "pull", "--rebase", "--autostash", "origin", "main"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
+        )
+        if pull_res.returncode != 0:
+            log("WARN", f"git pull --rebase завершился с ошибкой: {(pull_res.stderr or pull_res.stdout).strip()}", YELLOW)
+            return
+        subprocess.run(["git", "-C", HERE, "add", "kurs/server/ai_bridge.json"], timeout=min(timeout, 10), check=True)
+        status = subprocess.run(["git", "-C", HERE, "diff", "--cached", "--quiet"], timeout=min(timeout, 10), check=False)
         if status.returncode != 0:
-            commit_msg = f"Auto-update AI bridge: {tunnel_url}"
-            subprocess.run(["git", "-C", HERE, "commit", "-m", commit_msg], timeout=15, check=True)
-            push_res = subprocess.run(["git", "-C", HERE, "push", "origin", "main"],
-                                      capture_output=True, text=True, timeout=25, check=False)
+            commit_msg = message or f"Auto-update AI bridge: {tunnel_url}"
+            subprocess.run(["git", "-C", HERE, "commit", "-m", commit_msg], timeout=min(timeout, 15), check=True)
+            push_res = subprocess.run(
+                ["git", "-C", HERE, "push", "origin", "main"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
+            )
             if push_res.returncode == 0:
-                log("GIT", "Адрес успешно отправлен в ветку main на GitHub!", GREEN)
+                log("GIT", "Обновление успешно отправлено в ветку main на GitHub!", GREEN)
             else:
                 log("WARN", f"Не удалось выполнить push: {push_res.stderr.strip()}", YELLOW)
         else:
@@ -286,6 +324,7 @@ def main() -> None:
     def handle_sigint(sig, frame):
         print(f"\n{BLUE}Останавливаю туннель…{RESET}")
         save_bridge_config(tunnel_url, key, enabled=False)
+        sync_git(tunnel_url, message="Auto-disable AI bridge", timeout=8)
         _stop_proc(proc)
         log("OK", "Мост остановлен. До встречи!", GREEN)
         sys.exit(0)

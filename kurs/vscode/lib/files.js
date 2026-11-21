@@ -24,7 +24,14 @@ function readJson(file, fallback) {
 
 function writeFile(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text, "utf8");
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, "utf8");
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) {}
+    throw e;
+  }
 }
 
 /** Все файлы работы ученика для резервной копии на сервере: [{path, content}], пути через «/» от Мои_работы. */
@@ -58,9 +65,9 @@ function restoreWork(root, files) {
   let n = 0;
   for (const f of files || []) {
     const rel = String(f.path || "");
-    if (!rel || rel.split("/").includes("..") || path.isAbsolute(rel)) continue;
+    if (!rel || rel.includes("\\") || rel.split("/").includes("..") || path.isAbsolute(rel)) continue;
     const full = path.join(base, ...rel.split("/"));
-    if (!full.startsWith(base + path.sep)) continue;
+    if (!isInside(full, base)) continue;
     if (fs.existsSync(full)) continue;
     writeFile(full, String(f.content || ""));
     n++;

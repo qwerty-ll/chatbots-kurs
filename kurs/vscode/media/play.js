@@ -69,7 +69,6 @@
 
   // =====================================================================  ШАХМАТЫ
   const Chess = (function () {
-    const N = { n: [-17, -15, -10, -6, 6, 10, 15, 17] };
     const isW = (p) => p && p === p.toUpperCase();
     const colorOf = (p) => (p ? (isW(p) ? "w" : "b") : null);
     const rc = (i) => [i >> 3, i & 7];
@@ -289,10 +288,21 @@
         const m = legal(s).find((x) => x.from === msg.from && x.to === msg.to);
         if (m) play(m, false);
       }
+      const aiTimers = new Set();
       draw();
-      return { box, onMessage, stop() {}, ai: { reply(msg, answer) {        // компьютер играет чёрными
+      return { box, onMessage, stop() {
+        over = true;
+        for (const id of aiTimers) clearTimeout(id);
+        aiTimers.clear();
+      }, ai: { reply(msg, answer) {        // компьютер играет чёрными
         if (msg.type !== "move" || over) return;
-        setTimeout(() => { const m = bestMove(s); if (m) answer({ type: "move", from: m.from, to: m.to, promo: m.promo || null }); }, 350);
+        const id = setTimeout(() => {
+          aiTimers.delete(id);
+          if (over) return;
+          const m = bestMove(s);
+          if (m) answer({ type: "move", from: m.from, to: m.to, promo: m.promo || null });
+        }, 350);
+        aiTimers.add(id);
       } } };
     }
     return { game, start, legal, apply, status };
@@ -416,21 +426,50 @@
       draw();
       // компьютер: расставляет флот сам, стреляет «охотой» — после попадания добивает соседние клетки
       const cpu = { fleet: place(), hits: Array.from({ length: 10 }, () => new Array(10).fill(false)), tried: new Set(), targets: [] };
+      const aiTimers = new Set();
+      function later(fn, ms) {
+        const id = setTimeout(() => {
+          aiTimers.delete(id);
+          if (over) return;
+          fn();
+        }, ms);
+        aiTimers.add(id);
+      }
       function cpuShot(answerFn) {
+        if (over) return;
         let x, y;
-        while (cpu.targets.length) { [x, y] = cpu.targets.shift(); if (!cpu.tried.has(x + "," + y)) break; x = undefined; }
-        if (x === undefined) do { x = rnd(10); y = rnd(10); } while (cpu.tried.has(x + "," + y));
+        while (cpu.targets.length) {
+          [x, y] = cpu.targets.shift();
+          if (x >= 0 && y >= 0 && x < 10 && y < 10 && !cpu.tried.has(x + "," + y)) break;
+          x = undefined;
+        }
+        if (x === undefined) {
+          if (cpu.tried.size >= 100) return;
+          const avail = [];
+          for (let yy = 0; yy < 10; yy++) {
+            for (let xx = 0; xx < 10; xx++) {
+              if (!cpu.tried.has(xx + "," + yy)) avail.push([xx, yy]);
+            }
+          }
+          if (!avail.length) return;
+          [x, y] = avail[rnd(avail.length)];
+        }
         cpu.tried.add(x + "," + y);
         cpu.last = [x, y];
         answerFn({ type: "shot", x, y });
       }
-      return { box, onMessage, stop() {}, ai: { reply(msg, answerFn) {
+      return { box, onMessage, stop() {
+        over = true;
+        for (const id of aiTimers) clearTimeout(id);
+        aiTimers.clear();
+      }, ai: { reply(msg, answerFn) {
+        if (over) return;
         if (msg.type === "ready") { answerFn({ type: "ready" }); return; }
         if (msg.type === "shot") {
           const r = answer(cpu.fleet, cpu.hits, msg.x, msg.y);
-          setTimeout(() => {
+          later(() => {
             answerFn(Object.assign({ type: "result" }, r));
-            if (!r.hit && !r.win) setTimeout(() => cpuShot(answerFn), 500);
+            if (!r.hit && !r.win) later(() => cpuShot(answerFn), 500);
           }, 250);
           return;
         }
@@ -441,9 +480,12 @@
           }
           if (msg.sunk) {
             cpu.targets = [];
-            for (const [x, y] of msg.sunk) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) cpu.tried.add((x + dx) + "," + (y + dy));
+            for (const [x, y] of msg.sunk) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx >= 0 && ny >= 0 && nx < 10 && ny < 10) cpu.tried.add(nx + "," + ny);
+            }
           }
-          if (msg.hit && !msg.win) setTimeout(() => cpuShot(answerFn), 500);
+          if (msg.hit && !msg.win) later(() => cpuShot(answerFn), 500);
         }
       } } };
     }
@@ -462,7 +504,7 @@
       const g = canvas.getContext("2d");
       let me = { x: 0.5, y: H - 0.2, vx: 0, vy: 0 }, foe = { x: 0.5, y: 0.2, vx: 0, vy: 0 };
       let puck = { x: 0.5, y: H / 2, vx: 0, vy: 0 };
-      let score = [0, 0], over = false, target = { x: 0.5, y: H - 0.2 }, frame = 0, raf = null, lastSent = 0;
+      let score = [0, 0], over = false, target = { x: 0.5, y: H - 0.2 }, raf = null, lastTime = 0, lastNetSent = 0;
 
       function toWorld(e) {
         const r = canvas.getBoundingClientRect();
@@ -475,13 +517,14 @@
       window.addEventListener("keydown", kd);
       window.addEventListener("keyup", kd);
 
-      function movePaddle(p, t, minY, maxY) {
-        const k = 0.012;
+      function movePaddle(p, t, minY, maxY, step) {
+        const k = 0.012 * step;
         if (keys.ArrowLeft) t.x -= k * 3; if (keys.ArrowRight) t.x += k * 3; if (keys.ArrowUp) t.y -= k * 3; if (keys.ArrowDown) t.y += k * 3;
         t.x = Math.max(PR, Math.min(W - PR, t.x)); t.y = Math.max(minY, Math.min(maxY, t.y));
-        const nx = p.x + Math.max(-0.05, Math.min(0.05, t.x - p.x));
-        const ny = p.y + Math.max(-0.05, Math.min(0.05, t.y - p.y));
-        p.vx = nx - p.x; p.vy = ny - p.y; p.x = nx; p.y = ny;
+        const maxMove = 0.05 * step;
+        const nx = p.x + Math.max(-maxMove, Math.min(maxMove, t.x - p.x));
+        const ny = p.y + Math.max(-maxMove, Math.min(maxMove, t.y - p.y));
+        p.vx = step > 0 ? (nx - p.x) / step : 0; p.vy = step > 0 ? (ny - p.y) / step : 0; p.x = nx; p.y = ny;
       }
       function collide(p) {
         const dx = puck.x - p.x, dy = puck.y - p.y, d = Math.hypot(dx, dy);
@@ -493,9 +536,10 @@
           puck.vx += p.vx * 0.6; puck.vy += p.vy * 0.6;
         }
       }
-      function physics() {
-        puck.x += puck.vx; puck.y += puck.vy;
-        puck.vx *= 0.994; puck.vy *= 0.994;
+      function physics(step) {
+        puck.x += puck.vx * step; puck.y += puck.vy * step;
+        const damp = Math.pow(0.994, step);
+        puck.vx *= damp; puck.vy *= damp;
         const v = Math.hypot(puck.vx, puck.vy);
         if (v > MAXV) { puck.vx *= MAXV / v; puck.vy *= MAXV / v; }
         if (puck.x < KR) { puck.x = KR; puck.vx = Math.abs(puck.vx); }
@@ -517,12 +561,15 @@
           ctx.finished(text);
         }
       }
-      function cpu() {   // компьютер: держится между шайбой и своими воротами, атакует на своей половине
+      function cpu(step) {   // компьютер: держится между шайбой и своими воротами, атакует на своей половине
         const t = { x: puck.x, y: puck.y < H / 2 ? puck.y - 0.05 : 0.18 };
-        foe.vx = Math.max(-0.018, Math.min(0.018, t.x - foe.x));
-        foe.vy = Math.max(-0.018, Math.min(0.018, t.y - foe.y));
-        foe.x = Math.max(PR, Math.min(W - PR, foe.x + foe.vx));
-        foe.y = Math.max(PR, Math.min(H / 2 - PR, foe.y + foe.vy));
+        const maxCpu = 0.018 * step;
+        const dx = Math.max(-maxCpu, Math.min(maxCpu, t.x - foe.x));
+        const dy = Math.max(-maxCpu, Math.min(maxCpu, t.y - foe.y));
+        foe.vx = step > 0 ? dx / step : 0;
+        foe.vy = step > 0 ? dy / step : 0;
+        foe.x = Math.max(PR, Math.min(W - PR, foe.x + dx));
+        foe.y = Math.max(PR, Math.min(H / 2 - PR, foe.y + dy));
       }
       const mirror = (p) => ({ x: W - p.x, y: H - p.y });
       function draw() {
@@ -538,15 +585,24 @@
         const mine = host ? score[0] : score[1], theirs = host ? score[1] : score[0];
         info.textContent = over ? info.textContent : `Ты ${mine} : ${theirs} ${ctx.names[1 - ctx.you]}`;
       }
-      function loop() {
+      function loop(now) {
         if (over) { draw(); return; }
-        frame++;
-        movePaddle(me, target, H / 2 + PR, H - PR);
+        if (!lastTime) lastTime = now;
+        const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
+        lastTime = now;
+        const step = dt * 60;
+        movePaddle(me, target, H / 2 + PR, H - PR, step);
         if (host) {
-          if (ctx.cpu) cpu();
-          physics();
-          if (frame % 2 === 0) ctx.send({ type: "st", pk: [puck.x, puck.y], hp: [me.x, me.y], sc: score });
-        } else if (frame % 2 === 0) ctx.send({ type: "pd", p: [me.x, me.y] });
+          if (ctx.cpu) cpu(step);
+          physics(step);
+          if (now - lastNetSent >= 33) {
+            lastNetSent = now;
+            ctx.send({ type: "st", pk: [puck.x, puck.y], hp: [me.x, me.y], sc: score });
+          }
+        } else if (now - lastNetSent >= 33) {
+          lastNetSent = now;
+          ctx.send({ type: "pd", p: [me.x, me.y] });
+        }
         draw();
         raf = requestAnimationFrame(loop);
       }
@@ -671,11 +727,27 @@
           else if (msg.type === "react") { ui.bubble.textContent = msg.e; setTimeout(() => { if (ui.bubble.textContent === msg.e) ui.bubble.textContent = ""; }, 2500); }
           else if (c.game) c.game.onMessage(msg, false);
         };
-        ws.onclose = () => { if (!c.dead && cur === c && tries++ < 20) setTimeout(connect, 1500); };
+        ws.onclose = () => {
+          if (c.dead || cur !== c) return;
+          if (tries++ < 20) {
+            c.reconnectTimer = setTimeout(connect, 1500);
+          } else {
+            ui.done.replaceChildren(
+              el("span", {}, "Не удалось подключиться к игре. "),
+              el("button", { class: "secondary small", onclick: () => {
+                tries = 0;
+                ui.done.classList.add("hidden");
+                connect();
+              } }, "Повторить"),
+              el("button", { class: "play-exit-btn", onclick: exitGame }, "← К списку игроков")
+            );
+            ui.done.classList.remove("hidden");
+          }
+        };
       };
       c.send = (msg) => { if (c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
       c.timer = setInterval(() => c.send({ type: "ping" }), 15000);
-      c.close = () => { window.removeEventListener("keydown", onKey); c.dead = true; clearInterval(c.timer); if (c.game) c.game.stop(); if (c.ws) c.ws.close(); };
+      c.close = () => { window.removeEventListener("keydown", onKey); c.dead = true; clearInterval(c.timer); clearTimeout(c.reconnectTimer); if (c.game) c.game.stop(); if (c.ws) c.ws.close(); };
       connect();
     }
     cur = c;

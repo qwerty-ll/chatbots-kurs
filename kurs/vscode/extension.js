@@ -5,6 +5,7 @@
 "use strict";
 const vscode = require("vscode");
 const cp = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -14,6 +15,7 @@ const { Guard, squash, isAiGenerated } = require("./lib/guard");
 
 const POLL_MS = 3000;
 const IDLE_POLL_MS = 5000;
+const GUARD_BACKOFF_MS = 30000;
 
 /** @type {Kurs} */
 let kurs;
@@ -26,8 +28,8 @@ function activate(context) {
     vscode.commands.registerCommand("kurs.check", (uri) => kurs.checkFile(uri)),
     vscode.workspace.onDidSaveTextDocument((doc) => kurs.onSave(doc)),
     vscode.window.onDidChangeActiveTextEditor((ed) => kurs.onEditor(ed)),
-    vscode.workspace.onDidChangeTextDocument((e) => { kurs.diag.delete(e.document.uri); kurs.onChange(e); }),
-    vscode.workspace.onDidOpenTextDocument((doc) => kurs.onOpen(doc)),
+    vscode.workspace.onDidChangeTextDocument((e) => { kurs.diag.delete(e.document.uri); kurs.onChange(e).catch(() => {}); }),
+    vscode.workspace.onDidOpenTextDocument((doc) => { kurs.onOpen(doc).catch(() => {}); }),
     { dispose: () => kurs.stop() }
   );
   kurs.start();
@@ -46,7 +48,6 @@ class Kurs {
     context.subscriptions.push(this.status);
     this.timer = null;
     this.uploadTimer = null;
-    this.lastPyEditor = null;
     this.runner = null;
     this.diag = vscode.languages.createDiagnosticCollection("kurs");
     context.subscriptions.push(this.diag);
@@ -68,17 +69,23 @@ class Kurs {
     this.teamData = null;  // последний ответ /api/team: команды и файлы товарищей
     this.teamV = null;     // его версия: заново спрашиваем, только когда на сервере что-то изменилось
     this.token = null;
+    this.studentId = null;
     this.request = null;   // {id, secret} — ждём подтверждения учителя
     this.tasks = {};       // id → задание с заготовкой (с сервера)
     this.pending = [];     // результаты, которые не удалось отправить без связи
+    this.polling = false;
+    this.flushing = false;
+    this.locked = false;
     // «Пиши сам»: вставка чужого кода в файлы заданий откатывается
     this.restartSeen = {};     // номера команд «перезапустить VS Code» с пульта, которые мы уже видели
     this.focusMode = false;    // тихая блокировка игр и всех браузеров
     this.blockSites = false;   // тихая блокировка ChatGPT, DeepSeek, Алисы, ГигаЧата и VK
     this.guardProc = null;
+    this.guardFailCount = 0;
+    this.guardBackoffUntil = 0;
     this.guard = new Guard();
     if (!context.globalState.get("kurs.guardSince")) context.globalState.update("kurs.guardSince", Date.now());
-    for (const doc of vscode.workspace.textDocuments) this.onOpen(doc);
+    for (const doc of vscode.workspace.textDocuments) this.onOpen(doc).catch(() => {});
   }
 
   // ---------------------------------------------------------------- настройки
@@ -184,7 +191,6 @@ class Kurs {
     }
     this.v.students = hello.students || [];
     this.v.here = hello.here || null;
-    this.v.lessonTitle = hello.title;
     this.setScreen(this.v.here ? "confirmHere" : "pick", "");
     this.schedule(this.refreshRoster, IDLE_POLL_MS);
   }
@@ -253,10 +259,17 @@ class Kurs {
   async enter(studentId) {
     const root = this.root();
     const owner = F.readJson(path.join(root, F.HIDDEN, "owner.json"), null);
-    if (owner && (owner.student_id !== studentId || owner.server !== this.server())) {
+    const switched = (owner && (owner.student_id !== studentId || owner.server !== this.server()))
+      || (this.studentId !== null && this.studentId !== studentId);
+    if (switched) {
       await this.closeWorkEditors();
       F.wipeWork(root);   // работа прошлого ученика уже сохранена на сервере
+      this.pending = [];
+      this.locked = false;
+      await this.applyReadonly();
+      this.guard.reset();
     }
+    this.studentId = studentId;
     F.writeFile(path.join(root, F.HIDDEN, "owner.json"), JSON.stringify({ student_id: studentId, server: this.server() }));
     await this.ctx.globalState.update(this.tokenKey(), { token: this.token, student_id: studentId });
     this.v.checks = {};
@@ -312,7 +325,8 @@ class Kurs {
   }
 
   async pollState() {
-    if (!this.token) return;
+    if (!this.token || this.polling) return;
+    this.polling = true;
     try {
       const st = await this.api("GET", "/api/state");
       if (this.checkRestart(st.restart) || this.checkRestart(st.restart_me, "me") || this.checkClose(st.close)) return;
@@ -321,7 +335,7 @@ class Kurs {
       this.applyGuardState(!!st.focus_mode, !!st.block_sites);
       const lessonChanged = !this.v.state || !this.v.lesson || this.v.state.class_id !== st.class_id || this.v.lesson.lesson !== st.lesson;
       this.v.state = st;
-      this.v.me = { name: st.name, pc: st.pc };
+      this.v.me = { id: this.studentId, student_id: this.studentId, name: st.name, pc: st.pc };
       this.v.offline = false;
       if (lessonChanged) {
         this.v.lesson = await this.api("GET", "/api/lesson");
@@ -350,13 +364,20 @@ class Kurs {
       }
       this.v.offline = true;
       this.render();
+    } finally {
+      this.polling = false;
     }
-    this.schedule(this.pollState, POLL_MS);
+    if (this.token) this.schedule(this.pollState, POLL_MS);
   }
 
   /** Сеанс закрыт: занятие кончилось, другой ученик вошёл, учитель завершил сеанс или ученик вышел. */
   async ended(reason) {
     this.token = null;
+    this.studentId = null;
+    this.pending = [];
+    this.locked = false;
+    await this.applyReadonly();
+    this.guard.reset();
     await this.ctx.globalState.update(this.tokenKey(), undefined);
     await this.closeWorkEditors();
     try { F.wipeWork(this.root()); } catch (e) { console.error("kurs: wipe", e); }
@@ -477,6 +498,11 @@ class Kurs {
     const wantActive = !!(blockGames || blockSites);
     const sameFlags = this.focusMode === !!blockGames && this.blockSites === !!blockSites;
     if (sameFlags && (wantActive ? !!this.guardProc : !this.guardProc)) return;
+    if (sameFlags && wantActive && Date.now() < this.guardBackoffUntil) return;
+    if (!sameFlags || !wantActive) {
+      this.guardFailCount = 0;
+      this.guardBackoffUntil = 0;
+    }
     this.focusMode = !!blockGames;
     this.blockSites = !!blockSites;
     this.stopFocusGuard();
@@ -486,6 +512,11 @@ class Kurs {
     const args = [script, "--watch", "--interval", "0.9"];
     if (this.focusMode) args.push("--block-games");
     if (this.blockSites) args.push("--block-sites");
+    const spawnedAt = Date.now();
+    const recordFailure = () => {
+      this.guardFailCount += 1;
+      this.guardBackoffUntil = Date.now() + GUARD_BACKOFF_MS;
+    };
     try {
       const proc = cp.spawn(this.python(), args, {
         stdio: ["pipe", "ignore", "ignore"],
@@ -494,13 +525,21 @@ class Kurs {
       });
       this.guardProc = proc;
       proc.on("error", () => {
-        if (this.guardProc === proc) this.guardProc = null;
+        if (this.guardProc === proc) {
+          this.guardProc = null;
+          recordFailure();
+        }
       });
-      proc.on("exit", () => {
-        if (this.guardProc === proc) this.guardProc = null;
+      proc.on("exit", (code) => {
+        if (this.guardProc === proc) {
+          this.guardProc = null;
+          if (code !== 0 || Date.now() - spawnedAt < 2000) recordFailure();
+          else this.guardFailCount = 0;
+        }
       });
     } catch (_) {
       this.guardProc = null;
+      recordFailure();
     }
   }
 
@@ -524,7 +563,7 @@ class Kurs {
   /** Файл, который ученик пишет сам: .py в Мои_работы, кроме общих модулей класса. */
   isGuarded(file) {
     const work = path.join(this.root(), F.WORK);
-    return file.endsWith(".py") && !F.SHARED.has(path.basename(file)) && F.isInside(file, work) &&
+    return file.toLowerCase().endsWith(".py") && !F.SHARED.has(path.basename(file)) && F.isInside(file, work) &&
       !path.relative(work, file).split(path.sep).includes(F.TEAM_DIR);   // файлы товарищей приносит панель
   }
   trustedAll() {
@@ -596,13 +635,11 @@ class Kurs {
     const res = this.guard.inspect(file, doc.getText(), e.contentChanges, this.ownSources(file));
     if (!res.blocked.length) return;
     const edit = new vscode.WorkspaceEdit();
-    if (res.blockedChanges && res.blockedChanges.length) {
-      const sorted = res.blockedChanges.slice().sort((a, b) => b.rangeOffset - a.rangeOffset);
-      for (const bc of sorted) {
-        const startPos = doc.positionAt(bc.rangeOffset);
-        const endPos = doc.positionAt(bc.rangeOffset + bc.text.length);
-        edit.replace(doc.uri, new vscode.Range(startPos, endPos), bc.originalText);
-      }
+    if (e.contentChanges.length === 1 && res.blockedChanges && res.blockedChanges.length === 1) {
+      const bc = res.blockedChanges[0];
+      const startPos = doc.positionAt(bc.rangeOffset);
+      const endPos = doc.positionAt(bc.rangeOffset + bc.text.length);
+      edit.replace(doc.uri, new vscode.Range(startPos, endPos), bc.originalText);
     } else {
       edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), res.old);
     }
@@ -644,6 +681,8 @@ class Kurs {
           text: String(text).slice(0, 800)
         });
         if (r && r.locked) {
+          this.locked = true;
+          await this.applyReadonly();
           const alertMsg = "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю.";
           vscode.window.showErrorMessage(alertMsg);
           this.toast(alertMsg);
@@ -654,7 +693,9 @@ class Kurs {
       }
     }
     const msg = kind === "ai_paste_blocked"
-      ? "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю."
+      ? (this.locked
+        ? "Вставка готового кода из нейросети заблокирована! Панель заморожена — обратись к учителю."
+        : "Вставка готового кода из нейросети заблокирована — напиши код сам.")
       : kind === "outside_edit"
         ? "Файл меняли не в редакторе курса — вернул твою версию. Пиши код здесь."
         : this.fromHintOrSample(text)
@@ -685,15 +726,34 @@ class Kurs {
   }
 
   async flushPending() {
-    while (this.pending.length) {
-      const item = this.pending[0];
-      const r = await this.api("POST", "/api/result", item);
-      if (r.solution) this.v.solutions[item.task_id] = { code: r.solution, bonus: r.bonus };
-      this.pending.shift();
+    if (this.flushing) return;
+    this.flushing = true;
+    try {
+      while (this.pending.length) {
+        const item = this.pending[0];
+        const r = await this.api("POST", "/api/result", item);
+        if (r.solution) this.v.solutions[item.task_id] = { code: r.solution, bonus: r.bonus };
+        this.pending.shift();
+      }
+    } finally {
+      this.flushing = false;
     }
   }
 
   // ---------------------------------------------------------------- панель
+  buildWebviewHtml(w) {
+    const media = vscode.Uri.joinPath(this.ctx.extensionUri, "media");
+    const nonce = crypto.randomBytes(16).toString("hex");
+    return fs.readFileSync(path.join(this.ctx.extensionPath, "media", "panel.html"), "utf8")
+      .replace(/{{csp}}/g, w.cspSource)
+      .replace(/{{nonce}}/g, nonce)
+      .replace("{{css}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.css")).toString())
+      .replace("{{js}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.js")).toString())
+      .replace("{{play}}", w.asWebviewUri(vscode.Uri.joinPath(media, "play.js")).toString())
+      // игры по сети класса: панель подключается к серверу курса напрямую (WebSocket)
+      .replace("{{connect}}", this.server() ? `${this.server()} ${this.server().replace(/^http/, "ws")}` : "'none'");
+  }
+
   showPanel() {
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Two, true);
@@ -704,16 +764,7 @@ class Kurs {
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [media] });
     this.panel.iconPath = vscode.Uri.joinPath(media, "icon.svg");
     const w = this.panel.webview;
-    const nonce = Array.from({ length: 24 }, () => Math.floor(Math.random() * 36).toString(36)).join("");
-    const html = fs.readFileSync(path.join(this.ctx.extensionPath, "media", "panel.html"), "utf8")
-      .replace(/{{csp}}/g, w.cspSource)
-      .replace(/{{nonce}}/g, nonce)
-      .replace("{{css}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.css")).toString())
-      .replace("{{js}}", w.asWebviewUri(vscode.Uri.joinPath(media, "panel.js")).toString())
-      .replace("{{play}}", w.asWebviewUri(vscode.Uri.joinPath(media, "play.js")).toString())
-      // игры по сети класса: панель подключается к серверу курса напрямую (WebSocket)
-      .replace("{{connect}}", this.server() ? `${this.server()} ${this.server().replace(/^http/, "ws")}` : "'none'");
-    w.html = html;
+    w.html = this.buildWebviewHtml(w);
     w.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.toast(e.message)));
     this.panel.onDidDispose(() => { this.panel = null; });
     this.render();
@@ -729,7 +780,7 @@ class Kurs {
     // для игр по сети: адрес канала партии и ключ сеанса (панель входит в партию от имени ученика)
     this.v.playWs = this.server().replace(/^http/, "ws") + "/ws/play";
     this.v.playAuth = this.token || "";
-    if (this.panel) this.panel.webview.postMessage({ type: "view", view: this.v });
+    this.panel?.webview.postMessage({ type: "view", view: this.v });
   }
 
   toast(text) {
@@ -752,7 +803,6 @@ class Kurs {
   }
 
   onEditor(ed) {
-    if (ed && ed.document.languageId === "python") this.lastPyEditor = ed;
     const t = ed ? this.taskForPath(ed.document.uri.fsPath) : null;
     vscode.commands.executeCommand("setContext", "kurs.isTaskFile", !!t);
     // большие кнопки под кодом: ученику не нужно искать маленькие значки
@@ -853,6 +903,13 @@ class Kurs {
         await this.runPath(file);
       } else {
         const action = m.cmd === "studioMenu" ? "menu" : "submit";
+        if (action === "submit" && m.confirmOverwrite) {
+          const ok = await vscode.window.showWarningMessage("Заменить ранее сданную сборку?", { modal: true }, "Заменить");
+          if (ok !== "Заменить") {
+            this.panel?.webview.postMessage({ type: "studioResult", cmd: m.cmd, key: m.key, cancelled: true });
+            return;
+          }
+        }
         const me = this.teamData?.team?.members.find((member) => member.me);
         if (action === "submit" && m.mode === "team" && m.source === me?.id) {
           const task = this.taskById(this.v.lesson.team_task);
@@ -861,7 +918,7 @@ class Kurs {
           await this.saveIfOpen(file);
           if (!fs.existsSync(file)) throw new Error("Сначала сохрани файл бродилки.");
           const content = fs.readFileSync(file, "utf8");
-          const saved = await this.api("POST", "/api/files", { files: [{ path: `Занятие_${task.lesson}/${task.file}`, content }] });
+          const saved = await this.api("POST", "/api/files", { files: [{ path: `Занятие_${this.lessonNum()}/${task.file}`, content }] });
           if (!saved.saved) throw new Error("Не удалось сохранить файл проекта. Проверь размер файла или выбери шаблон.");
         }
         this.setTeam(await this.api("POST", "/api/studio/" + action, {
@@ -946,16 +1003,16 @@ class Kurs {
           } else if (ticket.message && typeof ticket.message === "object") {
             replyText = ticket.message.content || "";
           }
-          this.panel.webview.postMessage({ type: "aiChatReply", message: replyText });
+          this.panel?.webview.postMessage({ type: "aiChatReply", message: replyText });
           return;
         } else if (ticket.status === "error") {
-          this.panel.webview.postMessage({ type: "aiChatError", error: ticket.error || "Ошибка нейросети" });
+          this.panel?.webview.postMessage({ type: "aiChatError", error: ticket.error || "Ошибка нейросети" });
           return;
         }
       }
-      this.panel.webview.postMessage({ type: "aiChatError", error: "Нейросеть отвечает дольше обычного. Попробуй ещё раз." });
+      this.panel?.webview.postMessage({ type: "aiChatError", error: "Нейросеть отвечает дольше обычного. Попробуй ещё раз." });
     } catch (e) {
-      this.panel.webview.postMessage({ type: "aiChatError", error: e.message });
+      this.panel?.webview.postMessage({ type: "aiChatError", error: e.message });
     }
   }
 
@@ -1125,13 +1182,13 @@ class Kurs {
         // план не критичен
       }
 
-      this.panel.webview.postMessage({
+      this.panel?.webview.postMessage({
         type: "toolGenerated",
         message: `✨ Инструмент «${parsed.name}» создан и вставлен в файл! Второй инструмент напиши сам.`
       });
       this.toast(`✨ Создан инструмент ${parsed.name}!`);
     } catch (e) {
-      this.panel.webview.postMessage({
+      this.panel?.webview.postMessage({
         type: "toolGenerateError",
         error: e.message || "Не удалось сгенерировать инструмент"
       });
@@ -1215,9 +1272,9 @@ class Kurs {
     if (!this.token || !this.panel) return;
     try {
       const lobby = await this.api("GET", "/api/play");
-      this.panel.webview.postMessage({ type: "lobby", lobby });
+      this.panel?.webview.postMessage({ type: "lobby", lobby });
     } catch (e) {
-      this.panel.webview.postMessage({ type: "lobby", lobby: null, error: e.message });
+      this.panel?.webview.postMessage({ type: "lobby", lobby: null, error: e.message });
     }
   }
 
@@ -1233,11 +1290,27 @@ class Kurs {
 
   async setServer(server) {
     server = String(server || "").trim();
+    if (!server) {
+      this.toast("Введи адрес сервера курса.");
+      return;
+    }
     if (!/^https?:\/\//.test(server)) server = "http://" + server;
+    server = server.replace(/\/+$/, "");
     const file = path.join(this.root(), F.HIDDEN, "config.json");
     const cfg = F.readJson(file, {});
-    cfg.server = server.replace(/\/+$/, "");
+    cfg.server = server;
     F.writeFile(file, JSON.stringify(cfg, null, 2));
+    try {
+      const target = vscode.workspace.workspaceFolders?.length
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      await vscode.workspace.getConfiguration("kurs").update("server", server, target);
+    } catch (e) {
+      console.error("kurs: setServer setting", e);
+    }
+    if (this.panel) {
+      this.panel.webview.html = this.buildWebviewHtml(this.panel.webview);
+    }
     return this.boot();
   }
 
@@ -1267,7 +1340,6 @@ class Kurs {
   async openPath(file) {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
     const ed = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
-    this.lastPyEditor = ed;
     this.keepPanelRight();
     return ed;
   }
@@ -1335,6 +1407,11 @@ class Kurs {
 
     try {
       await this.api("POST", "/api/reset_lesson", { lesson: lessonNum });
+      this.v.checks = {};
+      this.v.hints = {};
+      this.v.solutions = {};
+      this.diag.clear();
+      this.panel?.webview.postMessage({ type: "lessonReset" });
       this.refreshFiles();
       await this.pollState();
       this.toast("Прогресс занятия сброшен.");
@@ -1363,7 +1440,6 @@ class Kurs {
     this.diag.delete(vscode.Uri.file(file));
     const pty = new RunPty(this.python(), this.checker(), file, (err) => this.markError(file, err));
     this.runner = vscode.window.createTerminal({ name: "▶ " + path.basename(file), pty, iconPath: new vscode.ThemeIcon("play") });
-    pty.terminal = this.runner;
     this.runner.show(false);
   }
 
@@ -1447,9 +1523,14 @@ class Kurs {
 
   async loadSolution(id) {
     if (this.v.solutions[id]) return;
-    const r = await this.api("GET", "/api/solution?id=" + encodeURIComponent(id));
-    this.v.solutions[id] = { code: r.solution, bonus: r.bonus };
-    this.render();
+    try {
+      const r = await this.api("GET", "/api/solution?id=" + encodeURIComponent(id));
+      this.v.solutions[id] = { code: r.solution, bonus: r.bonus };
+      this.render();
+    } catch (e) {
+      this.panel?.webview.postMessage({ type: "solutionError", task: id });
+      throw e;
+    }
   }
 
   async compareSolution(id) {
@@ -1511,9 +1592,15 @@ class RunPty {
     this.onDidClose = this.closeEmitter.event;
     this.line = "";
     this.proc = null;
+    this.closed = false;
+  }
+
+  cleanupErrFile() {
+    try { fs.rmSync(this.errFile, { force: true }); } catch (_) {}
   }
 
   write(text) {
+    if (this.closed) return;
     this.writeEmitter.fire(String(text).replace(/\r?\n/g, "\r\n"));
   }
 
@@ -1523,6 +1610,7 @@ class RunPty {
       cwd: path.dirname(this.file),
       env: Object.assign({}, process.env, { PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1", KURS_ERROR_FILE: this.errFile }),
     });
+    if (this.proc.stdin) this.proc.stdin.on("error", () => {});
     this.proc.stdout.setEncoding("utf8");
     this.proc.stderr.setEncoding("utf8");
     this.proc.stdout.on("data", (d) => this.write(d));
@@ -1530,23 +1618,26 @@ class RunPty {
     this.proc.on("error", (e) => {
       this.write(`\nНе получилось запустить Python (${this.python}): ${e.message}\nПозови учителя.\n`);
       this.proc = null;
+      this.cleanupErrFile();
     });
     this.proc.on("close", (code) => {
-      if (!this.proc) return;
+      const wasActive = !!this.proc;
       this.proc = null;
-      this.write(code === 0 ? "\n\x1b[2m— программа завершилась —\x1b[0m\n" : "\n\x1b[2m— программа остановилась —\x1b[0m\n");
       const err = F.readJson(this.errFile, null);
-      fs.rmSync(this.errFile, { force: true });
+      this.cleanupErrFile();
+      if (!wasActive || this.closed) return;
+      this.write(code === 0 ? "\n\x1b[2m— программа завершилась —\x1b[0m\n" : "\n\x1b[2m— программа остановилась —\x1b[0m\n");
       if (err && this.onError) this.onError(err);
     });
   }
 
   handleInput(data) {
-    if (!this.proc) return;
-    for (const ch of data) {
+    if (!this.proc || this.closed) return;
+    const cleaned = String(data).replace(/\x1b\[[0-9;?]*[A-Za-z~]/g, "");
+    for (const ch of cleaned) {
       if (ch === "\r") {
         this.write("\n");
-        this.proc.stdin.write(this.line + "\n");
+        if (this.proc && this.proc.stdin) this.proc.stdin.write(this.line + "\n");
         this.line = "";
       } else if (ch === "\x7f" || ch === "\b") {
         if (this.line.length) {
@@ -1555,7 +1646,7 @@ class RunPty {
         }
       } else if (ch === "\x03") {
         this.write("^C\n");
-        this.proc.kill("SIGINT");
+        if (this.proc) this.proc.kill("SIGINT");
       } else if (ch >= " ") {
         this.line += ch;
         this.writeEmitter.fire(ch);
@@ -1564,8 +1655,13 @@ class RunPty {
   }
 
   close() {
+    if (this.closed) return;
+    this.closed = true;
     if (this.proc) this.proc.kill();
     this.proc = null;
+    this.cleanupErrFile();
+    this.writeEmitter.dispose();
+    this.closeEmitter.dispose();
   }
 }
 

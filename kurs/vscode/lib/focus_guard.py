@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import ctypes
 import ctypes.util
-import json
 import os
 import re
 import shutil
@@ -78,7 +77,7 @@ SAFE_TITLE_RE = re.compile(
 LINUX_BROWSER_EXES = {
     "chrome", "chromium", "chromium-browser", "chromium-gost", "google-chrome",
     "google-chrome-stable", "google-chrome-beta", "yandex-browser",
-    "yandex-browser-stable", "yandex_browser", "browser", "firefox",
+    "yandex-browser-stable", "yandex_browser", "firefox",
     "firefox-bin", "firefox-esr", "navigator", "opera", "msedge",
     "microsoft-edge", "brave", "brave-browser", "vivaldi", "vivaldi-bin",
     "sputnik", "atom-browser", "palemoon", "librewolf", "waterfox", "epiphany",
@@ -117,7 +116,7 @@ WIN_BROWSER_EXES = {
 }
 
 WIN_HARD_BLOCK_EXES = WIN_BROWSER_EXES | {
-    "javaw.exe", "minecraft.exe", "minecraftlauncher.exe", "tlauncher.exe",
+    "minecraft.exe", "minecraftlauncher.exe", "tlauncher.exe",
     "telegram.exe", "discord.exe", "steam.exe", "robloxplayerbeta.exe",
 }
 
@@ -131,15 +130,6 @@ def is_banned_title(title: str) -> bool:
     if SAFE_TITLE_RE.search(title):
         return False
     return bool(BANNED_SITE_TITLE_RE.search(title) or BANNED_SITE_URL_RE.search(title))
-
-
-def is_banned_url(url: str) -> bool:
-    if not url:
-        return False
-    low = url.lower()
-    if low.startswith(("http://localhost", "http://127.0.0.1", "http://192.168.", "http://10.", "chrome://", "about:")):
-        return False
-    return bool(BANNED_SITE_URL_RE.search(url))
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +347,8 @@ class _X11Helper:
         w_kc = self.x11.XKeysymToKeycode(self.dpy, 0x0077)     # XK_w
         if not ctrl_kc or not w_kc:
             return False
+        if self.active_window() != expected_wid:
+            return False
         self.xtst.XTestFakeKeyEvent(self.dpy, ctrl_kc, 1, 0)
         self.xtst.XTestFakeKeyEvent(self.dpy, w_kc, 1, 0)
         self.xtst.XTestFakeKeyEvent(self.dpy, w_kc, 0, 0)
@@ -455,29 +447,113 @@ def _linux_enforce_browser_sites(procs: list[tuple[int, str, str, str]]) -> None
 # ---------------------------------------------------------------------------
 # Windows: ctypes user32 + kernel32 / taskkill
 # ---------------------------------------------------------------------------
+_win_apis_configured = False
+
+
+def _win_setup_apis(user32: ctypes.WinDLL, kernel32: ctypes.WinDLL, wndenumproc: type) -> None:
+    global _win_apis_configured
+    if _win_apis_configured:
+        return
+    from ctypes import wintypes
+
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.EnumWindows.argtypes = [wndenumproc, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_void_p]
+    user32.keybd_event.restype = None
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    _win_apis_configured = True
+
+
+def _win_kill_java_games() -> None:
+    """На Windows завершает только те процессы javaw.exe/java.exe, чей командлайн совпадает с JAVA_GAME_RE."""
+    ps_cmd = (
+        "Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' OR Name='java.exe'\" "
+        "| ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+    )
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            creationflags=0x08000000,
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    pids: list[str] = []
+    for line in (res.stdout or "").splitlines():
+        if "\t" not in line:
+            continue
+        pid_str, cmdline = line.split("\t", 1)
+        pid_str = pid_str.strip()
+        if pid_str.isdigit() and JAVA_GAME_RE.search(cmdline):
+            pid_int = int(pid_str)
+            if pid_int != SELF_PID and pid_int != PPID:
+                pids.append(pid_str)
+    if pids:
+        args = ["taskkill", "/F"]
+        for pid_str in pids:
+            args.extend(["/PID", pid_str])
+        try:
+            subprocess.run(args, creationflags=0x08000000, capture_output=True, timeout=4, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 def _win_enforce(block_games: bool, block_sites: bool) -> None:
     if block_games:
         args = ["taskkill", "/F", "/T"]
         for exe in WIN_HARD_BLOCK_EXES:
             args.extend(["/IM", exe])
         try:
-            subprocess.run(args, creationflags=0x08000000, capture_output=True, check=False)
-        except OSError:
+            subprocess.run(args, creationflags=0x08000000, capture_output=True, timeout=4, check=False)
+        except (OSError, subprocess.TimeoutExpired):
             pass
+        _win_kill_java_games()
         return
 
     if not block_sites:
         return
 
+    from ctypes import wintypes
+
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    _win_setup_apis(user32, kernel32, WNDENUMPROC)
+
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     WM_CLOSE = 0x0010
+    VK_SHIFT = 0x10
+    VK_CONTROL = 0x11
+    VK_W = 0x57
+    KEYEVENTF_KEYUP = 0x0002
 
-    fg_hwnd = user32.GetForegroundWindow()
+    fg_hwnd = int(user32.GetForegroundWindow() or 0)
     matched_windows: list[tuple[int, int, str]] = []
-
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_ssize_t)
 
     def _cb(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
@@ -490,7 +566,7 @@ def _win_enforce(block_games: bool, block_sites: bool) -> None:
         title = buf.value
         if not is_banned_title(title):
             return True
-        pid = ctypes.c_ulong()
+        pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         if not pid.value or pid.value == SELF_PID or pid.value == PPID:
             return True
@@ -499,7 +575,7 @@ def _win_enforce(block_games: bool, block_sites: bool) -> None:
         if hproc:
             try:
                 pbuf = ctypes.create_unicode_buffer(512)
-                psize = ctypes.c_ulong(512)
+                psize = wintypes.DWORD(512)
                 if kernel32.QueryFullProcessImageNameW(hproc, 0, pbuf, ctypes.byref(psize)):
                     exe_name = os.path.basename(pbuf.value).lower()
             finally:
@@ -516,20 +592,33 @@ def _win_enforce(block_games: bool, block_sites: bool) -> None:
         first_seen = _seen_windows.get(hwnd)
         if first_seen is None:
             _seen_windows[hwnd] = now
-            if hwnd == fg_hwnd:
-                # Ctrl+W через виртуальный код W (0x57) работает и при русской раскладке
-                user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL down
-                user32.keybd_event(0x57, 0, 0, 0)  # 'W' down
-                user32.keybd_event(0x57, 0, 2, 0)  # 'W' up
-                user32.keybd_event(0x11, 0, 2, 0)  # VK_CONTROL up
+            if hwnd == fg_hwnd and int(user32.GetForegroundWindow() or 0) == hwnd:
+                # Отпускаем Shift, если ученик держал его (иначе Ctrl+Shift+W закроет всё окно)
+                if user32.GetAsyncKeyState(VK_SHIFT) & 0x8000:
+                    user32.keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
+                # Повторная проверка фокуса прямо перед отправкой Ctrl+W
+                if int(user32.GetForegroundWindow() or 0) == hwnd:
+                    # Ctrl+W через виртуальный код W (0x57) работает и при русской раскладке
+                    user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                    user32.keybd_event(VK_W, 0, 0, 0)
+                    user32.keybd_event(VK_W, 0, KEYEVENTF_KEYUP, 0)
+                    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                else:
+                    user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
             else:
                 user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
         elif now - first_seen < 2.2:
             user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
         else:
             try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], creationflags=0x08000000, capture_output=True, check=False)
-            except OSError:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    creationflags=0x08000000,
+                    capture_output=True,
+                    timeout=4,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
                 pass
     for old in list(_seen_windows):
         if old not in alive:
@@ -541,9 +630,9 @@ def _win_enforce(block_games: bool, block_sites: bool) -> None:
 # ---------------------------------------------------------------------------
 _JXA_CLOSE_TABS = r"""
 ObjC.import('stdlib');
-const BANNED_URL = /(chatgpt\.com|chat\.openai\.com|openai\.com\/chatgpt|sora\.com|deepseek\.com|chat\.deepseek\.com|alice\.yandex\.(ru|com)|ya\.ru\/ai|yandex\.ru\/chat|neuro\.ya\.ru|shedevrum\.ai|giga\.chat|gigachat\.sber\.ru|claude\.ai|gemini\.google\.com|qwen\.ai|chat\.qwen\.ai|perplexity\.ai|grok\.com|copilot\.microsoft\.com|poe\.com|chat\.mistral\.ai|vk\.com|vk\.ru|vkvideo\.ru|vkplay\.ru|web\.telegram\.org|ok\.ru|discord\.com|web\.whatsapp\.com)/i;
-const BANNED_TITLE = /(\bchatgpt\b|\bchat\.openai\b|\bdeepseek\b|\bgigachat\b|гига\s*чат|алиса\s*(ai|ии|нейро|gpt|чат)|чат\s+с\s+алисой|yandexgpt|нейро\s*[-—|•]\s*яндекс|яндекс\s*нейро|[-—|•]\s*нейро(\s*[-—|•].*)?$|(^|[-—|•]\s*)алиса(\s*\([^)]*\))?(\s*[-—|•].*)?$|\bclaude\.ai\b|^claude(\s*[-—|•].*)?$|^google\s+gemini|^gemini(\s*[-—|•].*)?$|\bqwen\b|\bperplexity\b|^grok(\s*[-—|•].*)?$|\bmicrosoft\s+copilot\b|вконтакте|vkontakte|\bvk\.com\b|\bvk\.ru\b|\bvk\s*(видео|музыка|клипы|мессенджер|play)\b|^(новости|мессенджер|друзья|сообщества)(\s*\(\d+\))?(\s*[-—|•].*)?$|\bодноклассники\b|\bok\.ru\b|\bdiscord\b)/i;
-const SAFE = /(пульт учителя|localhost|127\.0\.0\.1|курс «чат-боты|chrome:\/\/|about:|gemini api)/i;
+const BANNED_URL = /(?:chatgpt\.com|chat\.openai\.com|openai\.com\/chatgpt|sora\.com|deepseek\.com|chat\.deepseek\.com|(?:alice|neuro)\.(?:yandex|ya)\.(?:ru|com)|(?:yandex|ya)\.ru\/(?:ai|alice|chat|neuro)|shedevrum\.ai|giga\.chat|gigachat\.sber\.ru|developers\.sber\.ru\/.*gigachat|claude\.ai|gemini\.google\.com|qwen\.ai|chat\.qwen\.ai|qwenlm\.ai|perplexity\.ai|grok\.com|copilot\.microsoft\.com|poe\.com|chat\.mistral\.ai|vk\.com|vk\.ru|vkvideo\.ru|vkplay\.ru|vkplay\.live|web\.vk\.me|vkontakte\.ru|web\.telegram\.org|ok\.ru|discord\.com|web\.whatsapp\.com)/i;
+const BANNED_TITLE = /(?:\bchatgpt\b|\bchat\.openai\b|\bdeepseek\b|\bgigachat\b|гига\s*чат|алиса\s*(?:ai|ии|нейро|gpt|чат)|чат\s+с\s+алисой|yandexgpt|alice\.yandex|нейро\s*[-—|•]\s*яндекс|яндекс\s*нейро|[-—|•]\s*нейро(?:\s*[-—|•].*)?$|(?:^|[-—|•]\s*)алиса(?:\s*\([^)]*\))?(?:\s*[-—|•].*)?$|\bclaude\.ai\b|^claude(?:\s*[-—|•].*)?$|^google\s+gemini|^gemini(?:\s*[-—|•].*)?$|\bqwen\b|\bperplexity\b|^grok(?:\s*[-—|•].*)?$|\bmicrosoft\s+copilot\b|^copilot\s*[-—|•]|вконтакте|vkontakte|\bvk\.com\b|\bvk\.ru\b|\bvk\s*(?:видео|музыка|клипы|мессенджер|play|video|music|clips)\b|(?:^|\s|\||-|—)vk(?:\s*[-—|•].*|\s*)$|^(?:новости|мессенджер|друзья|сообщества)(?:\s*\(\d+\))?(?:\s*[-—|•]\s*(?:google\s+chrome|chromium(?:-gost)?|yandex(?:\s+browser)?|яндекс(?:\s*\.?\s*браузер)?|mozilla\s+firefox|firefox|opera|microsoft\s+edge|edge|brave|vivaldi|sputnik|safari).*)?$|telegram\s+web|^telegram(?:\s*\(\d+\))?(?:\s*[-—|•].*)?$|\bодноклассники\b|\bok\.ru\b|\bwhatsapp\b|\bdiscord\b)/i;
+const SAFE = /(?:пульт\s+учителя|localhost|127\.0\.0\.1|курс\s+«чат-боты|презентация|chrome:\/\/|about:|gemini api)/i;
 
 function bad(url, title) {
   const u = String(url || '');
@@ -602,13 +691,27 @@ def _mac_enforce(block_games: bool, block_sites: bool) -> None:
             "Microsoft Edge", "Brave Browser", "Vivaldi", "Safari",
             "Telegram", "Discord", "Steam", "TLauncher",
         ]
-        subprocess.run(["pkill", "-x", "|".join(names)], capture_output=True, check=False)
-        subprocess.run(["pkill", "-f", "-i", "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"],
-                       capture_output=True, check=False)
+        try:
+            subprocess.run(["pkill", "-x", "|".join(names)], capture_output=True, timeout=4, check=False)
+            subprocess.run(
+                ["pkill", "-f", "-i", "(java|javaw).*(minecraft|tlauncher|klauncher|curseforge|prism)"],
+                capture_output=True,
+                timeout=4,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         return
     if block_sites and shutil.which("osascript"):
-        subprocess.run(["osascript", "-l", "JavaScript", "-e", _JXA_CLOSE_TABS],
-                       capture_output=True, timeout=4, check=False)
+        try:
+            subprocess.run(
+                ["osascript", "-l", "JavaScript", "-e", _JXA_CLOSE_TABS],
+                capture_output=True,
+                timeout=4,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -643,7 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--block-sites", action="store_true")
     ap.add_argument("--watch", action="store_true")
     ap.add_argument("--once", action="store_true")
-    ap.add_argument("--interval", type=float, default=0.9)
+    ap.add_argument("--interval", type=float, default=1.5 if sys.platform == "darwin" else 0.9)
     a = ap.parse_args(argv)
     if not (a.block_games or a.block_sites):
         return 0
@@ -652,12 +755,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     t = threading.Thread(target=_watch_stdin_eof, daemon=True)
     t.start()
+    min_interval = 1.5 if sys.platform == "darwin" else 0.3
     while True:
         try:
             step(a.block_games, a.block_sites)
         except Exception:
             pass
-        time.sleep(max(0.3, a.interval))
+        time.sleep(max(min_interval, a.interval))
 
 
 if __name__ == "__main__":

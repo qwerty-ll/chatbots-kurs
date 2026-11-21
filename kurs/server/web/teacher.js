@@ -34,6 +34,10 @@ const pick = { group: null, lesson: null };   // выбор перед нача�
 let pollTimer = null;
 let clockTimer = null;
 let busy = false;
+let refreshing = false;
+let refreshQueued = false;
+let wasOffline = false;
+let audioCtx = null;
 let lastAttention = 0;
 let navKey = "";
 let pollDraft = null;
@@ -50,10 +54,21 @@ const store = {
 };
 const TABS = [["class", "🏫", "Класс"], ["project", "🚀", "Проекты"], ["ai", "🤖", "Нейросеть"], ["play", "🎮", "Игры"], ["groups", "👥", "Группы"], ["connect", "🔌", "Подключение"]];
 let tab = TABS.some((t) => t[0] === store.get("kurs.tab")) ? store.get("kurs.tab") : "class";
-function goTab(t) { tab = t; store.set("kurs.tab", t); menuOpen = false; renderTop(); renderNav(); render(); window.scrollTo(0, 0); }
+function goTab(t) {
+  if (data && data.course?.id === "games" && t === "ai") t = "class";
+  tab = t;
+  store.set("kurs.tab", t);
+  menuOpen = false;
+  renderTop();
+  renderNav();
+  render();
+  window.scrollTo(0, 0);
+}
 document.addEventListener("click", (e) => { if (menuOpen && !e.target.closest(".menu-wrap")) { menuOpen = false; renderTop(); } });
 
 // ---------- помощники ----------
+const serverPort = () => location.port || (location.protocol === "https:" ? "443" : "80");
+
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -87,15 +102,50 @@ async function api(method, path, body) {
   return j;
 }
 
+async function downloadExport(url, fallbackName) {
+  try {
+    const r = await fetch(url, { credentials: "same-origin" });
+    if (r.status === 401) { boot(); return; }
+    if (!r.ok) {
+      let msg = "Ошибка " + r.status;
+      try {
+        const j = await r.json();
+        if (j && j.error) msg = j.error;
+      } catch (e) { /* ответ не JSON */ }
+      alert(msg);
+      return;
+    }
+    const blob = await r.blob();
+    let filename = fallbackName || "download";
+    const cd = r.headers.get("Content-Disposition") || "";
+    const mUtf8 = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const mAscii = cd.match(/filename="?([^";]+)"?/i);
+    if (mUtf8) filename = decodeURIComponent(mUtf8[1]);
+    else if (mAscii) filename = mAscii[1];
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (e) {
+    alert(e.message || "Не удалось скачать файл");
+  }
+}
+
 async function act(path, body) {
-  if (busy) return;
+  if (busy) return false;
   busy = true;
   try {
     await api("POST", "/tapi/" + path, body || {});
     await refresh();
+    return true;
   } catch (e) {
-    if (e.status === 401) return boot();
+    if (e.status === 401) { boot(); return false; }
     alert(e.message);
+    return false;
   } finally {
     busy = false;
   }
@@ -122,21 +172,33 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 function beep() {
   if (store.get("kurs.sound") === "off") return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.frequency.value = 880;
-    g.gain.setValueAtTime(0.08, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-    o.connect(g).connect(ctx.destination);
-    o.start();
-    o.stop(ctx.currentTime + 0.25);
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!audioCtx) audioCtx = new AudioCtx();
+    const playTone = () => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
+      o.connect(g).connect(audioCtx.destination);
+      o.start();
+      o.stop(audioCtx.currentTime + 0.25);
+    };
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume().then(playTone).catch(() => {});
+    } else {
+      playTone();
+    }
   } catch (e) { /* звук недоступен */ }
 }
 
 // ---------- вход ----------
 async function boot() {
   clearInterval(pollTimer);
+  pollTimer = null;
+  clearInterval(clockTimer);
+  clockTimer = null;
   let who;
   try {
     who = await api("GET", "/tapi/whoami");
@@ -151,8 +213,15 @@ async function boot() {
 }
 
 function showPasswordForm(setup) {
+  clearInterval(clockTimer);
+  clockTimer = null;
   lessonEl.textContent = "";
   actionsEl.replaceChildren();
+  trafficLightEl?.replaceChildren();
+  timerBox?.replaceChildren();
+  navEl?.replaceChildren();
+  navKey = "";
+  lastKey = "";
   const pw = h("input", { id: "teacher-password", type: "password", required: true,
     autocomplete: setup ? "new-password" : "current-password" });
   const pw2 = setup ? h("input", { id: "teacher-password-repeat", type: "password", required: true, autocomplete: "new-password" }) : null;
@@ -194,36 +263,81 @@ function showPasswordForm(setup) {
 }
 
 // ---------- обновление ----------
+function stateFingerprint() {
+  const aiLog = (ai && Array.isArray(ai.log)) ? ai.log : [];
+  const aiSummary = ai ? {
+    today: ai.today,
+    status: ai.status,
+    config: ai.config,
+    logLen: aiLog.length,
+    logHead: aiLog.slice(0, 10).map((r) => [
+      r.id, r.ts, r.status, r.ms, r.cached,
+      r.flags ? r.flags.length : 0,
+      r.question ? r.question.length : 0,
+      r.answer ? r.answer.length : 0,
+    ]),
+    logTail: aiLog.length > 10 ? [aiLog[aiLog.length - 1].id, aiLog[aiLog.length - 1].ts, aiLog[aiLog.length - 1].status] : null,
+  } : null;
+  return JSON.stringify([data, aiSummary, play, teams, tab, feedFilter], (k, v) => (k === "now" || k === "seen" ? undefined : v));
+}
+
 async function refresh() {
-  try {
-    data = await api("GET", "/tapi/overview");
-    ai = await api("GET", "/tapi/ai" + (feedFilter ? "?student=" + feedFilter : ""));
-    play = await api("GET", "/tapi/play");
-    teams = await api("GET", "/tapi/teams");
-  } catch (e) {
-    if (e.status === 401) { boot(); return; }
-    lessonEl.textContent = "Нет связи с сервером";
+  if (refreshing) {
+    refreshQueued = true;
     return;
   }
-  const invites = play ? play.invites_in.length : 0;
-  const attention = data.requests.length + data.help.length + (data.locks || []).length + invites + (ai && ai.status.last_error && aiUsed() ? 1 : 0);
-  document.title = (attention ? `(${attention}) ` : "") + "Пульт учителя";
-  if (attention > lastAttention) beep();
-  lastAttention = attention;
-  syncTeacherMatch();
-  // не перерисовываем, пока учитель печатает, и если ничего не изменилось
-  const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest(".play-host");
-  const key = JSON.stringify([data, ai, play, teams, tab], (k, v) => (k === "now" || k === "seen" ? undefined : v));
-  if (key === lastKey && Date.now() - lastRenderAt < 30000) return;
-  renderTop();
-  renderNav();
-  if (!typing && !app.querySelector('.module-poll[aria-busy="true"]')) {
-    lastKey = key;
-    render();
-  } else if (typing && data.poll?.phase === "ideas") {
-    const live = document.getElementById("poll-live-ideas");
-    const options = document.getElementById("poll-options");
-    if (live?.dataset.pollId === String(data.poll.id) && options) updatePollIdeas(live, data.poll, options);
+  refreshing = true;
+  try {
+    const [d, a, p, t] = await Promise.all([
+      api("GET", "/tapi/overview"),
+      api("GET", "/tapi/ai" + (feedFilter ? "?student=" + encodeURIComponent(feedFilter) : "")),
+      api("GET", "/tapi/play"),
+      api("GET", "/tapi/teams"),
+    ]);
+    data = d;
+    ai = a;
+    play = p;
+    teams = t;
+    const recovered = wasOffline;
+    wasOffline = false;
+    if (feedFilter && !(data.students || []).some((s) => String(s.id) === String(feedFilter))) {
+      feedFilter = "";
+      refreshQueued = true;
+    }
+    if (data.course?.id === "games" && tab === "ai") {
+      tab = "class";
+      store.set("kurs.tab", "class");
+    }
+    const invites = play ? play.invites_in.length : 0;
+    const attention = data.requests.length + data.help.length + (data.locks || []).length + invites + (data.course?.id !== "games" && ai && ai.status.last_error && aiUsed() ? 1 : 0);
+    document.title = (attention ? `(${attention}) ` : "") + "Пульт учителя";
+    if (attention > lastAttention) beep();
+    lastAttention = attention;
+    syncTeacherMatch();
+    // не перерисовываем, пока учитель печатает, и если ничего не изменилось
+    const typing = document.activeElement && ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName) && !document.activeElement.closest(".play-host");
+    const key = stateFingerprint();
+    if (!recovered && key === lastKey && Date.now() - lastRenderAt < 30000) return;
+    renderTop();
+    renderNav();
+    if (!typing && !app.querySelector('.module-poll[aria-busy="true"]')) {
+      lastKey = key;
+      render();
+    } else if (typing && data.poll?.phase === "ideas") {
+      const live = document.getElementById("poll-live-ideas");
+      const options = document.getElementById("poll-options");
+      if (live?.dataset.pollId === String(data.poll.id) && options) updatePollIdeas(live, data.poll, options);
+    }
+  } catch (e) {
+    if (e.status === 401) { boot(); return; }
+    wasOffline = true;
+    lessonEl.textContent = "Нет связи с сервером";
+  } finally {
+    refreshing = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      refresh();
+    }
   }
 }
 
@@ -240,8 +354,8 @@ function renderTrafficLight() {
   const st = data.state;
   const online = (data.students || []).filter((x) => x.pc).length;
   const mainIp = (data.addresses && data.addresses[0]) || window.location.hostname || "localhost";
-  const port = window.location.port || "8000";
-  const studentUrl = `http://${mainIp}:${port}`;
+  const port = serverPort();
+  const studentUrl = `${location.protocol}//${mainIp}:${port}`;
 
   let aiClass = "ok";
   let aiText = "🟢 ИИ готов";
@@ -270,11 +384,16 @@ function renderTrafficLight() {
       class: "traffic-chip ok",
       title: "Адрес для учеников (нажмите, чтобы скопировать)",
       onclick: () => {
-        navigator.clipboard.writeText(studentUrl);
-        alert("Адрес для учеников скопирован в буфер:\n" + studentUrl);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(studentUrl)
+            .then(() => alert("Адрес для учеников скопирован в буфер:\n" + studentUrl))
+            .catch(() => prompt("Скопируйте адрес для учеников:", studentUrl));
+        } else {
+          prompt("Скопируйте адрес для учеников:", studentUrl);
+        }
       }
     }, `🟢 Сеть: ${studentUrl}`),
-    data.course.id === "chatbots" ? h("button", {
+    data.course?.id === "chatbots" ? h("button", {
       class: "traffic-chip " + aiClass,
       title: "Статус нейросети (нажмите для перехода к настройкам и проверке связи)",
       onclick: () => goTab("ai")
@@ -325,7 +444,7 @@ function renderTop() {
       : item("🚫", "Запретить ИИ и VK в браузере у всех", () => {
           if (confirm("Закрывать вкладки с ChatGPT, DeepSeek, Алисой AI, ГигаЧатом, VK и др. на ВСЕХ компьютерах? Обычные сайты и VS Code продолжат работать.")) act("toggle_block_sites", { on: true });
         }, "Тихо закрывать ChatGPT, DeepSeek, Алису, ГигаЧат, VK и соцсети"),
-    st.running ? item("⬇", "Скачать таблицу результатов", () => { location.href = "/tapi/export.csv"; }) : null,
+    st.running ? item("⬇", "Скачать таблицу результатов", () => { downloadExport("/tapi/export.csv", "results.csv"); }) : null,
     item("↺", "Сбросить прогресс занятия у группы", () => {
       const lessonNum = st.running ? st.lesson : pick.lesson;
       const groupId = st.running ? data.state.group_id : pick.group;
@@ -338,8 +457,8 @@ function renderTop() {
         act("reset_lesson_progress", { lesson: lessonNum, group_id: groupId });
       }
     }, "Очистить попытки и оценки по всем заданиям урока у группы"),
-    data.course.id === "chatbots" ? item("📦", "Скачать проекты команд (ZIP)", () => { location.href = "/tapi/export_projects.zip"; }, "Все боты, код и команда.json") : null,
-    data.course.id === "chatbots" ? item("📄", "Скачать проекты команд (JSON)", () => { location.href = "/tapi/export_projects.json"; }, "Машиночитаемый JSON для парсинга") : null,
+    data.course.id === "chatbots" ? item("📦", "Скачать проекты команд (ZIP)", () => { downloadExport("/tapi/export_projects.zip", "projects.zip"); }, "Все боты, код и команда.json") : null,
+    data.course.id === "chatbots" ? item("📄", "Скачать проекты команд (JSON)", () => { downloadExport("/tapi/export_projects.json", "projects.json"); }, "Машиночитаемый JSON для парсинга") : null,
     item(sound ? "🔔" : "🔕", sound ? "Звук сигналов: включён" : "Звук сигналов: выключен", () => { store.set("kurs.sound", sound ? "off" : "on"); renderTop(); }),
     h("hr", {}),
     item("🚪", "Выйти из пульта", async () => { await api("POST", "/tapi/logout", {}); boot(); }));
@@ -350,12 +469,13 @@ function renderTop() {
     parts.push(h("button", { class: "danger", onclick: () => {
       if (!confirm("Завершить занятие? Работы учеников сохранятся здесь, а с компьютеров учеников сотрутся.")) return;
       const close = confirm("Закрыть VS Code на компьютерах учеников?\n\n«ОК» — закрыть, «Отмена» — оставить открытым.");
-      act("end").then(() => { if (close) act("close_clients"); });
+      act("end").then((ok) => { if (ok && close) act("close_clients"); });
     } }, "Завершить занятие"));
   }
   parts.push(h("span", { class: "menu-wrap" }, h("button", { class: "ghost", onclick: (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderTop(); } }, "⋯ Ещё"), menu));
   actionsEl.replaceChildren(...parts);
   clearInterval(clockTimer);
+  clockTimer = null;
   if (st.timer_end) {
     const offset = Date.now() / 1000 - data.now;
     clockTimer = setInterval(() => {
@@ -366,6 +486,12 @@ function renderTop() {
 }
 
 function renderNav() {
+  const isGames = data.course?.id === "games";
+  if (isGames && tab === "ai") {
+    tab = "class";
+    store.set("kurs.tab", "class");
+  }
+  const visibleTabs = isGames ? TABS.filter(([id]) => id !== "ai") : TABS;
   const att = data.requests.length + data.help.length + (data.locks || []).length;
   const badges = {
     class: att,
@@ -375,11 +501,11 @@ function renderNav() {
     project: teams && teams.team_lesson && teams.teams.length ? teams.free.length : 0,
   };
   const soft = { play: play && play.matches.length ? play.matches.length : 0 };
-  const key = JSON.stringify([tab, badges, soft]);
+  const key = JSON.stringify([data.course?.id || "", tab, badges, soft]);
   if (key === navKey && navEl.childElementCount) return;
   navKey = key;
   const focused = navEl.contains(document.activeElement) ? document.activeElement.id : "";
-  navEl.replaceChildren(...TABS.map(([id, ic, title]) => h("button", { id: "nav-" + id, class: "tab" + (tab === id ? " on" : ""),
+  navEl.replaceChildren(...visibleTabs.map(([id, ic, title]) => h("button", { id: "nav-" + id, class: "tab" + (tab === id ? " on" : ""),
     "aria-current": tab === id ? "page" : null, onclick: () => goTab(id) },
     h("span", { class: "ic", "aria-hidden": "true" }, ic), title,
     badges[id] ? h("span", { class: "badge" }, badges[id]) : null,
@@ -388,7 +514,16 @@ function renderNav() {
 }
 
 function render() {
+  if (data.course?.id === "games" && tab === "ai") {
+    tab = "class";
+    store.set("kurs.tab", "class");
+  }
   const y = window.scrollY;
+  const prevSide = app.querySelector(".side");
+  const sideTop = prevSide ? prevSide.scrollTop : 0;
+  const prevWrap = app.querySelector(".wrap");
+  const wrapLeft = prevWrap ? prevWrap.scrollLeft : 0;
+  const wrapTop = prevWrap ? prevWrap.scrollTop : 0;
   lastRenderAt = Date.now();
   const views = {
     class: () => (data.state.running ? renderLesson() : [...renderIdle(), data.poll ? modulePollCard() : null]),
@@ -399,6 +534,13 @@ function render() {
     connect: () => [connectCard(), h("section", { class: "card" }, h("h2", {}, "Адрес для учеников"), addresses())],
   };
   app.replaceChildren(...[].concat(views[tab]()).filter((x) => x));
+  const nextSide = app.querySelector(".side");
+  if (nextSide && sideTop) nextSide.scrollTop = sideTop;
+  const nextWrap = app.querySelector(".wrap");
+  if (nextWrap) {
+    if (wrapLeft) nextWrap.scrollLeft = wrapLeft;
+    if (wrapTop) nextWrap.scrollTop = wrapTop;
+  }
   window.scrollTo(0, y);
 }
 
@@ -409,7 +551,7 @@ function renderIdle() {
     pick.lesson = (data.lessons.some((l) => l.lesson === data.state.lesson) ? data.state.lesson : null) || (data.lessons[0] && data.lessons[0].lesson);
   }
 
-  const courseCard = h("div", { class: "course-switch", style: "margin-bottom:14px; padding:12px 14px; background:var(--bg-card); border:1px solid var(--border); border-radius:10px;" },
+  const courseCard = h("div", { class: "course-switch", style: "margin-bottom:14px; padding:12px 14px; background:var(--card); border:1px solid var(--line); border-radius:10px;" },
     h("div", { class: "row", style: "gap:8px; align-items:center; margin-bottom:8px" },
       h("span", { style: "font-size:18px" }, "📚"),
       h("b", {}, "Программа курса:"),
@@ -435,7 +577,7 @@ function renderIdle() {
       const partLessons = data.lessons.filter((l) => part.lessons.includes(l.lesson));
       if (!partLessons.length) continue;
       lessonButtons.push(
-        h("div", { class: "section-title", style: "margin:10px 0 4px; font-weight:bold; color:var(--brand); font-size:12px; text-transform:uppercase; letter-spacing:0.5px;" },
+        h("div", { class: "section-title", style: "margin:10px 0 4px; font-weight:bold; color:var(--blue); font-size:12px; text-transform:uppercase; letter-spacing:0.5px;" },
           part.title
         )
       );
@@ -486,7 +628,7 @@ function renderIdle() {
       h("button", { class: "hint-card", onclick: openSlides }, h("b", {}, "📽 Презентация"), h("small", {}, "открыть слайды к уроку для проектора")),
       h("button", { class: "hint-card", onclick: () => goTab("groups") }, h("b", {}, "👥 Группы"), h("small", {}, "добавить группу и учеников")),
       h("button", { class: "hint-card", onclick: () => goTab("connect") }, h("b", {}, "🔌 Подключение"), h("small", {}, "команда для компьютеров учеников")),
-      h("button", { class: "hint-card", onclick: () => goTab("ai") }, h("b", {}, "🤖 Нейросеть"), h("small", {}, "ключ GigaChat и проверка связи")))];
+      data.course?.id !== "games" ? h("button", { class: "hint-card", onclick: () => goTab("ai") }, h("b", {}, "🤖 Нейросеть"), h("small", {}, "ключ GigaChat и проверка связи")) : null)];
   const last = data.state.last_class;
   const lastGroup = last && data.groups.find((g) => g.id === last.group_id);
   const lastLesson = last && (last.course && last.course !== data.course.id
@@ -496,7 +638,7 @@ function renderIdle() {
     const n = (last.open_tasks || []).length;
     cards.unshift(h("section", { class: "card" }, h("h2", {}, "Продолжить прошлое занятие"),
       h("p", {}, `${lastGroup.name} · Занятие ${lastLesson.lesson}. ${lastLesson.title}`),
-      h("p", { class: "muted" }, `Вернутся открытые задания (${n}) и этап тетради. Решённые задания и файлы учеников сохранены — заново ничего делать не нужно.`),
+      h("p", { class: "muted" }, `Вернутся открытые задания (${n}). Решённые задания и файлы учеников сохранены — заново ничего делать не нужно.`),
       h("div", { class: "row", style: "gap:10px;flex-wrap:wrap;align-items:center;" },
         h("button", { class: "big", onclick: () => act("continue") }, "⏯ Продолжить занятие"),
         !last.course || last.course === data.course.id ? h("button", {
@@ -512,15 +654,15 @@ function renderIdle() {
 }
 
 function addresses() {
-  const port = location.port || "80";
+  const port = serverPort();
   if (!data.addresses.length) return h("p", { class: "muted" }, "Адрес в сети не найден: проверьте подключение.");
   return h("p", {}, "Адрес для учеников: ", data.addresses.map((a, i) => [i ? " " : "", h("span", { class: "addr" }, `${a}:${port}`)]));
 }
 
 function connectCard() {
   // команда для первого запуска на компьютере ученика: скачивает запуск курса с этого сервера
-  const port = location.port || "80";
-  const url = `http://${data.addresses[0] || "АДРЕС_УЧИТЕЛЯ"}:${port}`;
+  const port = serverPort();
+  const url = `${location.protocol}//${data.addresses[0] || "АДРЕС_УЧИТЕЛЯ"}:${port}`;
   const linux = `wget -T 10 -qO- ${url}/k | python3 - --shortcut`;
   const mac = `curl -sm 10 ${url}/k | python3 - --shortcut`;
   const win = `py -c "import urllib.request as u; exec(u.urlopen('${url}/k', timeout=10).read())" --shortcut`;
@@ -553,11 +695,18 @@ function groupForm(g) {
   const names = h("textarea", { placeholder: "Имена учеников, по одному в строке.\nЛучше имя и первую букву фамилии: «Аня К.»" });
   names.value = g ? g.students.join("\n") : "";
   const save = async () => {
+    if (busy) return;
+    busy = true;
     try {
       await api("POST", "/tapi/group", { id: g ? g.id : null, name: name.value, names: names.value.split("\n") });
       editingGroup = null;
       await refresh();
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+      if (e.status === 401) { boot(); return; }
+      alert(e.message);
+    } finally {
+      busy = false;
+    }
   };
   return h("div", { class: "card", style: "box-shadow:none;background:#FAFAFE" },
     h("h2", {}, g ? "Изменить группу" : "Новая группа"),
@@ -670,8 +819,13 @@ async function submitPoll(path, payload, card, button) {
   card.setAttribute("aria-busy", "true");
   try {
     await api("POST", "/tapi/" + path, payload);
+    card.removeAttribute("aria-busy");
     await refresh();
-    render();
+    const key = stateFingerprint();
+    if (key !== lastKey) {
+      lastKey = key;
+      render();
+    }
     const next = path === "poll/collect" ? "poll-ideas-status" : path === "poll/close" ? "poll-collect" : "poll-close";
     document.getElementById(next)?.focus({ preventScroll: true });
   } catch (e) {
@@ -723,24 +877,28 @@ function attentionCard() {
     h("input", { type: "checkbox", checked: data.state.lock_on_paste ? true : null, onchange: (e) => act("lock_on_paste", { on: e.target.checked }) }),
     " блокировать панель при вставке чужого кода");
   const focusCount = (data.students || []).filter((s) => s.focus).length;
+  const focusAll = Boolean(data.focus_all);
+  const focusActive = focusAll || focusCount > 0;
   const focusControl = h("div", { style: "margin-top:10px;padding-top:8px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;" },
     h("span", { class: "small", style: "font-weight:600;color:var(--text);" },
-      focusCount > 0 ? `🛡️ Блок игр: ${focusCount} уч.` : "🛡️ Блокировка игр и браузеров"
+      focusAll ? "🛡️ Блок игр: у всех" : (focusCount > 0 ? `🛡️ Блок игр: ${focusCount} уч.` : "🛡️ Блокировка игр и браузеров")
     ),
     h("button", {
-      class: "ghost small" + (focusCount > 0 ? " danger" : ""),
-      onclick: () => act("toggle_focus", { on: focusCount === 0 })
-    }, focusCount > 0 ? "Снять у всех" : "Вкл у всех")
+      class: "ghost small" + (focusActive ? " danger" : ""),
+      onclick: () => act("toggle_focus", { on: !focusActive })
+    }, focusActive ? "Снять у всех" : "Вкл у всех")
   );
   const blockSitesCount = (data.students || []).filter((s) => s.block_sites).length;
+  const blockSitesAll = Boolean(data.block_sites_all);
+  const blockSitesActive = blockSitesAll || blockSitesCount > 0;
   const blockSitesControl = h("div", { style: "margin-top:8px;padding-top:8px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;" },
     h("span", { class: "small", style: "font-weight:600;color:var(--text);" },
-      blockSitesCount > 0 ? `🚫 Блок ГПТ/Алиса/ГигаЧат/VK: ${blockSitesCount} уч.` : "🚫 Блок ГПТ / Алиса / ГигаЧат / VK"
+      blockSitesAll ? "🚫 Блок ГПТ/Алиса/ГигаЧат/VK: у всех" : (blockSitesCount > 0 ? `🚫 Блок ГПТ/Алиса/ГигаЧат/VK: ${blockSitesCount} уч.` : "🚫 Блок ГПТ / Алиса / ГигаЧат / VK")
     ),
     h("button", {
-      class: "ghost small" + (blockSitesCount > 0 ? " danger" : ""),
-      onclick: () => act("toggle_block_sites", { on: blockSitesCount === 0 })
-    }, blockSitesCount > 0 ? "Снять у всех" : "Вкл у всех")
+      class: "ghost small" + (blockSitesActive ? " danger" : ""),
+      onclick: () => act("toggle_block_sites", { on: !blockSitesActive })
+    }, blockSitesActive ? "Снять у всех" : "Вкл у всех")
   );
   if (!n) { box.append(h("div", { class: "calm" }, h("b", {}, "Всё спокойно ✓"), "Новые запросы появятся здесь, а вкладка браузера покажет их число."), lockSwitch, focusControl, blockSitesControl); return box; }
   for (const inv of invites) {
@@ -846,7 +1004,7 @@ function tableCard(lesson) {
           if (!confirm(`Сбросить прогресс урока ${lesson.lesson} («${lesson.title}») у всех учеников группы?\n\nВсе выполненные задания, попытки и подсказки этого урока будут очищены.`)) return;
           await act("reset_lesson_progress", { lesson: lesson.lesson, group_id: data.state.group_id });
         } }, "↺ Сбросить прогресс урока"),
-      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export.csv"; } }, "Скачать таблицу")),
+      h("button", { class: "ghost small", onclick: () => { downloadExport("/tapi/export.csv", "results.csv"); } }, "Скачать таблицу")),
     h("div", { class: "legend" },
       h("span", {}, h("i", { style: "background:var(--ok-bg)" }), "выполнено"),
       h("span", {}, h("i", { style: "background:var(--bad-bg)" }), "есть ошибки"),
@@ -867,7 +1025,8 @@ function syncTeacherMatch() {
   const m = play && play.match;
   const cur = KursPlay.current();
   if (m && !leftMatches.has(m.id) && (!cur || cur.matchId !== m.id)) {
-    KursPlay.start({ mode: "net", game: m.game, matchId: m.id, url: `ws://${location.host}/ws/play?match=${encodeURIComponent(m.id)}`, auth: "",
+    const wsProto = location.protocol === "https:" ? "wss://" : "ws://";
+    KursPlay.start({ mode: "net", game: m.game, matchId: m.id, url: `${wsProto}${location.host}/ws/play?match=${encodeURIComponent(m.id)}`, auth: "",
       names: m.names, onEnd: () => { leftMatches.add(m.id); api("POST", "/tapi/play/leave", {}).catch(() => {}); lastKey = ""; refresh(); } });
     if (tab !== "play") goTab("play"); else render();
   }
@@ -963,13 +1122,13 @@ function projectTab() {
   const exportCard = game ? h("section", { class: "card" }, h("h2", {}, "Сборки и черновики"),
     h("p", { class: "muted small" }, "Архив содержит сданные версии с меню и текущие черновики команд."),
     h("button", { class: "ghost", disabled: !releases.length && !teams.teams.some((t) => t.members.some((m) => m.has_file)),
-      onclick: () => { location.href = "/tapi/export_games.zip"; } }, "Скачать игры (ZIP)"))
+      onclick: () => { downloadExport("/tapi/export_games.zip", "games.zip"); } }, "Скачать игры (ZIP)"))
     : data.course.id === "chatbots" ? h("section", { class: "card", style: "border-left:4px solid var(--ok, #10b981)" },
     h("h2", {}, "💾 Экспорт проектов"),
     h("p", { class: "muted small" }, "Выгрузить карточки команд, код участников и файл Наш_бот.py:"),
     h("div", { class: "row", style: "gap:8px;margin-top:8px" },
-      h("button", { class: "ok small", onclick: () => { location.href = "/tapi/export_projects.zip"; } }, "📦 Скачать все (ZIP)"),
-      h("button", { class: "ghost small", onclick: () => { location.href = "/tapi/export_projects.json"; } }, "📄 Данные (JSON)"))) : null;
+      h("button", { class: "ok small", onclick: () => { downloadExport("/tapi/export_projects.zip", "projects.zip"); } }, "📦 Скачать все (ZIP)"),
+      h("button", { class: "ghost small", onclick: () => { downloadExport("/tapi/export_projects.json", "projects.json"); } }, "📄 Данные (JSON)"))) : null;
 
   const manage = h("section", { class: "card" }, h("h2", {}, "👥 Команды"),
     game ? h("p", { class: "muted small" }, "Обычно в команде 2–3 ученика. Работу можно начать одному. Сдача доступна и с рабочим шаблоном, это будет видно в карточке.")
@@ -1006,7 +1165,8 @@ function projectTab() {
   }
 
   const ideasCard = h("section", { class: "card" }, h("h2", {}, `💡 Идеи учеников (${teams.ideas.length})`));
-  if (!teams.ideas.length) ideasCard.append(h("p", { class: "muted" }, "Идей пока нет. Ученики записывают их во вкладке «💡 Проект» на Занятии 5."));
+  const ideasLessonHint = data.course?.id === "games" ? "на Занятии 8" : "на Занятии 5";
+  if (!teams.ideas.length) ideasCard.append(h("p", { class: "muted" }, `Идей пока нет. Ученики записывают их во вкладке «💡 Проект» ${ideasLessonHint}.`));
   for (const x of teams.ideas) {
     ideasCard.append(h("div", { class: "list-item", style: "align-items:flex-start;flex-direction:column;gap:2px" },
       h("div", {}, h("b", {}, x.name), x.team ? h("span", { class: "chip" }, x.team) : null, " ", h("span", {}, x.title || "")),
@@ -1034,7 +1194,17 @@ function projectTab() {
           ? `Сдано · ${t.studio.release.mode === "template" ? "Рабочий шаблон" : "Файл команды"} · ${t.studio.release.menu.title}`
           : t.studio.revision ? "Меню сохранено · сборка ожидается" : "Сборка ожидается"),
         t.studio.release ? h("p", { class: "small muted" }, "Отправил(а) " + t.studio.release.submitted_by +
-          (t.studio.release.author ? " · файл " + t.studio.release.author : "")) : null) : null,
+          (t.studio.release.author ? " · файл " + t.studio.release.author : "")) : null,
+        h("div", { class: "row", style: "margin-top:8px;gap:6px;" },
+          h("button", { class: "ghost small", onclick: () => showStudioCode(t) }, "Код команды"),
+          t.studio.release ? h("button", {
+            class: "ghost small danger",
+            onclick: () => {
+              if (confirm(`Сбросить сдачу команды «${t.name}»? Команда сможет доработать и сдать игру заново.`)) {
+                act("teams/clear_release", { team_id: t.id });
+              }
+            }
+          }, "Сбросить сдачу") : null)) : null,
       !game && t.members.length < cfg.min ? h("p", { class: "small", style: "color:var(--bad)" }, `Мало участников: нужно минимум ${cfg.min}`) : null);
     if (!t.members.length) card.append(h("p", { class: "muted small" }, "Пока никого."));
     for (const m of t.members) {
@@ -1060,9 +1230,60 @@ function projectTab() {
     h("div", { class: "grid" }, h("div", { class: "side" }, manage, free, exportCard, game ? null : ideasCard), h("div", {}, grid))];
 }
 
+async function showStudioCode(team) {
+  openModal(h("h2", {}, `Код команды «${team.name}»`), h("p", { class: "muted" }, "Загрузка…"));
+  try {
+    const d = await api("GET", "/tapi/teams/studio_code?team_id=" + encodeURIComponent(team.id));
+    const release = d.release || team.studio?.release || null;
+    const menuData = d.studio_menu || d.menu || release?.menu || team.studio?.menu || null;
+    const codeText = typeof d.code === "string" ? d.code : (typeof d.content === "string" ? d.content : "");
+    const files = Array.isArray(d.files) ? d.files : [];
+    const metaParts = [];
+    if (release) {
+      metaParts.push(release.mode === "template" ? "Рабочий шаблон" : "Файл команды");
+      if (release.submitted_by) metaParts.push("отправил(а): " + release.submitted_by);
+      if (release.author) metaParts.push("файл: " + release.author);
+    } else if (d.mode || d.author || d.filename) {
+      if (d.mode) metaParts.push(d.mode === "template" ? "Рабочий шаблон" : "Файл команды");
+      if (d.author) metaParts.push("автор: " + d.author);
+      if (d.filename) metaParts.push("файл: " + d.filename);
+    } else {
+      metaParts.push("Сдача ещё не оформлена");
+    }
+    openModal(
+      h("h2", {}, `Код команды «${d.team_name || team.name}»`),
+      h("div", { class: "row", style: "margin-bottom:10px;gap:8px;" },
+        h("span", { class: "kv" }, metaParts.join(" · ")),
+        h("span", { class: "spacer" }),
+        release ? h("button", {
+          class: "ghost small danger",
+          onclick: async () => {
+            if (!confirm(`Сбросить сдачу команды «${team.name}»? Команда сможет доработать и сдать игру заново.`)) return;
+            const ok = await act("teams/clear_release", { team_id: team.id });
+            if (ok) closeModal();
+          }
+        }, "Сбросить сдачу") : null),
+      menuData ? [
+        h("h3", { style: "margin:10px 0 4px;" }, "studio_menu.json"),
+        h("pre", { class: "code" }, typeof menuData === "string" ? menuData : JSON.stringify(menuData, null, 2))
+      ] : null,
+      codeText ? [
+        h("h3", { style: "margin:12px 0 4px;" }, d.filename || "Код игры"),
+        h("pre", { class: "code" }, codeText)
+      ] : files.length ? files.map((f) => [
+        h("h3", { style: "margin:12px 0 4px;" }, f.path || f.name || "Файл"),
+        h("pre", { class: "code" }, f.content || "")
+      ]) : h("p", { class: "muted", style: "margin-top:12px;" }, "Сохранённого кода команды пока нет.")
+    );
+  } catch (e) {
+    if (e.status === 401) { closeModal(); boot(); return; }
+    openModal(h("h2", {}, `Код команды «${team.name}»`), h("p", { class: "err" }, e.message));
+  }
+}
+
 // ---------- нейросеть ----------
 function aiUsed() {
-  return ai && (currentLesson().uses_ai || ai.log.length > 0 || ai.status.queue.length > 0);
+  return ai && (currentLesson().uses_ai || ai.log.length > 0 || (ai.status.active_count || 0) > 0 || (ai.status.queue && ai.status.queue.length > 0));
 }
 
 function aiCard() {
@@ -1077,7 +1298,7 @@ function aiCard() {
   else if (isBridge) { state = `Мост активен (${st.bridge.models || "Gemini 3 Flash"})` + (st.avg_seconds ? ` · ответ за ~${st.avg_seconds} с` : ""); cls = "ok"; }
   else { state = "Работает" + (st.avg_seconds ? ` · ответ за ~${st.avg_seconds} с` : ""); cls = "ok"; }
   const mode = (m, label) => h("button", { class: "small" + (st.mode === m ? "" : " ghost"), onclick: () => act("ai/mode", { mode: m }) }, label);
-  const waitSec = st.avg_seconds ? Math.round(st.avg_seconds * (st.queue.length + (st.working ? 1 : 0))) : null;
+  const activeCount = st.active_count || 0;
   return h("section", { class: "card" },
     h("div", { class: "card-head" }, h("h2", {}, "🤖 Нейросеть"), h("span", { class: "muted small" }, providerName), h("span", { class: "spacer" }),
       h("button", { class: "ghost small", onclick: aiSettings }, "Настройки")),
@@ -1085,10 +1306,10 @@ function aiCard() {
     h("div", { class: "row", style: "margin:10px 0" }, mode("live", "Работает"), mode("offline", "Запасной режим"), mode("pause", "Пауза"),
       h("button", { class: "ghost small", onclick: aiTest }, "Проверить связь")),
     h("div", { class: "small" },
-      st.working ? h("div", {}, "Сейчас отвечает: ", h("b", {}, st.working.name)) : h("div", { class: "muted" }, "Сейчас никто не ждёт ответа"),
-      st.queue.length ? h("div", {}, `В очереди ${st.queue.length}: `, st.queue.map((q) => h("span", { class: "chip" }, q.name)),
-        waitSec ? h("span", { class: "muted" }, ` · последний дождётся примерно через ${waitSec} с`) : null) : null,
-      h("div", { class: "muted", style: "margin-top:6px" }, `Сегодня вопросов: ${ai.today}. Нейросеть отвечает по одному вопросу за раз, у ученика в очереди не больше одного вопроса.`)));
+      activeCount > 0
+        ? h("div", {}, "Сейчас обрабатывается: ", h("b", {}, `${activeCount} ${plural(activeCount, "запрос", "запроса", "запросов")}`))
+        : h("div", { class: "muted" }, "Сейчас активных запросов нет"),
+      h("div", { class: "muted", style: "margin-top:6px" }, `Сегодня вопросов: ${ai.today}.`)));
 }
 
 async function aiTest() {
@@ -1123,7 +1344,7 @@ function aiSettings() {
     field("Адрес", inp("openai_base_url"), "Например http://localhost:11434/v1 для Ollama."), field("Ключ", oKey), field("Модели через запятую", inp("openai_models")));
   const limits = h("div", {}, h("h3", {}, "Ограничения для класса"),
     h("div", { class: "cols3" },
-      field("Длина ответа (токены)", num("max_tokens"), "Короче ответ — быстрее очередь."),
+      field("Длина ответа (токены)", num("max_tokens"), "Короче ответ — быстрее генерация."),
       field("Пауза между вопросами, с", num("min_interval")),
       field("Вопросов в день на ученика", num("daily_limit")),
       field("Длина вопроса, символов", num("max_prompt_chars")),
@@ -1135,6 +1356,8 @@ function aiSettings() {
   provider.addEventListener("change", sync);
   sync();
   const save = async () => {
+    if (busy) return;
+    busy = true;
     const patch = {};
     box.querySelectorAll("[data-k]").forEach((e) => {
       const k = e.getAttribute("data-k");
@@ -1147,7 +1370,12 @@ function aiSettings() {
       closeModal();
       await refresh();
       aiTest();
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+      if (e.status === 401) { closeModal(); boot(); return; }
+      alert(e.message);
+    } finally {
+      busy = false;
+    }
   };
   openModal(h("h2", {}, "Настройки нейросети"), box, h("div", { class: "row", style: "margin-top:14px" },
     h("button", { onclick: save }, "Сохранить и проверить связь"), h("button", { class: "ghost", onclick: closeModal }, "Отмена")));
@@ -1159,54 +1387,52 @@ function aiFeed() {
     h("option", { value: "" }, "Все ученики"), data.students.map((s) => h("option", { value: s.id }, s.name)));
   sel.value = feedFilter;
 
-  const searchInput = h("input", {
-    type: "search",
-    placeholder: "🔍 Поиск по вопросу или ПК…",
-    value: feedSearch,
-    style: "padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;width:220px;",
-    oninput: (e) => { feedSearch = e.target.value; render(); }
-  });
-
-  const clearBtn = (feedFilter || feedSearch)
-    ? h("button", { class: "ghost small", onclick: () => { feedFilter = ""; feedSearch = ""; refresh(); } }, "Сбросить фильтр")
-    : null;
-
-  const term = feedSearch.toLowerCase().trim();
-  const filtered = (ai.log || []).filter((r) => {
-    if (term) {
-      const match = (r.name && r.name.toLowerCase().includes(term)) ||
-                    (r.pc && r.pc.toLowerCase().includes(term)) ||
-                    (r.question && r.question.toLowerCase().includes(term)) ||
-                    (r.answer && r.answer.toLowerCase().includes(term)) ||
-                    (r.system && r.system.toLowerCase().includes(term));
-      if (!match) return false;
+  const countEl = h("span", { class: "muted small" });
+  const listEl = h("div", { class: "ai-feed-list" });
+  const clearBtn = h("button", {
+    class: "ghost small" + (feedFilter || feedSearch ? "" : " hidden"),
+    onclick: () => {
+      const hadFilter = Boolean(feedFilter);
+      feedFilter = "";
+      feedSearch = "";
+      searchInput.value = "";
+      sel.value = "";
+      if (hadFilter) refresh();
+      else renderList();
     }
-    return true;
-  });
+  }, "Сбросить фильтр");
 
-  const box = h("section", { class: "card" },
-    h("div", { class: "card-head", style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;" },
-      h("h2", {}, "Что спрашивают у нейросети"),
-      h("span", { class: "muted small" }, `сегодня: ${ai.today}` + (filtered.length !== ai.log.length ? ` · найдено: ${filtered.length}` : "")),
-      h("span", { class: "spacer" }),
-      searchInput,
-      sel,
-      clearBtn,
-      h("button", { class: "ghost small", onclick: () => { if (confirm("Очистить всю ленту вопросов?")) act("ai/clear"); } }, "Очистить")
-    )
-  );
+  function renderList() {
+    const log = ai.log || [];
+    const term = feedSearch.toLowerCase().trim();
+    const filtered = log.filter((r) => {
+      if (term) {
+        const match = (r.name && r.name.toLowerCase().includes(term)) ||
+                      (r.pc && r.pc.toLowerCase().includes(term)) ||
+                      (r.question && r.question.toLowerCase().includes(term)) ||
+                      (r.answer && r.answer.toLowerCase().includes(term)) ||
+                      (r.system && r.system.toLowerCase().includes(term));
+        if (!match) return false;
+      }
+      return true;
+    });
 
-  if (!ai.log.length) {
-    box.append(h("p", { class: "muted" }, "Вопросов пока нет. Здесь появится всё, что ученики отправляют нейросети, и её ответы."));
-  } else if (!filtered.length) {
-    box.append(h("p", { class: "muted" }, "По вашему поисковому запросу ничего не найдено."));
-  }
+    countEl.textContent = `сегодня: ${ai.today}` + (filtered.length !== log.length ? ` · найдено: ${filtered.length}` : "");
+    clearBtn.classList.toggle("hidden", !(feedFilter || feedSearch));
 
-  for (const r of filtered.slice(0, 150)) {
-    box.append(h("div", { class: "feed-item" + (r.flags.length ? " flagged" : ""), style: "border-top:1px solid var(--line);padding:12px 0;" },
+    if (!log.length) {
+      listEl.replaceChildren(h("p", { class: "muted" }, "Вопросов пока нет. Здесь появится всё, что ученики отправляют нейросети, и её ответы."));
+      return;
+    }
+    if (!filtered.length) {
+      listEl.replaceChildren(h("p", { class: "muted" }, "По вашему поисковому запросу ничего не найдено."));
+      return;
+    }
+
+    listEl.replaceChildren(...filtered.slice(0, 150).map((r) => h("div", { class: "feed-item" + (r.flags.length ? " flagged" : ""), style: "border-top:1px solid var(--line);padding:12px 0;" },
       h("div", { class: "feed-meta", style: "display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;color:var(--muted);" },
         h("b", { class: "name-link", style: "cursor:pointer;color:var(--blue);", onclick: () => showStudent(r.student_id) }, "👤 " + r.name),
-        h("span", { style: "font-weight:600;color:var(--ink);" }, `· 🖥 ${r.pc || "ПК"}`),
+        h("span", { style: "font-weight:600;color:var(--text);" }, `· 🖥 ${r.pc || "ПК"}`),
         h("span", {}, `· ⏰ ${time(r.ts)}`),
         r.ms ? h("span", { class: "chip" }, `⚡ ${(r.ms / 1000).toFixed(1)} с`) : null,
         r.cached ? h("span", { class: "chip" }, "из памяти") : null,
@@ -1215,14 +1441,37 @@ function aiFeed() {
       ),
       r.system ? h("div", { class: "feed-role", style: "margin:4px 0 2px;font-size:13px;color:var(--blue-ink);" }, "🎭 Роль: " + r.system) : null,
       h("div", { style: "margin:6px 0 2px;" },
-        h("div", { class: "feed-q", style: "font-weight:600;white-space:pre-wrap;color:var(--ink);line-height:1.4;" }, "💬 " + r.question)
+        h("div", { class: "feed-q", style: "font-weight:600;white-space:pre-wrap;color:var(--text);line-height:1.4;" }, "💬 " + r.question)
       ),
       h("div", { class: "feed-a", style: "white-space:pre-wrap;background:#F4F6FC;border:1px solid #E4E8F4;border-radius:8px;padding:8px 12px;margin-top:6px;line-height:1.45;font-size:13.5px;color:#1E234D;" },
         (r.status === "done" ? "🤖 " : "❌ ") + (r.answer || "(пустой ответ)")
       )
-    ));
+    )));
   }
-  box.append(h("p", { class: "muted small", style: "margin-top:12px;" }, "Лента хранится 30 дней на этом компьютере, потом удаляется сама."));
+
+  const searchInput = h("input", {
+    type: "search",
+    placeholder: "🔍 Поиск по вопросу или ПК…",
+    value: feedSearch,
+    style: "padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;width:220px;",
+    oninput: (e) => { feedSearch = e.target.value; renderList(); }
+  });
+
+  renderList();
+
+  const box = h("section", { class: "card" },
+    h("div", { class: "card-head", style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;" },
+      h("h2", {}, "Что спрашивают у нейросети"),
+      countEl,
+      h("span", { class: "spacer" }),
+      searchInput,
+      sel,
+      clearBtn,
+      h("button", { class: "ghost small", onclick: () => { if (confirm("Очистить всю ленту вопросов?")) act("ai/clear"); } }, "Очистить")
+    ),
+    listEl,
+    h("p", { class: "muted small", style: "margin-top:12px;" }, "Лента хранится 30 дней на этом компьютере, потом удаляется сама.")
+  );
   return box;
 }
 
@@ -1299,7 +1548,7 @@ async function showStudent(id) {
               (q.status === "done" ? "🤖 " : "❌ ") + (q.answer || "(нет ответа)"))
           ))
         )
-      ] : h("p", { class: "muted", style: "margin:10px 0;" }, "🤖 Запросов к нейросети от этого ученика пока нет."),
+      ] : (data.course?.id !== "games" ? h("p", { class: "muted", style: "margin:10px 0;" }, "🤖 Запросов к нейросети от этого ученика пока нет.") : null),
       d.pastes && d.pastes.length ? [h("h3", {}, "⚠ Попытки вставить готовый код"),
         h("p", { class: "muted" }, "Панель не пустила этот текст в файл задания. Хороший повод подойти и спросить, откуда он."),
         d.pastes.map((p) => [h("p", { class: "kv" }, `${when(p.ts)} · ${p.file || ""} · ${p.kind === "ai_paste_blocked" ? "⚠ вставка из ИИ (панель заблокирована)" : p.kind === "outside_edit" ? "файл меняли не в редакторе курса" : "обычная вставка"}`),

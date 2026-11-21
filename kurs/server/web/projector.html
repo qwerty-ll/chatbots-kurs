@@ -23,7 +23,19 @@
   .track i { display: block; height: 100%; background: var(--ok); border-radius: 2vh; transition: width .6s; }
   .count { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
   .empty { color: var(--sky); text-align: center; font-size: 3.4vh; }
-  footer { color: var(--sky); font-size: 2vh; display: flex; justify-content: space-between; }
+  .section-head { text-align: center; margin-bottom: 1.5vh; }
+  .section-head h2 { font-size: 4.4vh; margin: 0 0 .8vh; }
+  .section-head p { color: var(--sky); font-size: 2.5vh; margin: 0; }
+  .poll-bar i { background: var(--sky); }
+  .teams-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 2vh 2vw; align-content: center; }
+  .team-card { background: rgba(255, 255, 255, .08); border: 2px solid rgba(169, 181, 255, .25); border-radius: 18px; padding: 2.2vh 2vw; display: flex; flex-direction: column; gap: 1vh; }
+  .team-card.ready { border-color: var(--ok); background: rgba(60, 203, 139, .14); }
+  .team-name { font-size: 3.2vh; font-weight: 800; overflow-wrap: anywhere; }
+  .team-meta { color: var(--sky); font-size: 2.2vh; }
+  .team-status { font-size: 2.4vh; font-weight: 700; margin-top: auto; }
+  .team-status.ok { color: var(--ok); }
+  .team-status.wait { color: var(--sky); }
+  footer { color: var(--sky); font-size: 2vh; display: flex; justify-content: space-between; align-items: center; }
   button { font: inherit; font-size: 2vh; background: transparent; color: var(--sky); border: 1px solid rgba(169, 181, 255, .4); border-radius: 10px; padding: 6px 14px; cursor: pointer; }
 </style>
 </head>

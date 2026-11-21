@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Генератор полной интерактивной презентации курса «Разработка консольных игр на Python» (8 занятий, 130+ слайдов).
+"""Генератор полной интерактивной презентации курса «Разработка консольных игр на Python» (8 занятий, 121 слайд).
 Формат: 1920x1080 stage, адаптивное масштабирование, заметки докладчика (N), полноэкранный режим (F).
 Каждое занятие включает:
 - Разделитель с целями и таймингом
@@ -28,10 +28,6 @@ HTML_HEAD = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Разработка консольных игр на Python · Полный курс (8 занятий)</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #0B0E26; overflow: hidden; font-family: 'Nunito Sans', Arial, sans-serif; }
@@ -439,7 +435,7 @@ def make_reflection(slide_id: str, num: int, questions: list[str], notes: str) -
 
 
 # =============================================================================
-# ГЕНЕРАЦИЯ ВСЕХ 130+ СЛАЙДОВ
+# ГЕНЕРАЦИЯ ВСЕХ 121 СЛАЙДОВ
 # =============================================================================
 
 def build_all_slides():

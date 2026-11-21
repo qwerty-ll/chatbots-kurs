@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import shutil
 import socket
 import subprocess
@@ -138,7 +139,12 @@ def reset_ui_state() -> None:
 
 
 def install_panel(server: str, code: str) -> None:
-    man = json.loads(fetch(server + "/client/manifest.json"))
+    try:
+        man = json.loads(fetch(server + "/client/manifest.json").decode("utf-8"))
+        if not isinstance(man, dict) or not all(k in man for k in ("sha256", "version", "vsix")):
+            raise ValueError("неполный manifest.json")
+    except (ValueError, UnicodeDecodeError) as e:
+        raise SystemExit(f"Сервер {server} вернул некорректный manifest.json: {e}")
     state = read_json(STATE, {})
     if state.get("sha256") == man["sha256"] and os.path.isdir(EXTDIR) and os.listdir(EXTDIR):
         say(f"Панель курса {man['version']} уже установлена.")
@@ -150,7 +156,10 @@ def install_panel(server: str, code: str) -> None:
     vsix = os.path.join(KURS_HOME, "kurs-panel.vsix")
     with open(vsix, "wb") as fh:
         fh.write(data)
-    r = subprocess.run(code_cmd(code, "--install-extension", vsix, "--force"), capture_output=True, text=True)
+    r = subprocess.run(
+        code_cmd(code, "--install-extension", vsix, "--force"),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
     if r.returncode != 0:
         raise SystemExit("Не удалось поставить панель в VS Code:\n" + (r.stderr or r.stdout)[-800:])
     state.update(sha256=man["sha256"], version=man["version"])
@@ -187,33 +196,42 @@ def make_shortcut(server: str) -> None:
             fh.write(data)
     except OSError:
         if "__file__" in globals():
-            shutil.copy(os.path.abspath(__file__), me)
+            try:
+                shutil.copy(os.path.abspath(__file__), me)
+            except shutil.SameFileError:
+                pass
     desktop = desktop_dir()
     os.makedirs(desktop, exist_ok=True)
     if os.name == "nt":
         path = os.path.join(desktop, "Курс.bat")
-        with open(path, "w", encoding="cp866", errors="replace") as fh:
-            fh.write(f'@echo off\r\n"{sys.executable}" "{me}"\r\n')
+        py_esc = sys.executable.replace("%", "%%")
+        me_esc = me.replace("%", "%%")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f'@echo off\r\nchcp 65001 >nul\r\n"{py_esc}" "{me_esc}"\r\n')
     elif sys.platform == "darwin":
         path = os.path.join(desktop, "Курс.command")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(f'#!/bin/sh\n"{sys.executable}" "{me}"\n')
+            fh.write(f"#!/bin/sh\n{shlex.quote(sys.executable)} {shlex.quote(me)}\n")
         os.chmod(path, 0o755)
     else:
         path = os.path.join(desktop, "kurs.desktop")
+        py_esc = sys.executable.replace("%", "%%")
+        me_esc = me.replace("%", "%%")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("[Desktop Entry]\nType=Application\nName=Курс: чат-боты\n"
-                     f'Exec="{sys.executable}" "{me}"\nIcon=accessories-text-editor\nTerminal=false\n')
+                     f'Exec="{py_esc}" "{me_esc}"\nIcon=accessories-text-editor\nTerminal=false\n')
         os.chmod(path, 0o755)
         # GNOME запускает ярлык с рабочего стола, только если он помечен как доверенный
-        subprocess.run(["gio", "set", path, "metadata::trusted", "true"], capture_output=True, check=False)
+        subprocess.run(["gio", "set", path, "metadata::trusted", "true"],
+                       capture_output=True, encoding="utf-8", errors="replace", check=False)
     say(f"Ярлык создан: {path}")
 
 
 def desktop_dir() -> str:
     """Папка рабочего стола: на русском Linux она может называться «Рабочий стол»."""
     if os.name != "nt" and sys.platform != "darwin" and shutil.which("xdg-user-dir"):
-        r = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True, check=False)
+        r = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", check=False)
         path = r.stdout.strip()
         if r.returncode == 0 and path and path != HOME:
             return path
@@ -248,8 +266,14 @@ def main(argv: list[str]) -> int:
     state = read_json(STATE, {})
     server = (a.server or os.environ.get("KURS_SERVER") or DEFAULT_SERVER or state.get("server") or "").strip().rstrip("/")
     if not server:
-        server = input("Адрес сервера курса (скажет учитель), например 192.168.1.10:8000: ").strip().rstrip("/")
-    if server and not server.startswith(("http://", "https://")):
+        try:
+            server = input("Адрес сервера курса (скажет учитель), например 192.168.1.10:8000: ").strip().rstrip("/")
+        except (EOFError, KeyboardInterrupt):
+            server = ""
+    if not server:
+        say("Адрес сервера не указан. Запустите снова и введите адрес (например, 192.168.1.10:8000).")
+        return 1
+    if not server.startswith(("http://", "https://")):
         server = "http://" + server
     state["server"] = server
     write_json(STATE, state)

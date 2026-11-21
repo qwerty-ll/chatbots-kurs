@@ -5,8 +5,14 @@
   const vscode = acquireVsCodeApi();
   const root = document.getElementById("root");
   const toastEl = document.getElementById("toast");
-  const ui = Object.assign({ tab: "tasks", task: null, helpText: "", server: "", chatHistory: [], chatDraft: "", chatLoading: false,
-    ideaDraft: {}, teamDraft: {}, planDraft: null }, vscode.getState() || {});
+  const ui = Object.assign(
+    {
+      studentId: null, tab: "tasks", task: null, helpText: "", server: "",
+      chatHistory: [], chatDraft: "", ideaDraft: {}, teamDraft: {}, planDraft: null,
+    },
+    vscode.getState() || {},
+    { chatLoading: false, toolGenerating: false }
+  );
   let view = null;
   let toastTimer = null;
   let clockTimer = null;
@@ -22,6 +28,37 @@
   const askedSolution = new Set();
   const openDetails = new Set();
   const SUPPORT_TABS = ["help", "chat", "theory", "cheat"];
+
+  function resetStudentState(nextStudentId) {
+    ui.studentId = nextStudentId ?? null;
+    ui.tab = "tasks";
+    ui.task = null;
+    ui.helpText = "";
+    ui.chatHistory = [];
+    ui.chatDraft = "";
+    ui.chatLoading = false;
+    ui.toolGenerating = false;
+    ui.ideaDraft = {};
+    ui.teamDraft = {};
+    ui.planDraft = null;
+    askedSolution.clear();
+    openDetails.clear();
+    leftMatches.clear();
+    voteDraft = null;
+    votePending = false;
+    voteError = "";
+    moduleIdea = { id: null, draft: null, pending: false, error: "" };
+    gamePlanDraft = null;
+    Object.assign(studioUi, { key: "", draft: null, target: "", source: "", pending: "", message: "", error: "", screen: "menu" });
+    lobby = null;
+    lobbyError = "";
+    lobbyLoading = false;
+    lobbyRequested = false;
+    lastCheckKey = "";
+    lastChatLength = 0;
+    if (P.current()) P.stop();
+    save();
+  }
 
   function details(key, summary, ...body) {
     const d = h("details", {}, h("summary", {}, summary), ...body);
@@ -63,8 +100,12 @@
   }
 
   function go(patch) {
+    const enteringGames = patch.tab === "games" && ui.tab !== "games";
     Object.assign(ui, patch);
     save();
+    if (enteringGames && view && view.screen === "in" && !P.current() && playState()?.allowed) {
+      requestLobby();
+    }
     render();
     window.scrollTo(0, 0);
     document.getElementById("course-content")?.focus({ preventScroll: true });
@@ -73,6 +114,14 @@
   window.addEventListener("message", (e) => {
     const m = e.data;
     if (m.type === "view") {
+      const nextStudentId = m.view?.me?.student_id ?? m.view?.me?.id ?? m.view?.state?.student_id ?? null;
+      if (m.view?.screen === "ended") {
+        if (ui.studentId !== null || ui.chatHistory.length || Object.keys(ui.ideaDraft || {}).length || Object.keys(ui.teamDraft || {}).length || ui.planDraft !== null || askedSolution.size) {
+          resetStudentState(null);
+        }
+      } else if (m.view?.screen === "in" && nextStudentId !== null && ui.studentId !== nextStudentId) {
+        resetStudentState(nextStudentId);
+      }
       // перерисовываем только при настоящих изменениях: иначе опрос сервера «съедал» бы щелчки
       const key = JSON.stringify(m.view, (k, v) => (k === "now" || k === "local_offset" ? undefined : v));
       view = m.view;
@@ -97,18 +146,23 @@
       if (studioUi.key !== m.key) return;
       studioUi.pending = "";
       studioUi.error = m.error || "";
-      if (!m.error && m.cmd === "studioMenu") studioUi.draft = null;
-      studioUi.message = m.error ? "" : ({
+      if (!m.error && !m.cancelled && m.cmd === "studioMenu") studioUi.draft = null;
+      studioUi.message = (m.error || m.cancelled) ? "" : ({
         studioMenu: "Меню сохранено и появится в терминале при следующем запуске.",
         studioSubmit: "Сборка отправлена учителю.",
         studioRunTemplate: "Шаблон открыт в терминале.",
       })[m.cmd];
       render();
-      document.getElementById("studio-" + studioUi.target + "-feedback")?.focus({ preventScroll: true });
+      if (!m.cancelled) document.getElementById("studio-" + studioUi.target + "-feedback")?.focus({ preventScroll: true });
     } else if (m.type === "lobby") {
+      lobbyLoading = false;
       lobby = m.lobby;
       lobbyError = m.error || "";
       if (ui.tab === "games" && !P.current()) render();
+    } else if (m.type === "solutionError") {
+      if (m.task) askedSolution.delete(m.task);
+    } else if (m.type === "lessonReset") {
+      askedSolution.clear();
     } else if (m.type === "aiChatReply") {
       ui.chatLoading = false;
       ui.chatHistory = ui.chatHistory || [];
@@ -140,9 +194,19 @@
   const P = window.KursPlay;
   let lobby = null;
   let lobbyError = "";
+  let lobbyLoading = false;
+  let lobbyRequested = false;
   const leftMatches = new Set();   // партии, из которых ученик уже вышел (сервер узнает об этом через секунду)
   const playState = () => (view && view.state && view.state.play) || null;
   const playOn = () => { const p = playState(); return !!(p && (p.allowed || p.match)) || !!P.current(); };
+
+  function requestLobby() {
+    if (lobbyLoading) return;
+    lobbyLoading = true;
+    lobbyRequested = true;
+    lobbyError = "";
+    send("playLobby");
+  }
 
   function startNet(m) {
     P.start({ mode: "net", game: m.game, matchId: m.id, url: `${view.playWs}?match=${encodeURIComponent(m.id)}`, auth: view.playAuth,
@@ -159,12 +223,17 @@
       if (ui.tab !== "games") go({ tab: "games" }); else render();
     }
     if (!p.allowed && !p.match && cur && cur.mode === "cpu") { P.stop(); render(); }
+    if (ui.tab === "games" && !P.current() && p.allowed && !lobby && !lobbyRequested && !lobbyLoading) {
+      requestLobby();
+    }
   }
 
   // лобби обновляем, пока открыта вкладка игр
   setInterval(() => {
     const p = playState();
-    if (view && view.screen === "in" && ui.tab === "games" && !P.current() && p && p.allowed) send("playLobby");
+    if (view && view.screen === "in" && ui.tab === "games" && !P.current() && p && p.allowed && !lobbyLoading) {
+      requestLobby();
+    }
   }, 3000);
 
   function inviteBanner(inv) {
@@ -184,8 +253,14 @@
       return out;
     }
     if (!lobby) {
-      send("playLobby");
-      out.push(h("p", { class: "muted" }, lobbyError || "Загружаю список игроков…"));
+      if (lobbyError) {
+        out.push(h("div", { class: "card" },
+          h("p", { class: "muted" }, lobbyError),
+          h("button", { class: "secondary small", disabled: lobbyLoading, onclick: () => { requestLobby(); render(); } },
+            lobbyLoading ? "Загружаю…" : "Повторить")));
+      } else {
+        out.push(h("p", { class: "muted" }, "Загружаю список игроков…"));
+      }
       return out;
     }
     for (const inv of lobby.invites_in) out.push(inviteBanner(inv));
@@ -692,9 +767,13 @@
       sources.map((member) => h("option", { value: member.id, selected: member === source }, member.name + (member.me ? " (твой файл)" : ""))));
     const disabled = Boolean(studioUi.pending) || Boolean(studioUi.draft) || view.offline;
     const submit = (mode) => {
-      if (release && !window.confirm("Заменить ранее сданную сборку?")) return;
-      sendStudio("studioSubmit", "release", { revision: studio.revision, mode, source: Number(select.value),
-        expected: release?.submitted ?? null });
+      sendStudio("studioSubmit", "release", {
+        revision: studio.revision,
+        mode,
+        source: Number(select.value),
+        expected: release?.submitted ?? null,
+        confirmOverwrite: Boolean(release),
+      });
     };
     return h("section", { id: "studio-release", tabindex: "-1", class: "card studio-card" }, h("h2", {}, "Сдать сборку"),
       release ? h("p", { class: "studio-release-status" }, "Сдано · " + (release.mode === "template" ? "Рабочий шаблон" : "Файл команды")
@@ -996,14 +1075,19 @@
     const codeBlocks = [];
     let s = String(text).replace(/```(?:[a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, (_m, code) => {
       codeBlocks.push(code.trim());
-      return `___CODE_BLOCK_${codeBlocks.length - 1}___`;
+      return `\uE000CB_${codeBlocks.length - 1}\uE001`;
     });
+    const inlineCodes = [];
     s = esc(s);
-    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/`([^`]+)`/g, (_m, code) => {
+      inlineCodes.push(code);
+      return `\uE000IC_${inlineCodes.length - 1}\uE001`;
+    });
     s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
     s = s.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
     s = s.replace(/\n/g, "<br>");
-    s = s.replace(/___CODE_BLOCK_(\d+)___/g, (_m, idx) => {
+    s = s.replace(/\uE000IC_(\d+)\uE001/g, (_m, idx) => `<code>${inlineCodes[Number(idx)] || ""}</code>`);
+    s = s.replace(/\uE000CB_(\d+)\uE001/g, (_m, idx) => {
       return `<pre><code>${esc(codeBlocks[Number(idx)] || "")}</code></pre>`;
     });
     return s;

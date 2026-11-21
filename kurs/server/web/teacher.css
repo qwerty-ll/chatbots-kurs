@@ -120,7 +120,7 @@ h2 { font-size: 16px; margin: 0 0 10px; }
 .seg { background: none; color: var(--blue-ink); padding: 7px 12px; border-radius: 9px; }
 .seg.on { background: #fff; color: var(--text); box-shadow: var(--shadow); }
 .chip.ok { background: var(--ok-bg); color: var(--ok); }
-.hint-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.hint-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px; }
 @media (max-width: 900px) { .hint-cards { grid-template-columns: 1fr; } }
 .hint-card { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; text-align: left; box-shadow: var(--shadow); }
 .hint-card b { display: block; font-size: 15px; } .hint-card small { color: var(--muted); font-weight: 500; }
@@ -197,13 +197,6 @@ table.res tr:hover td { background: #FAFAFE; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
-
-/* ---------- тетрадь ---------- */
-.stage { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
-.stage:first-of-type { border-top: 0; }
-.stage .n { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; background: var(--line); color: var(--muted); flex: none; }
-.stage.done .n { background: var(--ok-bg); color: var(--ok); }
-.stage .t { flex: 1; }
 
 /* ---------- до занятия ---------- */
 .wizard { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }

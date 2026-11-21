@@ -21,6 +21,7 @@ import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 DEFAULT_CONFIG = {
     "provider": "gigachat",
     "mode": "live",                 # live — работает; offline — запасной режим; pause — нейросеть на паузе
+    "manual_override": False,       # True, если учитель вручную задал провайдера/адрес
     # GigaChat
     "gigachat_key": "",             # «Ключ авторизации» из личного кабинета (секрет, наружу не отдаём)
     "gigachat_scope": "GIGACHAT_API_PERS",
@@ -50,6 +52,7 @@ DEFAULT_CONFIG = {
     "cache_minutes": 10,            # одинаковые «строгие» вопросы (temperature ≤ 0.3) отвечаем из памяти
 }
 SECRETS = ("gigachat_key", "openai_key")
+URL_CONFIG_KEYS = ("openai_base_url", "gigachat_oauth_url", "gigachat_api_url")
 SHORT_HINT = "Отвечай по-русски, кратко и по делу: максимум 2–3 предложения."
 NO_CODE_HINT = (
     "Отвечай естественным языком — как грамотный, спокойный и дружелюбный наставник. "
@@ -83,6 +86,38 @@ class AIError(Exception):
         self.retry_after = retry_after
 
 
+def _validate_url(url: str, allow_empty: bool = False) -> str:
+    u = str(url or "").strip()
+    if not u:
+        if allow_empty:
+            return ""
+        raise AIError("Не задан адрес сервиса нейросети")
+    parsed = urllib.parse.urlparse(u)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise AIError("Адрес сервиса должен начинаться с http:// или https://")
+    return u
+
+
+def _atomic_write_json(path: str, data: dict) -> None:
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Поставщики
 # ---------------------------------------------------------------------------
@@ -99,11 +134,16 @@ def _ssl_context(cfg: dict) -> ssl.SSLContext:
 
 
 def _http(url: str, data: bytes | None, headers: dict, cfg: dict, timeout: int = 60) -> dict:
+    url = _validate_url(url)
     req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
-        ctx = _ssl_context(cfg) if url.startswith("https") else None
+        ctx = _ssl_context(cfg) if url.startswith("https://") else None
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-            return json.loads(r.read().decode("utf-8"))
+            raw = r.read().decode("utf-8")
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise AIError("поставщик вернул неожиданный формат ответа")
+            return parsed
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:300]
         e.close()
@@ -124,6 +164,8 @@ def _http(url: str, data: bytes | None, headers: dict, cfg: dict, timeout: int =
         raise AIError(f"нет связи с поставщиком: {e.reason}") from e
     except (TimeoutError, OSError) as e:
         raise AIError(f"поставщик не ответил вовремя: {e}") from e
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
+        raise AIError(f"поставщик вернул некорректный JSON: {e}") from None
     except UnicodeEncodeError:
         raise AIError("в ключе есть недопустимые символы: скопируйте ключ из личного кабинета ещё раз") from None
 
@@ -161,7 +203,8 @@ def to_gigachat(messages: list) -> list:
 
 
 class GigaChat:
-    def __init__(self):
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.token = ""
         self.expires = 0.0
         self.key_hash = ""
@@ -171,16 +214,23 @@ class GigaChat:
         if not key:
             raise AIError("не задан ключ авторизации GigaChat (пульт учителя → Нейросеть → Настройки)")
         h = hashlib.sha256(key.encode()).hexdigest()
-        if self.token and self.key_hash == h and time.time() < self.expires - 60:
+        with self._lock:
+            if self.token and self.key_hash == h and time.time() < self.expires - 60:
+                return self.token
+            r = _http(cfg["gigachat_oauth_url"], f"scope={cfg['gigachat_scope']}".encode(),
+                      {"Authorization": "Basic " + key, "RqUID": str(uuid.uuid4()),
+                       "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}, cfg, timeout=20)
+            token = r.get("access_token")
+            if not isinstance(token, str) or not token:
+                raise AIError("поставщик не вернул токен доступа")
+            self.token = token
+            try:
+                exp = float(r.get("expires_at", 0))
+            except (TypeError, ValueError):
+                exp = 0.0
+            self.expires = exp / 1000 if exp > 1e11 else (exp or time.time() + 25 * 60)
+            self.key_hash = h
             return self.token
-        r = _http(cfg["gigachat_oauth_url"], f"scope={cfg['gigachat_scope']}".encode(),
-                  {"Authorization": "Basic " + key, "RqUID": str(uuid.uuid4()),
-                   "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}, cfg, timeout=20)
-        self.token = r["access_token"]
-        exp = float(r.get("expires_at", 0))
-        self.expires = exp / 1000 if exp > 1e11 else (exp or time.time() + 25 * 60)
-        self.key_hash = h
-        return self.token
 
     def chat(self, cfg: dict, messages: list, temperature: float, max_tokens: int, tools=None) -> dict:
         token = self._auth(cfg)
@@ -188,14 +238,19 @@ class GigaChat:
                 "temperature": max(0.01, float(temperature)), "max_tokens": int(max_tokens)}
         if tools:
             # GigaChat описывает инструменты как functions (старый формат OpenAI)
-            body["functions"] = [t["function"] for t in tools if t.get("type") == "function"]
+            body["functions"] = [t["function"] for t in tools if isinstance(t, dict) and t.get("type") == "function"]
             body["function_call"] = "auto"
         r = _http(cfg["gigachat_api_url"].rstrip("/") + "/chat/completions", json.dumps(body).encode(),
                   {"Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json"}, cfg)
-        msg = r["choices"][0]["message"]
-        out = {"content": msg.get("content")}
+        try:
+            msg = r["choices"][0]["message"]
+            if not isinstance(msg, dict):
+                raise TypeError("message is not dict")
+        except (KeyError, IndexError, TypeError):
+            raise AIError("поставщик вернул неожиданный формат ответа") from None
+        out: dict = {"content": msg.get("content")}
         fc = msg.get("function_call")
-        if fc:
+        if isinstance(fc, dict):
             args = fc.get("arguments")
             out["tool_calls"] = [{"id": msg.get("functions_state_id") or "call_1", "type": "function",
                                   "function": {"name": fc.get("name"), "arguments": args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)}}]
@@ -209,7 +264,7 @@ class OpenAICompatible:
         models = [m.strip() for m in cfg.get("openai_models", "").split(",") if m.strip()]
         if not base or not models:
             raise AIError("не заданы адрес сервиса и модели (пульт учителя → Нейросеть → Настройки)")
-        last = None
+        last: AIError | None = None
         for model in models:
             body = {"model": model, "messages": messages, "temperature": float(temperature),
                     "max_tokens": max(256, int(max_tokens))}
@@ -218,8 +273,13 @@ class OpenAICompatible:
             try:
                 r = _http(base + "/chat/completions", json.dumps(body).encode(),
                           {"Authorization": "Bearer " + cfg.get("openai_key", ""), "Content-Type": "application/json"}, cfg)
-                ch = r["choices"][0]
-                msg = ch["message"]
+                try:
+                    ch = r["choices"][0]
+                    msg = ch["message"]
+                    if not isinstance(ch, dict) or not isinstance(msg, dict):
+                        raise TypeError("choice/message is not dict")
+                except (KeyError, IndexError, TypeError):
+                    raise AIError("поставщик вернул неожиданный формат ответа") from None
                 content = msg.get("content")
                 if ch.get("finish_reason") == "length" and not msg.get("tool_calls") and len((content or "").strip()) < 2:
                     last = AIError(f"модель {model} обрезала ответ")
@@ -232,7 +292,7 @@ class OpenAICompatible:
 
 
 def offline_answer(messages: list) -> dict:
-    q = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+    q = next((m.get("content", "") for m in reversed(messages) if isinstance(m, dict) and m.get("role") == "user"), "")
     q = (q or "").strip().replace("\n", " ")
     return {"content": f"🤖 (Запасной режим: нейросеть сейчас отдыхает.) Я получил вопрос «{q[:60]}» и отвечу, когда учитель включит нейросеть."}
 
@@ -256,10 +316,11 @@ class Ticket:
         self.message = None
         self.error = ""
         self.cached = False
+        self.logged = False
 
 
 class Gateway:
-    """Очередь вопросов к нейросети: один запрос к поставщику за раз, по одному вопросу от ученика."""
+    """Очередь вопросов к нейросети: параллельная обработка запросов класса с квотами и кэшем."""
 
     def __init__(self, data_dir: str, log_fn=None):
         self.path = os.path.join(data_dir, "ai.json")
@@ -277,27 +338,59 @@ class Gateway:
         self.durations: collections.deque[float] = collections.deque(maxlen=20)
         self.cache: dict[str, tuple[float, dict]] = {}
         self.last_ask: dict = {}
+        self._ai_code_cache: dict[str, tuple[bool, str]] = {}
         self.log_fn = log_fn          # (ticket, ms) → запись в ленту учителя
         self.providers = {"gigachat": GigaChat(), "openai": OpenAICompatible()}
         self._last_bridge_check = 0.0
-        self._bridge_info = None
-        self.check_bridge(force_fetch=True)
+        self._bridge_info: dict | None = None
+        self._stop_event = threading.Event()
+        self._bridge_event = threading.Event()
+        self._bridge_thread = threading.Thread(target=self._bridge_loop, name="kurs-ai-bridge", daemon=True)
+        self._bridge_thread.start()
+        self._bridge_event.set()
 
-    def check_bridge(self, force_fetch: bool = False) -> dict | None:
-        """Проверяет наличие активного туннеля моста ИИ (ai_bridge.json или GitHub)."""
+    def _bridge_loop(self) -> None:
+        """Фоновая проверка доступности моста ИИ, не блокирующая HTTP-обработчики."""
+        while not self._stop_event.is_set():
+            self._bridge_event.wait(timeout=60.0)
+            self._bridge_event.clear()
+            if self._stop_event.is_set():
+                break
+            try:
+                self._fetch_and_apply_bridge()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def trigger_bridge_check(self, force: bool = False) -> dict | None:
+        """Возвращает кэшированный статус моста и при необходимости запускает фоновое обновление."""
         now = time.time()
-        if not force_fetch and now - getattr(self, "_last_bridge_check", 0) < 30:
-            return getattr(self, "_bridge_info", None)
-        self._last_bridge_check = now
+        with self.lock:
+            info = dict(self._bridge_info) if self._bridge_info else None
+            need = force or (now - self._last_bridge_check >= 30.0)
+        if need and not self._stop_event.is_set():
+            self._bridge_event.set()
+        return info
+
+    def _fetch_and_apply_bridge(self) -> dict | None:
+        """Сетевая проверка моста ИИ и применение к self.cfg (без перезаписи ручных настроек учителя)."""
+        now = time.time()
+        with self.lock:
+            self._last_bridge_check = now
+            if self.cfg.get("manual_override") or (self.cfg.get("provider") == "gigachat" and self.cfg.get("gigachat_key")):
+                self._bridge_info = None
+                return None
 
         # 0. Проверяем локальный Antigravity Tools (если сервер запущен на этом же компьютере)
         local_direct = False
         try:
-            req_local = urllib.request.Request("http://127.0.0.1:8045/v1/models", headers={"Authorization": "Bearer sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d"})
+            req_local = urllib.request.Request(
+                "http://127.0.0.1:8045/v1/models",
+                headers={"Authorization": "Bearer sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d"},
+            )
             with urllib.request.urlopen(req_local, timeout=0.6) as r:
                 if r.status == 200:
                     local_direct = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         bridge = None
@@ -307,7 +400,7 @@ class Gateway:
                 "openai_base_url": "http://127.0.0.1:8045/v1",
                 "openai_key": "sk-class-b75732a69115bc0c7436a9b561db217509ec0de18069d43d",
                 "openai_models": "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash,claude-sonnet-4-6",
-                "updated_at": now
+                "updated_at": now,
             }
         else:
             # 1. Локальный файл из репозитория курса
@@ -316,7 +409,7 @@ class Gateway:
                 try:
                     with open(bridge_file, encoding="utf-8") as fh:
                         d = json.load(fh)
-                        if d.get("enabled") and d.get("openai_base_url"):
+                        if isinstance(d, dict) and d.get("enabled") and d.get("openai_base_url"):
                             bridge = d
                 except (OSError, ValueError):
                     pass
@@ -327,29 +420,48 @@ class Gateway:
                 req = urllib.request.Request(url, headers={"User-Agent": "kurs-server", "Cache-Control": "no-cache"})
                 with urllib.request.urlopen(req, timeout=2.5) as r:
                     d = json.loads(r.read().decode("utf-8"))
-                    if d.get("enabled") and d.get("openai_base_url"):
+                    if isinstance(d, dict) and d.get("enabled") and d.get("openai_base_url"):
                         if not bridge or d.get("updated_at", 0) >= bridge.get("updated_at", 0):
                             bridge = d
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
-        if bridge and bridge.get("enabled"):
-            with self.lock:
-                if self.cfg.get("provider") != "gigachat" or not self.cfg.get("gigachat_key"):
-                    self.cfg["provider"] = "openai"
-                    self.cfg["openai_base_url"] = bridge["openai_base_url"]
-                    self.cfg["openai_key"] = bridge.get("openai_key", "")
-                    self.cfg["openai_models"] = bridge.get("openai_models", "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash")
+        with self.lock:
+            self._last_bridge_check = time.time()
+            # Повторно проверяем под замком: учитель мог поменять настройки во время сетевого запроса
+            if self.cfg.get("manual_override") or (self.cfg.get("provider") == "gigachat" and self.cfg.get("gigachat_key")):
+                self._bridge_info = None
+                return None
+            if bridge and bridge.get("enabled"):
+                try:
+                    b_url = _validate_url(bridge["openai_base_url"])
+                except AIError:
+                    self._bridge_info = None
+                    return None
+                self.cfg["provider"] = "openai"
+                self.cfg["openai_base_url"] = b_url
+                self.cfg["openai_key"] = str(bridge.get("openai_key", ""))
+                self.cfg["openai_models"] = str(bridge.get("openai_models", "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash"))
+                # Не сбрасываем ручные режимы pause / offline
+                if self.cfg.get("mode") not in ("pause", "offline"):
                     self.cfg["mode"] = "live"
-                    self._bridge_info = {
-                        "active": True,
-                        "url": bridge["openai_base_url"],
-                        "models": self.cfg["openai_models"],
-                        "updated_at": bridge.get("updated_at", 0),
-                    }
-                    return self._bridge_info
-        self._bridge_info = None
-        return None
+                self._bridge_info = {
+                    "active": True,
+                    "url": b_url,
+                    "models": self.cfg["openai_models"],
+                    "updated_at": bridge.get("updated_at", 0),
+                }
+                return dict(self._bridge_info)
+            self._bridge_info = None
+            return None
+
+    def check_bridge(self, force_fetch: bool = False) -> dict | None:
+        """Проверяет наличие активного туннеля моста ИИ (ai_bridge.json или GitHub).
+        Если force_fetch=False — не блокирует HTTP-поток, возвращая кэш и запуская фоновое обновление.
+        """
+        if not force_fetch:
+            return self.trigger_bridge_check(force=False)
+        return self._fetch_and_apply_bridge()
 
     def check_ai_code(self, text: str) -> tuple[bool, str]:
         """Определяет с помощью ИИ на учительском ПК, является ли код решением нейросети.
@@ -359,20 +471,22 @@ class Gateway:
             return False, "короткий фрагмент"
 
         cache_key = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
-        if hasattr(self, "_ai_code_cache") and cache_key in self._ai_code_cache:
-            return self._ai_code_cache[cache_key]
-
-        if not hasattr(self, "_ai_code_cache"):
-            self._ai_code_cache = {}
+        with self.lock:
+            cached = self._ai_code_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         # 1. Быстрый regex-фильтр: явные фразы решений или разметка
         if AI_PASTE_PATTERNS.search(text):
-            self._ai_code_cache[cache_key] = (True, "явная разметка/фразы нейросети")
-            return True, "явная разметка/фразы нейросети"
+            res = (True, "явная разметка/фразы нейросети")
+            with self.lock:
+                self._ai_code_cache[cache_key] = res
+            return res
 
-        self.check_bridge()
-        if not self._configured() or self.cfg.get("mode") == "pause":
-            return False, "нейросеть не настроена"
+        self.trigger_bridge_check()
+        with self.lock:
+            if not self._configured_locked() or self.cfg.get("mode") == "pause":
+                return False, "нейросеть не настроена"
 
         prompt = (
             "Ты — строгий школьный арбитр курса программирования Python.\n"
@@ -388,23 +502,28 @@ class Gateway:
             content = str(msg.get("content", "")).strip().upper()
             is_ai = "AI" in content
             reason = "ИИ подтвердил готовое решение" if is_ai else "обычный код"
-            if len(self._ai_code_cache) > 500:
-                self._ai_code_cache.clear()
-            self._ai_code_cache[cache_key] = (is_ai, reason)
+            with self.lock:
+                if len(self._ai_code_cache) > 500:
+                    self._ai_code_cache.clear()
+                self._ai_code_cache[cache_key] = (is_ai, reason)
             return is_ai, reason
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return False, f"ошибка проверки: {e}"
 
     # --- настройки ---
     def _read(self) -> dict:
         try:
             with open(self.path, encoding="utf-8") as fh:
-                return json.load(fh)
+                d = json.load(fh)
+                return d if isinstance(d, dict) else {}
         except (OSError, ValueError):
             return {}
 
     def save_config(self, patch: dict) -> None:
+        if not isinstance(patch, dict):
+            raise AIError("Неверный формат настроек")
         with self.lock:
+            updated = dict(self.cfg)
             for k, v in patch.items():
                 if k not in DEFAULT_CONFIG:
                     continue
@@ -414,28 +533,46 @@ class Gateway:
                 if isinstance(default, bool):
                     v = bool(v)
                 elif isinstance(default, int):
-                    v = int(v)
+                    try:
+                        v = int(v)
+                    except (TypeError, ValueError):
+                        raise AIError(f"Параметр {k} должен быть целым числом") from None
                 else:
                     v = str(v).strip()
-                self.cfg[k] = v
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump(self.cfg, fh, ensure_ascii=False, indent=2)
-            try:
-                os.chmod(self.path, 0o600)
-            except OSError:
-                pass
+                if k in URL_CONFIG_KEYS:
+                    v = _validate_url(v, allow_empty=True)
+                updated[k] = v
+
+            # Отслеживаем ручную настройку учителя, чтобы мост не перезатирал её
+            if "manual_override" not in patch:
+                if "provider" in patch and updated.get("provider") == "gigachat":
+                    updated["manual_override"] = True
+                elif "openai_base_url" in patch:
+                    if updated.get("openai_base_url"):
+                        bridge_url = (self._bridge_info or {}).get("url", "")
+                        if updated["openai_base_url"] != bridge_url:
+                            updated["manual_override"] = True
+                    else:
+                        updated["manual_override"] = False
+
+            self.cfg = updated
+            if self.cfg.get("manual_override"):
+                self._bridge_info = None
+            _atomic_write_json(self.path, self.cfg)
             self.fails = 0
             self.last_error = ""
 
     def public_config(self) -> dict:
-        out = {k: v for k, v in self.cfg.items() if k not in SECRETS}
-        out["has_gigachat_key"] = bool(self.cfg.get("gigachat_key"))
-        out["has_openai_key"] = bool(self.cfg.get("openai_key"))
-        return out
+        with self.lock:
+            out = {k: v for k, v in self.cfg.items() if k not in SECRETS}
+            out["has_gigachat_key"] = bool(self.cfg.get("gigachat_key"))
+            out["has_openai_key"] = bool(self.cfg.get("openai_key"))
+            return out
 
     # --- ученик ---
     def ask(self, student_id, name: str, pc: str, messages: list, temperature, max_tokens, tools, today_count: int, allow_code: bool = False) -> Ticket:
-        cfg = self.cfg
+        with self.lock:
+            cfg = dict(self.cfg)
         if cfg["mode"] == "pause":
             raise AIError("Учитель поставил нейросеть на паузу. Подожди немного.")
         if not isinstance(messages, list) or not messages:
@@ -443,6 +580,8 @@ class Gateway:
         clean = []
         total = 0
         for m in messages[-30:]:
+            if not isinstance(m, dict):
+                continue
             role = str(m.get("role", "user"))
             content = m.get("content")
             if role not in ("system", "user", "assistant", "tool", "function"):
@@ -453,6 +592,8 @@ class Gateway:
                 if m.get(k):
                     item[k] = m[k]
             clean.append(item)
+        if not clean:
+            raise AIError("Пустой вопрос.")
         if total > cfg["max_prompt_chars"] * 4 or len(str(clean[-1]["content"])) > cfg["max_prompt_chars"]:
             raise AIError(f"Слишком длинный вопрос: не больше {cfg['max_prompt_chars']} символов.")
         if today_count >= cfg["daily_limit"]:
@@ -473,11 +614,15 @@ class Gateway:
                 clean[0]["content"] = (clean[0]["content"] + " " + hint).strip()
             else:
                 clean.insert(0, {"role": "system", "content": hint})
+        log_immediately = False
         with self.lock:
             now = time.time()
+            self._gc()
+            if self.cfg["mode"] == "pause":
+                raise AIError("Учитель поставил нейросеть на паузу. Подожди немного.")
             if student_id is not None and student_id in self.active_students:
                 raise AIError("Ты уже ждёшь ответа на прошлый вопрос.")
-            wait = cfg["min_interval"] - (now - self.last_ask.get(student_id, 0))
+            wait = self.cfg["min_interval"] - (now - self.last_ask.get(student_id, 0))
             # результат инструмента — продолжение того же шага агента, его не задерживаем
             agent_step = clean[-1]["role"] in ("tool", "function")
             if student_id is not None and wait > 0 and not agent_step:
@@ -486,22 +631,23 @@ class Gateway:
             t = Ticket(self.next_id, student_id, name, pc, clean, temperature, max_tokens, tools)
             self.next_id += 1
             self.tickets[t.id] = t
-            key = self._cache_key(t)
+            key = self._cache_key_locked(t)
             hit = self.cache.get(key) if key else None
-            if hit and now - hit[0] < cfg["cache_minutes"] * 60:
+            if hit and now - hit[0] < self.cfg["cache_minutes"] * 60:
                 t.status, t.message, t.cached = "done", hit[1], True
-                self._log(t, 0)
-            elif cfg["mode"] == "offline":
+                log_immediately = True
+            elif self.cfg["mode"] == "offline":
                 t.status, t.message = "done", offline_answer(clean)
-                self._log(t, 0)
+                log_immediately = True
             else:
                 t.status = "working"
                 if student_id is not None:
                     self.active_students.add(student_id)
                 self.active_tickets[t.id] = t
                 self.executor.submit(self._process_ticket, t)
-            self._gc()
-            return t
+        if log_immediately:
+            self._log(t, 0)
+        return t
 
     def ticket(self, tid: int, student_id) -> dict:
         with self.lock:
@@ -517,7 +663,7 @@ class Gateway:
 
     # --- учитель ---
     def status(self) -> dict:
-        self.check_bridge()
+        self.trigger_bridge_check()
         with self.lock:
             avg = sum(self.durations) / len(self.durations) if self.durations else None
             active_list = [{"name": t.name, "pc": t.pc, "since": t.created} for t in self.active_tickets.values()]
@@ -537,8 +683,8 @@ class Gateway:
                     "active_count": len(active_list),
                     "working": working,
                     "avg_seconds": round(avg, 1) if avg else None,
-                    "configured": self._configured(),
-                    "bridge": getattr(self, "_bridge_info", None)}
+                    "configured": self._configured_locked(),
+                    "bridge": dict(self._bridge_info) if self._bridge_info else None}
 
     def student_status(self) -> dict:
         with self.lock:
@@ -548,14 +694,21 @@ class Gateway:
         if mode not in ("live", "offline", "pause"):
             raise AIError("Неизвестный режим")
         self.save_config({"mode": mode})
+        to_log: list[Ticket] = []
         if mode != "live":
             with self.lock:
                 for t in list(self.active_tickets.values()):
+                    if t.status not in ("queued", "working"):
+                        continue
                     if mode == "offline":
                         t.status, t.message = "done", offline_answer(t.messages)
                     else:
                         t.status, t.error = "error", "учитель поставил нейросеть на паузу"
-                    self._log(t, 0)
+                    self.active_tickets.pop(t.id, None)
+                    self.active_students.discard(t.student_id)
+                    to_log.append(t)
+        for t in to_log:
+            self._log(t, 0)
 
     def test(self) -> dict:
         """Проверка связи из пульта: тестовый короткий запрос напрямую."""
@@ -569,29 +722,45 @@ class Gateway:
         except AIError as e:
             self._mark_fail(str(e))
             return {"ok": False, "error": str(e)}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self._mark_fail(str(e))
             return {"ok": False, "error": str(e)}
 
+    def shutdown(self) -> None:
+        """Останавливает фоновый поток проверки моста и пул потоков."""
+        self._stop_event.set()
+        self._bridge_event.set()
+        if self._bridge_thread.is_alive():
+            self._bridge_thread.join(timeout=2.0)
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
     # --- внутреннее ---
-    def _configured(self) -> bool:
+    def _configured_locked(self) -> bool:
         if self.cfg["provider"] == "gigachat":
             return bool(self.cfg.get("gigachat_key"))
         return bool(self.cfg.get("openai_base_url") and self.cfg.get("openai_models"))
 
-    def _cache_key(self, t: Ticket) -> str | None:
+    def _configured(self) -> bool:
+        with self.lock:
+            return self._configured_locked()
+
+    def _cache_key_locked(self, t: Ticket) -> str | None:
         if t.temperature > 0.3 or t.tools or self.cfg["cache_minutes"] <= 0:
             return None
         raw = json.dumps([t.messages, t.max_tokens, self.cfg["provider"]], ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _call(self, t: Ticket) -> dict:
-        if self.cfg.get("provider") == "openai":
-            self.check_bridge()
-        provider = self.providers.get(self.cfg["provider"])
+        with self.lock:
+            cfg = dict(self.cfg)
+        if cfg.get("provider") == "openai":
+            self.trigger_bridge_check()
+            with self.lock:
+                cfg = dict(self.cfg)
+        provider = self.providers.get(cfg["provider"])
         if not provider:
             raise AIError("неизвестный поставщик нейросети")
-        return provider.chat(dict(self.cfg), t.messages, t.temperature, t.max_tokens, t.tools)
+        return provider.chat(cfg, t.messages, t.temperature, t.max_tokens, t.tools)
 
     def _mark_ok(self, seconds: float) -> None:
         with self.lock:
@@ -606,28 +775,51 @@ class Gateway:
             self.last_error = err
 
     def _log(self, t: Ticket, ms: int) -> None:
-        if self.log_fn and t.student_id is not None:
-            try:
-                self.log_fn(t, ms)
-            except Exception:  # noqa: BLE001 — лента не должна ломать ответы
-                pass
+        if not self.log_fn or t.student_id is None:
+            return
+        with self.lock:
+            if t.logged:
+                return
+            t.logged = True
+        try:
+            self.log_fn(t, ms)
+        except Exception:  # noqa: BLE001 — лента не должна ломать ответы
+            pass
 
     def _gc(self) -> None:
-        old = time.time() - 600
+        """Вызывается под self.lock."""
+        now = time.time()
+        stale = now - TICKET_STALE
+        for tid, t in list(self.active_tickets.items()):
+            if t.polled < stale:
+                t.status = "error"
+                t.error = "ученик закрыл запрос"
+                self.active_tickets.pop(tid, None)
+                self.active_students.discard(t.student_id)
+        old = now - 600
         for tid in [k for k, t in self.tickets.items() if t.status in ("done", "error") and t.polled < old]:
             del self.tickets[tid]
-        for k in [k for k, (ts, _) in self.cache.items() if time.time() - ts > self.cfg["cache_minutes"] * 60]:
+        cache_ttl = self.cfg["cache_minutes"] * 60
+        for k in [k for k, (ts, _) in self.cache.items() if now - ts > cache_ttl]:
             del self.cache[k]
+        for sid, ts in list(self.last_ask.items()):
+            if now - ts > 3600:
+                del self.last_ask[sid]
 
     def _process_ticket(self, t: Ticket) -> None:
         start = time.time()
+        should_log = False
         try:
             try:
                 msg = self._call(t)
             except AIError:
-                old_url = self.cfg.get("openai_base_url")
-                if self.cfg.get("provider") == "openai" and self.check_bridge(force_fetch=True):
-                    if self.cfg.get("openai_base_url") != old_url:
+                with self.lock:
+                    old_url = self.cfg.get("openai_base_url")
+                    is_openai = self.cfg.get("provider") == "openai"
+                if is_openai and self.check_bridge(force_fetch=True):
+                    with self.lock:
+                        new_url = self.cfg.get("openai_base_url")
+                    if new_url != old_url:
                         msg = self._call(t)
                     else:
                         raise
@@ -636,20 +828,27 @@ class Gateway:
             dur = time.time() - start
             self._mark_ok(dur)
             with self.lock:
-                t.status, t.message = "done", msg
-                key = self._cache_key(t)
-                if key:
-                    self.cache[key] = (time.time(), msg)
-            self._log(t, int(dur * 1000))
+                if t.status in ("queued", "working"):
+                    t.status, t.message = "done", msg
+                    key = self._cache_key_locked(t)
+                    if key:
+                        self.cache[key] = (time.time(), msg)
+                    should_log = True
+            if should_log:
+                self._log(t, int(dur * 1000))
         except AIError as e:
             self._mark_fail(str(e))
             with self.lock:
-                t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
-            self._log(t, int((time.time() - start) * 1000))
+                if t.status in ("queued", "working"):
+                    t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
+                    should_log = True
+            if should_log:
+                self._log(t, int((time.time() - start) * 1000))
         except Exception as e:  # noqa: BLE001
             self._mark_fail(f"ошибка шлюза: {e!r}")
             with self.lock:
-                t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
+                if t.status in ("queued", "working"):
+                    t.status, t.error = "error", "нейросеть сейчас недоступна, попробуй через минуту"
         finally:
             with self.lock:
                 self.active_students.discard(t.student_id)

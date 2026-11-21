@@ -52,7 +52,13 @@ def agent_answer(messages, tools, functions, steps=5):
         })
         # ...запускаем каждый инструмент и возвращаем результат модели
         for call in message.tool_calls:
-            args = json.loads(call.function.arguments or "{}")
+            try:
+                args = json.loads(call.function.arguments or "{}")
+            except (json.JSONDecodeError, TypeError) as error:
+                result = f"Ошибка аргументов инструмента (неверный JSON): {error}"
+                print(f"  🔧 {call.function.name}(?) -> {result}")
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
+                continue
             result = run_tool(functions, call.function.name, args)
             print(f"  🔧 {call.function.name}({args}) -> {result}")
             messages.append({"role": "tool", "tool_call_id": call.id, "content": result})

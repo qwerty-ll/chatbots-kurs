@@ -111,7 +111,7 @@ def chat(messages, tools=None, temperature=0.7, max_tokens=1500):
     return chat_direct(messages, tools, temperature, max_tokens)
 
 
-def chat_in_class(messages, tools, temperature, max_tokens):
+def chat_in_class(messages, tools, temperature, max_tokens, poll_timeout=120):
     """В классе: вопрос встаёт в очередь на сервере курса, ждём своей очереди."""
     data = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens}
     if tools:
@@ -119,7 +119,11 @@ def chat_in_class(messages, tools, temperature, max_tokens):
     try:
         ticket = ask_server(data)
         shown = None
+        deadline = time.monotonic() + poll_timeout
         while True:
+            if time.monotonic() > deadline:
+                print("  (нейросеть не ответила: превышено время ожидания в очереди)")
+                return None
             state = send(KURS_SERVER + "/api/ai/ticket?id=" + str(ticket["ticket"]), timeout=15)
             if state["status"] == "done":
                 return as_message(state["message"])
@@ -167,7 +171,7 @@ def chat_direct(messages, tools, temperature, max_tokens):
     for model in MODELS:
         data = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
         if tools:
-            data["tools"] = tools                  # инструменты для агента (занятие 7)
+            data["tools"] = tools                  # инструменты для агента (занятие 5)
         try:
             response = send(BASE_URL + "/chat/completions", data)
             message = response["choices"][0]["message"]
@@ -182,7 +186,7 @@ def chat_direct(messages, tools, temperature, max_tokens):
 
 def chat_text(messages, temperature=0.7, max_tokens=1500, **options):
     """То же, что chat(), но возвращает только текст ответа."""
-    message = chat(messages, temperature=temperature, max_tokens=max_tokens)
+    message = chat(messages, temperature=temperature, max_tokens=max_tokens, **options)
     if message is None:
         return "Нейросеть сейчас недоступна. Попробуй через минуту."
     return message.content or "(пустой ответ)"

@@ -295,9 +295,11 @@ def _features(tree: ast.AST, code: str) -> set[str]:
             for kw in node.keywords:
                 if kw.arg:
                     f.add(f"kw:{kw.arg}")
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            mod = node.module if isinstance(node, ast.ImportFrom) else (node.names[0].name if node.names else "")
-            f.add(f"import:{mod}")
+        elif isinstance(node, ast.ImportFrom):
+            f.add(f"import:{node.module or ''}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                f.add(f"import:{alias.name}")
         elif isinstance(node, ast.JoinedStr):
             f.add("fstring")
         elif isinstance(node, ast.While):
@@ -313,7 +315,7 @@ def _features(tree: ast.AST, code: str) -> set[str]:
                     f.add(f"except:{h.type.id}")
                 elif h.type is None:
                     f.add("except:*")
-        elif isinstance(node, ast.List) and node.elts:
+        elif isinstance(node, ast.List):
             f.add("list")
         elif isinstance(node, ast.Dict):
             f.add("dict")
@@ -360,7 +362,8 @@ def _features(tree: ast.AST, code: str) -> set[str]:
 FEATURE_TITLES = {
     "if": "есть if", "else": "есть else", "elif": "есть elif", "and": "есть and", "or": "есть or",
     "not": "есть not", "in": "есть in", "nested_if": "есть условие внутри условия", "flag": "есть флажок True/False",
-    "call:int": "есть int()", "method:lower": "есть lower()", "method:strip": "есть strip()",
+    "call:int": "есть int()", "call:input": "есть input()", "call:print": "есть print()",
+    "method:lower": "есть lower()", "method:strip": "есть strip()", "method:count": "есть count()",
     "exit": "есть exit()", "order": "есть сравнение < или >", "compare": "есть сравнение",
     "import:ai": "есть from ai import ...", "fstring": "есть f-строка", "kw:system": "есть роль system=",
     "kw:temperature": "есть temperature=", "call:ask": "есть ask()",
@@ -369,7 +372,8 @@ FEATURE_TITLES = {
     "augassign": "есть счётчик +=", "def": "есть своя функция def", "return": "функция возвращает return",
     "params": "у функции есть параметр", "for": "есть цикл for", "with": "файл открыт через with",
     "method:append": "есть append()", "call:len": "есть len()", "method:choice": "есть random.choice()",
-    "method:randint": "есть random.randint()", "import:random": "есть import random",
+    "call:choice": "есть choice()", "method:randint": "есть random.randint()", "call:randint": "есть randint()",
+    "import:random": "есть import random", "import:time": "есть import time",
     "import:json": "есть import json", "method:dump": "есть json.dump()", "method:load": "есть json.load()",
     "call:chat": "есть chat()", "call:chat_text": "есть chat_text()", "kw:tools": "передаются tools=",
     "call:make_tool": "есть make_tool()", "call:agent_answer": "есть agent_answer()",
@@ -642,11 +646,37 @@ def _meaningful(code: str) -> bool:
     return False
 
 
+_IGNORED_BLANK_TOKENS = {tokenize.STRING, tokenize.COMMENT}
+for _tok_name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END"):
+    if hasattr(tokenize, _tok_name):
+        _IGNORED_BLANK_TOKENS.add(getattr(tokenize, _tok_name))
+
+
+def _find_blank_lines(code: str) -> list[int]:
+    """Находит номера строк с пропуском ___ вне строковых литералов и комментариев."""
+    lines: set[int] = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            if tok.type in _IGNORED_BLANK_TOKENS:
+                continue
+            if "___" in tok.string:
+                lines.add(tok.start[0])
+    except (tokenize.TokenError, IndentationError):
+        for i, ln in enumerate(code.splitlines(), 1):
+            if ln.lstrip().startswith("#"):
+                continue
+            no_str = re.sub(r'(""".*?"""|\'\'\'.*?\'\'\'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')', "", ln)
+            if "___" in no_str.split("#", 1)[0]:
+                lines.add(i)
+    return sorted(lines)
+
+
 def find_helpers(task: dict, task_dir: str | None, src_dir: str | None) -> list[str]:
-    """Общие модули занятия (например agent.py): берём из папки ученика, иначе из папки задания."""
+    """Общие модули занятия (например agent.py): сначала папка задания, затем Код/ репозитория, иначе папка ученика."""
+    repo_code_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Код")
     out = []
     for name in task.get("helpers", []):
-        for folder in (src_dir, task_dir):
+        for folder in (task_dir, repo_code_dir, src_dir):
             if folder and os.path.isfile(os.path.join(folder, name)):
                 out.append(os.path.join(folder, name))
                 break
@@ -667,7 +697,7 @@ def check(task: dict, code: str, filename: str = "main.py", task_dir: str | None
         res["error"] = {"title": "Файл пустой", "text": "Напиши программу в этом файле и сохрани его (Ctrl+S).",
                         "line": None, "code_line": "", "where": ""}
         return done("Сначала напиши программу")
-    blanks = [i + 1 for i, ln in enumerate(code.splitlines()) if "___" in ln and not ln.lstrip().startswith("#")]
+    blanks = _find_blank_lines(code)
     if blanks:
         nums = ", ".join(map(str, blanks))
         res["error"] = {"title": "Остались пропуски ___",
@@ -701,8 +731,9 @@ def check(task: dict, code: str, filename: str = "main.py", task_dir: str | None
             inputs = [x for run in inputs for x in run]
         else:
             label = "Ввод: " + " → ".join(f"«{x}»" for x in inputs) if inputs else "Запуск"
+        dialog = dialog_of(r["raw"])
         item = {"kind": "test", "title": label, "ok": True, "message": "", "output": shown[-MAX_OUT:],
-                "input": inputs, "expect": t.get("expect", []), "dialog": dialog_of(r["raw"][-MAX_OUT:])}
+                "input": inputs, "expect": t.get("expect", []), "dialog": dialog}
         if r["timeout"]:
             item["ok"] = False
             item["message"] = "Программа работает слишком долго. Возможно, бесконечный цикл."
@@ -724,6 +755,11 @@ def check(task: dict, code: str, filename: str = "main.py", task_dir: str | None
                     item["message"] = f"{exp['title']} {exp['where']}: {exp['text']}"
                 if t.get("fail") and t["fail"] not in item["message"]:
                     item["message"] += " " + t["fail"]
+        elif r["rc"] not in (0, None):
+            item["ok"] = False
+            item["message"] = f"Программа завершилась с ошибкой (код выхода {r['rc']})."
+            if t.get("fail"):
+                item["message"] += " " + t["fail"]
         else:
             missing = [x for x in t.get("expect", []) if norm(x) not in n]
             extra = [x for x in t.get("reject", []) if norm(x) in n]

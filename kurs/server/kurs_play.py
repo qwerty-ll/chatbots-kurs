@@ -21,6 +21,9 @@ TEACHER = "t"                 # ключ учителя в лобби; учен�
 SEEN_TTL = 12                 # секунд: игрок в лобби, если его панель недавно обращалась к серверу
 INVITE_TTL = 45               # секунд живёт вызов без ответа
 LOGGED = ("move", "ready", "shot", "result", "resign", "over")   # такие сообщения повторяем после переподключения
+CLIENT_TYPES = frozenset({"move", "ready", "shot", "result", "resign", "over", "st", "pd", "react"})
+MAX_WS_PAYLOAD = 1 << 20      # 1 МБ на всё сообщение (включая фрагменты)
+SEEN_PRUNE_TTL = SEEN_TTL * 5
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
@@ -29,7 +32,7 @@ class PlayError(Exception):
 
 
 class Play:
-    def __init__(self):
+    def __init__(self) -> None:
         self.lock = threading.RLock()
         self.seen: dict[str, tuple[str, float]] = {}
         self.invites: dict[str, dict] = {}
@@ -37,8 +40,11 @@ class Play:
 
     # ---------- кто в лобби ----------
     def touch(self, key: str, name: str) -> None:
+        now = time.time()
         with self.lock:
-            self.seen[key] = (name, time.time())
+            self.seen[key] = (name, now)
+            if len(self.seen) > 200:
+                self._gc()
 
     def forget(self, key: str) -> None:
         with self.lock:
@@ -47,6 +53,7 @@ class Play:
     def online(self) -> dict[str, str]:
         now = time.time()
         with self.lock:
+            self._gc()
             return {k: n for k, (n, t) in self.seen.items() if now - t < SEEN_TTL}
 
     def match_of(self, key: str) -> dict | None:
@@ -58,6 +65,9 @@ class Play:
 
     def _gc(self) -> None:
         now = time.time()
+        for k, (_, ts) in list(self.seen.items()):
+            if now - ts > SEEN_PRUNE_TTL:
+                del self.seen[k]
         for i, inv in list(self.invites.items()):
             if now - inv["ts"] > INVITE_TTL:
                 del self.invites[i]
@@ -140,6 +150,23 @@ class Play:
         for mid in ids:
             self.end(mid, reason)
 
+    def shutdown(self) -> None:
+        """Корректно завершает все активные партии и закрывает сокеты."""
+        self.stop_all("Сервер остановлен")
+        socks_to_close: list[tuple[object, threading.Lock]] = []
+        with self.lock:
+            for m in self.matches.values():
+                for i in (0, 1):
+                    if m["socks"][i] is not None:
+                        socks_to_close.append((m["socks"][i], m["send_locks"][i]))
+                        m["socks"][i] = None
+        for sock, send_lock in socks_to_close:
+            try:
+                with send_lock:
+                    sock.close()
+            except OSError:
+                pass
+
     def info(self, key: str) -> dict:
         """Что видит игрок: входящие и исходящие вызовы, текущая партия."""
         with self.lock:
@@ -171,61 +198,91 @@ class Play:
     # ---------- WebSocket ----------
     def broadcast(self, m: dict, msg: dict, skip: int | None = None) -> None:
         data = json.dumps(msg, ensure_ascii=False)
-        for i in (0, 1):
-            if i != skip and m["socks"][i] is not None:
-                try:
-                    with m["send_locks"][i]:
-                        ws_send(m["socks"][i], data)
-                except OSError:
-                    m["socks"][i] = None
+        targets: list[tuple[int, object, threading.Lock]] = []
+        with self.lock:
+            for i in (0, 1):
+                if i != skip and m["socks"][i] is not None:
+                    targets.append((i, m["socks"][i], m["send_locks"][i]))
+        for i, sock, send_lock in targets:
+            try:
+                with send_lock:
+                    ws_send(sock, data)
+            except OSError:
+                with self.lock:
+                    if m["socks"][i] is sock:
+                        m["socks"][i] = None
 
     def serve(self, mid: str, key: str, wfile, rfile) -> None:
         """Цикл одного подключения игрока к партии: пересылаем сообщения сопернику."""
         with self.lock:
             m = self.matches.get(mid)
             if not m or key not in m["players"]:
+                m = None
+            else:
+                me = m["players"].index(key)
+                m["socks"][me] = wfile
+                hello_payload = json.dumps({
+                    "type": "hello",
+                    "you": me,
+                    "names": list(m["names"]),
+                    "game": m["game"],
+                    "log": list(m["log"]),
+                    "over": m["result"] if m["over"] else "",
+                }, ensure_ascii=False)
+                my_send_lock = m["send_locks"][me]
+        if m is None:
+            try:
                 ws_send(wfile, json.dumps({"type": "stopped", "reason": "Партия уже закончилась"}, ensure_ascii=False))
-                return
-            me = m["players"].index(key)
-            m["socks"][me] = wfile
-        with m["send_locks"][me]:
-            ws_send(wfile, json.dumps({"type": "hello", "you": me, "names": m["names"], "game": m["game"],
-                                       "log": m["log"], "over": m["result"] if m["over"] else ""}, ensure_ascii=False))
-        self.broadcast(m, {"type": "joined", "who": me}, skip=me)
+            except OSError:
+                pass
+            return
         try:
+            with my_send_lock:
+                ws_send(wfile, hello_payload)
+            self.broadcast(m, {"type": "joined", "who": me}, skip=me)
             while True:
                 op, payload = ws_read(rfile)
                 if op == 8:                       # закрытие
                     break
                 if op == 9:                       # ping → pong
-                    with m["send_locks"][me]:
+                    with my_send_lock:
                         ws_send(wfile, payload, opcode=10)
                     continue
-                if op != 1 or m["over"]:
+                if op != 1:
                     continue
+                with self.lock:
+                    if m["over"]:
+                        continue
                 try:
                     msg = json.loads(payload.decode("utf-8"))
                 except ValueError:
                     continue
-                if not isinstance(msg, dict) or msg.get("type") == "ping":
+                if not isinstance(msg, dict):
+                    continue
+                mtype = msg.get("type")
+                if not isinstance(mtype, str) or mtype not in CLIENT_TYPES:
                     continue
                 msg["by"] = me                    # кто прислал (номер игрока); «from» занят ходами шахмат
-                if msg.get("type") in LOGGED:
+                if mtype in LOGGED:
                     with self.lock:
                         m["log"].append(msg)
                         if len(m["log"]) > 2000:
                             m["log"] = m["log"][-2000:]
                 self.broadcast(m, msg, skip=me)
-                if msg.get("type") in ("resign", "over"):
+                if mtype in ("resign", "over"):
                     with self.lock:
                         m["over"] = m["over"] or time.time()
-                        m["result"] = m["result"] or msg.get("text", "Партия окончена")
+                        m["result"] = m["result"] or str(msg.get("text") or "Партия окончена")
         except (OSError, ValueError, struct.error):
             pass
         finally:
-            if m["socks"][me] is wfile:
-                m["socks"][me] = None
-            self.broadcast(m, {"type": "gone", "who": me})
+            removed = False
+            with self.lock:
+                if m["socks"][me] is wfile:
+                    m["socks"][me] = None
+                    removed = True
+            if removed:
+                self.broadcast(m, {"type": "gone", "who": me}, skip=me)
 
 
 # ---------- минимальный WebSocket (RFC 6455): только то, что нужно игре ----------
@@ -255,7 +312,7 @@ def _read_exact(rfile, n: int) -> bytes:
 
 def ws_read(rfile) -> tuple[int, bytes]:
     """Одно сообщение от браузера (кадры от клиента всегда с маской)."""
-    data = b""
+    data = bytearray()
     op = None
     while True:
         b1, b2 = _read_exact(rfile, 2)
@@ -265,7 +322,7 @@ def ws_read(rfile) -> tuple[int, bytes]:
             n = struct.unpack("!H", _read_exact(rfile, 2))[0]
         elif n == 127:
             n = struct.unpack("!Q", _read_exact(rfile, 8))[0]
-        if n > 1 << 20:
+        if n > MAX_WS_PAYLOAD or (opcode < 8 and len(data) + n > MAX_WS_PAYLOAD):
             raise ValueError("слишком большое сообщение")
         mask = _read_exact(rfile, 4) if b2 & 0x80 else b"\0\0\0\0"
         chunk = bytes(c ^ mask[i % 4] for i, c in enumerate(_read_exact(rfile, n)))
@@ -273,6 +330,6 @@ def ws_read(rfile) -> tuple[int, bytes]:
             return opcode, chunk
         if op is None:
             op = opcode
-        data += chunk
+        data.extend(chunk)
         if fin:
-            return op, data
+            return op, bytes(data)

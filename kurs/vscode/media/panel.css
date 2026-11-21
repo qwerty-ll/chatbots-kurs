@@ -43,6 +43,8 @@ button:hover { filter: brightness(1.08); }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: default; filter: none; transform: none; }
 button.secondary { background: var(--card); color: var(--ink); border: 1.5px solid var(--line); }
+button.ghost { background: transparent; color: var(--brand-ink); border: 1.5px solid var(--line); }
+button.ghost:hover { background: var(--brand-soft); border-color: var(--brand); }
 button.link { background: none; color: var(--brand); padding: 4px 2px; font-weight: 600; }
 button.ok { background: var(--ok); }
 button.big { font-size: 17px; padding: 14px 20px; border-radius: 14px; }
