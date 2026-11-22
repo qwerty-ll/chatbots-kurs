@@ -1,10 +1,10 @@
 {
   "enabled": true,
   "provider": "openai",
-  "openai_base_url": "https://aldgn-194-58-171-98.free.pinggy.net/v1",
+  "openai_base_url": "https://gacoc-194-58-171-98.free.pinggy.net/v1",
   "openai_key": "sk-1c068d87327e4c01b1711b3a0d2b189d",
   "openai_models": "gemini-3.8-flash-low,gemini-3.5-flash-lite,gemini-3.8-flash",
-  "updated_at": 1795306288,
-  "tunnel_url": "https://aldgn-194-58-171-98.free.pinggy.net",
+  "updated_at": 1795307845,
+  "tunnel_url": "https://gacoc-194-58-171-98.free.pinggy.net",
   "hostname": "Mac"
 }
